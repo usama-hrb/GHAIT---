@@ -9,7 +9,7 @@ PROFILES ?=
 COMPOSE_PROFILES_ARG := $(foreach p,$(PROFILES),--profile $(p))
 
 .PHONY: help install dev up down logs ps build images lint typecheck test check deps \
-	migrate migrate-new owner e2e backup backup-verify restore clean format format-check
+	migrate migrate-new owner e2e backup backup-verify restore export import clean format format-check
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -61,6 +61,15 @@ backup-verify: .env ## Fresh dump → restore into a scratch DB → compare row 
 restore: .env ## Restore FILE=<dump> into the app DB, or into DB=<name> (scratch copy)
 	@test -n "$(FILE)" || { echo "usage: make restore FILE=backups/<file>.dump [DB=<name>]" >&2; exit 1; }
 	STACK=$(STACK) infra/scripts/restore.sh "$(FILE)" $(DB)
+
+export: .env ## Write the shop's data as JSON to FILE (default backups/export_<UTC time>.json)
+	@mkdir -p backups
+	@out="$(or $(FILE),backups/export_$$(date -u +%Y%m%dT%H%M%SZ).json)"; \
+	$(COMPOSE) exec -T api node dist/data-export.js > "$$out" && echo "$$out"
+
+import: .env ## Load an export (server's or a device's) FILE=<json> into an EMPTY database
+	@test -n "$(FILE)" || { echo "usage: make import FILE=<export.json>" >&2; exit 1; }
+	$(COMPOSE) exec -T api node dist/data-import.js < "$(FILE)"
 
 ## ── Code ───────────────────────────────────────────────────────────────────
 

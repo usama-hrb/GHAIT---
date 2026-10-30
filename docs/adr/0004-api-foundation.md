@@ -30,7 +30,7 @@ BUILD_PROMPTS 2.1 asks for zod validation, one error shape, request-id logging, 
 - **Access token:** a 15-minute HS256 JWT returned in the body. The web client keeps it in memory.
 - **Refresh token:** 256 random bits, stored only as a sha256 hash. It travels in an `httpOnly`, `Secure`, `SameSite=Strict` cookie scoped to `/api/auth`. Each refresh rotates it within its family. Presenting a rotated or revoked token revokes the whole family and is audited (OWASP refresh-token reuse detection).
 - **Reuse grace:** a rotated token presented again within 30 seconds is rotated again, and the successor it never received is revoked. A page load can abort a refresh after the server has rotated the token (found by the Playwright tests), and without this the owner would be signed out everywhere. Later reuse, or reuse of a revoked token, still revokes the whole family (Auth0's "reuse interval").
-- **Rate limit:** login is limited to `AUTH_LOGIN_RATE_LIMIT` attempts a minute per client IP (default 5), refresh to 30. Caddy is a trusted proxy hop, so the limit sees the real client IP.
+- **Rate limit:** login is limited to `AUTH_LOGIN_RATE_LIMIT` attempts a minute per client IP (default 5), refresh to `AUTH_REFRESH_RATE_LIMIT` (default 30; every page load refreshes once). Caddy is a trusted proxy hop, so the limit sees the real client IP.
 - **Global guard:** every route is protected unless marked `@Public()`. The schema has the `owner`, `partner` and `cashier` roles; only `owner` is admitted for now, at login and on every request.
 - **Owner account:** created, or its password reset, only by `make owner` (password on stdin). There is no HTTP setup route, so nobody can claim the account on a fresh server.
 

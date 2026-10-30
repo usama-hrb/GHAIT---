@@ -40,7 +40,7 @@ Fabric Shop OS: POS, inventory, credit, partner settlement and zakat for a singl
 ## Data rules
 
 - Every table has: `id` (uuid, client-generated), `created_at`, `updated_at`, `device_id`, `voided_at` (nullable), `server_seq` (one global sequence, for sync). In the schema: `...baseColumns('<table>')`; in its migration: `SELECT install_row_guards('<table>', <append_only>)` (refuses DELETE/TRUNCATE, UPDATE on append-only tables). An integration test fails for a table without them.
-- Append-only: `stock_move`, `payment`, `audit_log` are never updated or deleted. Corrections are compensating records (e.g. a reversing `stock_move`).
+- Append-only: `stock_move`, `sale_line`, `payment`, `payment_allocation`, `sale_void`, `write_off`, `audit_log` are never updated or deleted. Corrections are compensating records (a `reversal` stock move, a `refund` payment).
 - No hard delete anywhere. Cancellation sets `voided_at` with a reason and is audit-logged.
 - Balances are derived from movements, never stored as an editable field: roll remaining length, customer balance, partner balance, partner capital, cash. A derived cache is fine if it can be rebuilt from movements.
 - Every change or void writes `audit_log` (who, when, entity, id, action, before, after, reason) through `AuditService.record`. A mutating request is one transaction that commits only if it wrote an audit entry ([ADR 0004](docs/adr/0004-api-foundation.md)); `@AuditExempt(why)` is the rare exception.
@@ -114,8 +114,11 @@ How-to: [docs/design-usage.md](docs/design-usage.md); brand rationale: [docs/DES
 | `make backup`                | Compressed, timestamped Postgres dump, keeps the newest 14                 |
 | `make backup-verify`         | Fresh dump restored into a scratch DB, row counts compared                 |
 | `make restore FILE=… [DB=…]` | Restore a dump (app DB asks for confirmation); see docs/runbooks/backup.md |
+| `make export [FILE=…]`       | The shop's data as one JSON file (what devices sync)                       |
+| `make import FILE=…`         | Load an export (server's or a device's) into an empty database             |
 
 - Dev stack (`infra/docker/compose.dev.yml`): api http://localhost:4000, web http://localhost:3000 (it proxies `/api` to the API), Postgres on 127.0.0.1:5440, pgAdmin with `PROFILES=tools`. Source is mounted with hot reload; node_modules live in Docker volumes. The service worker is off under `next dev`.
+- Production: [docs/runbooks/deploy.md](docs/runbooks/deploy.md) (VPS, HTTPS, updates, rollback); nightly backups run in the prod stack. MVP sign-off: [docs/MVP_ACCEPTANCE.md](docs/MVP_ACCEPTANCE.md).
 - Env: every variable is documented in `.env.example`; the API validates its env with zod at startup (`apps/api/src/config`) and exits on invalid config. Never bake secrets into images.
 
 ## Definition of done

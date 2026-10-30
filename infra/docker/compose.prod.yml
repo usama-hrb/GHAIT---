@@ -52,6 +52,29 @@ services:
     image: fabric-shop-web:${IMAGE_TAG:-latest}
     tmpfs: [/tmp, /app/apps/web/.next/cache]
 
+  # Nightly pg_dump into the repo's backups/ (docs/runbooks/backup.md); copy it off the server.
+  backup:
+    image: postgres:16.15-alpine
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    user: ${BACKUP_UID:-1000}:${BACKUP_GID:-1000}
+    entrypoint: [/bin/sh, /nightly.sh]
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB}
+      BACKUP_AT: ${BACKUP_AT:-02:30}
+      BACKUP_KEEP: ${BACKUP_KEEP:-14}
+    volumes:
+      - ./backup/nightly.sh:/nightly.sh:ro
+      - ../../backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   proxy:
     image: caddy:2.11.7-alpine
     restart: unless-stopped

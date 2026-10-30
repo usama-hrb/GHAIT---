@@ -13,6 +13,12 @@ Scripts: [infra/scripts/](../../infra/scripts/) (`backup.sh`, `restore.sh`, `ver
 
 Settings in `.env`: `BACKUP_DIR` (default `./backups`, git-ignored) and `BACKUP_KEEP` (default 14).
 
+## Nightly backups (prod)
+
+The prod stack's `backup` service (`infra/docker/backup/nightly.sh`) takes the same dump every day at `BACKUP_AT` (UTC, default 02:30) into `<repo>/backups`, with the same rotation. It runs as `BACKUP_UID:BACKUP_GID` (the owner of that directory), with a read-only filesystem and no capabilities. Copy `backups/` off the server every day ([deploy.md](deploy.md) §5).
+
+To check it can write: `docker compose --env-file .env -f infra/docker/compose.prod.yml run --rm -e BACKUP_ONCE=1 backup`.
+
 ## Take a backup
 
 ```sh
@@ -56,7 +62,22 @@ make restore FILE=backups/fabric_shop_20261029T153622Z.dump STACK=prod
 
 1. The script asks you to type the database name. Anything else aborts with nothing changed. For scripted use, pass `CONFIRM=<db name>`.
 2. It stops `api` and `web`, restores in a single transaction (all or nothing), then starts them again.
-3. Everything written to the server after that dump is lost from the server. Devices may still hold some of it locally; how they re-sync with a restored server is designed with the sync engine (ADR 0002, BUILD_PROMPTS 3.1/3.6). Until then, check each device by hand after a production restore.
+3. It records a new epoch (`server_instance`). On their next sync, devices see it and pull everything again from the start: their sync cursors pointed past the restored data. Changes a device had not pushed yet are still in its outbox and are pushed as usual.
+4. Everything written to the server after that dump is lost from the server. A device may still show some of it (records it had pulled that the server no longer has): after a restore, check the last day's sales and payments on each device against the server, and enter again what is missing.
+
+## Export and import (JSON)
+
+A second kind of copy, independent of Postgres: every record the devices sync, in one JSON file (`@fabric/contracts` `dataExportSchema`). It is also what rebuilds the server when the server **and** its dumps are lost, because every device holds the whole shop.
+
+- From the server: `make export STACK=prod` writes `backups/export_<UTC time>.json` (or `FILE=…`).
+- From a device: Settings → "نسخة من البيانات" → "تنزيل نسخة كاملة (JSON)". It works offline. "تنزيل جدول (CSV)" gives one table for a spreadsheet.
+
+To rebuild a server from an export:
+
+1. Start the stack on an empty database (a new server, or `make down`, remove the `pg_data` volume, `make up`). The API applies the migrations.
+2. `make import FILE=<export.json> STACK=prod`. It refuses a database that already has shop data, and inserts everything in one transaction: all or nothing. Device codes come from the export (a server export), or from the roll codes (a device export), so new devices never reuse a code.
+3. `make owner USERNAME=<name> STACK=prod`: accounts and sessions are not in the export.
+4. Devices see the new epoch and pull everything again. Use the export of the device that synced last: a device export holds what that device had pulled, plus its own changes.
 
 Before replacing production data, take a backup of the current state first (`make backup STACK=prod`), even if it is broken. That backup is your way back.
 

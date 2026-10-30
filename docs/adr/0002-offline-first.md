@@ -71,6 +71,39 @@ Input is validated with `@fabric/contracts` and `@fabric/core` before commit, ex
 - **Device-safe roll codes.** Right after sign-in, each device gets a short code from the server (`POST /devices/register`: A, B…, then AA). It numbers rolls offline with a local counter: `R-A0001`, `R-B0001`. A device's codes never collide with another's, and a unique index on `roll.short_code` is the backstop: a clash would be a rejected op, visible to the user. A new browser profile is a new device with a new code.
 - **Offline navigation.** The service worker ignores the `id` query parameter when matching the precache, so `/purchases/view?id=…` is served by the one precached `/purchases/view` page. Next's `?_rsc=` fetches still reach the network. After a save, a move to another page while offline is a full page load (served from the precache); Next's client navigation cannot fetch the new page's data offline. `useAppNavigation` in `shared/lib` does this.
 
+## Implementation decisions (Slice 3, 2026-10-30)
+
+- **Stock actions are moves.** A loss, a stocktake count and a measurement are each one `stock_move` sent as an `append` op. The device builds it with `buildStockMove` (`@fabric/contracts`) from what was typed and its own view of the roll. The server re-checks it against the roll's history with `checkStockMove`: allowed type, roll, sign, reason, and a basis length of at least 1 cm. `purchase` and `sale` moves only arrive inside their purchase or sale.
+- **Derived, never stored.** A move carries a length, never a cost. The cost of each loss (later each sale) and the roll's remaining length, cost per metre, stock value and "estimated" flag all come from replaying the roll's moves through `@fabric/core` `rollLedger`. The replay goes in creation order (`createdAt`, then id), the same on every device and on the server. So a measurement re-costs the rest of the roll without editing an append-only row. The roll state (active, remnant, empty) is derived too, from the remaining length, the `remnant_threshold_cm` setting and the manual remnant mark.
+- **Rolls stay fixed.** A roll is `mutable` in `SYNC_ENTITIES`, but only so its remnant mark can sync. `checkRollUpdate` refuses any other change, and a roll cannot be voided: a mistaken purchase is undone with compensating moves.
+- **Measurement input.** The user enters the length on the roll now, not its original length. The new basis is basis − remaining + measured (SPEC §2.3), so what was sold or lost stays sold. A measurement of a roll bought by weight also updates the fabric's `est_cm_per_kg` (C11), as an ordinary fabric upsert.
+- **No reload on reconnect.** The service worker provider's `reloadOnOnline` is off. A reload would discard a form being filled in, and sync already resumes on the `online` event. The Playwright run found the problem: Chromium can fire a stray `online` right after `offline`, and the reload cancelled a navigation.
+- **Known limitation.** A stocktake or a measurement records a difference computed from the device's own view of the roll. If two devices count or measure the same roll while one is offline, both differences apply and the roll is corrected twice. The history shows both moves, and another count fixes it. This is rare with one till and one phone, and is revisited with the conflict screen in Slice 6.
+
+## Implementation decisions (Slice 4, 2026-10-30)
+
+- **One op per sale.** A sale is an `append` op carrying the sale, a line and a `sale` stock move per roll, and the cash paid at the counter as a payment with its allocation (`saleAggregateSchema`). The device prices it with `priceSale` (`@fabric/contracts`, which calls `@fabric/core` `computeSaleLine` and `splitSaleCapitalProfit`). The server prices it again on its own view of the rolls (`checkSaleAggregate`). Lines, payments and allocations are `pull_only`: they only arrive inside their sale.
+- **What the server re-checks.** Totals, lines, moves and the payment must be exactly what was typed would give. Costs are not compared: another device's sale of the same roll may have reached the server first, and costs are derived anyway (P9). The one cost-dependent rule, the confirmation under cost (P8), is applied on the server's figures.
+- **Voids are their own records.** Voiding a sale is a `sale_void` append op with a `reversal` move per line and the refund. The server stores them and sets the sale's `voidedAt` in the same transaction, audited with the reason. `sale_void.sale_id` is unique, so two devices voiding the same sale offline give one void and one rejected op.
+- **Customers** are a `mutable` entity. A customer added at the POS is queued before the sale that names them, so the server has them first.
+- **Order of a sale's lines.** The server keeps them in insertion order (`server_seq`). The device shows them by id until they sync.
+
+## Implementation decisions (Slice 5, 2026-10-30)
+
+- **Receivables module.** Payments, allocations and write-offs live in their own API module (`receivables`, storage only). Sales writes the counter's payment and the void's refund through it; customers adds the checks, the account and the debt summary. So sales and customers never depend on each other.
+- **Ops.** A customer's payment or refund is one `payment` append op with its allocations (`paymentAggregateSchema`). Applying a credit is a `payment_allocation` append op carrying allocations of earlier payments. A write-off is a `write_off` append op.
+- **Allocations are checked, not recomputed.** How a payment is spread over invoices depends on what the device knew, and two devices offline may both pay the oldest invoice. The server checks that each allocation pays a sale of the payment's customer and that no payment is applied beyond its amount (`checkAllocations`). Any spread keeps the customer's balance right, since balance = Σ sales − Σ payments + Σ refunds. An invoice that ends up overpaid simply has a negative due, which counts as credit.
+- **Write-offs** are unique per sale, so two devices writing off the same invoice give one write-off and one rejected op.
+
+## Implementation decisions (Slice 6, 2026-10-30)
+
+- **History order ignores device clocks.** A roll's moves, and a sale's payments, are taken in `server_seq` order: what the server received, in the order it received it. Moves only on the device come after, in the order they were made there (`syncOrder`, `@fabric/contracts`). A device whose clock is wrong can no longer reorder another device's history, and the device's own view matches what the server will have once it pushes.
+- **Clocks ahead are capped.** A pushed record's `updatedAt` is stored at most 5 minutes after the server received it. A device with its clock set ahead cannot win every later last-write-wins conflict. The device gets the stored value back on its next pull.
+- **Restore epochs.** `server_instance` has one row per data set: the migrations add the first, and every restore (`make restore` into the app database, `make import`) adds a new one. Each pull reports the current epoch. A device that sees a new one pulls everything again from 0: its cursor pointed into data that no longer exists, and after a restore the sequence starts again below it.
+- **Conflict log on every device.** `sync_conflict` is `pull_only`, so the read-only conflict screen (Settings → sync issues) works offline. The same screen lists the changes the server refused and the rolls sold beyond their length (remaining < 0 or `oversold`). Those rolls are flagged for review, never blocked: both sales stand, and a measurement or a count corrects the roll.
+- **App updates.** The service worker takes over at once (`skipWaiting`). An open page shows a "new version" notice with a reload button. When the new code opens the database at a newer Dexie version, older tabs close it and reload (`versionchange`). Nothing is lost: every change is already in IndexedDB and its outbox.
+- **Export.** Each device holds the whole shop, so its export (Settings, JSON) has the same shape as the server's (`make export`, `dataExportSchema`). Either one rebuilds an empty server with `make import`.
+
 Open question 1 is answered: `server_seq` plus `baseServerSeq` covers what a `version` field would, so there is none.
 
 ## Alternatives considered
@@ -85,7 +118,7 @@ Open question 1 is answered: `server_seq` plus `baseServerSeq` covers what a `ve
 - Every feature is designed for offline from the start; "works offline" is part of the definition of done.
 - Business validation runs on the device and on the server from the same packages, so the two cannot drift.
 - The server can reject an op that is already committed on the device (for example, a device on an old app version). Rejections must be visible to the user, never silently dropped; the handling is designed in Slice 1.
-- Last-write-wins uses device clocks for mutable entities, so clock skew can pick the wrong winner. Acceptable because conflicts are rare and every loser is logged; revisited in Slice 6.
+- Last-write-wins uses device clocks for mutable entities, so clock skew can pick the wrong winner. Acceptable because conflicts are rare and every loser is logged; clocks set ahead are capped (Slice 6).
 - Period locking is eventually consistent: a device that was offline while a period was locked elsewhere can write into it. The server must detect this on push.
 - The browser can evict or the user can clear IndexedDB. Mitigations: request persistent storage (`navigator.storage.persist()`), sync often so the outbox stays small, server backups and app export.
 - The schema evolves in three places (Postgres migrations, contracts, Dexie versions); each slice changes them together.

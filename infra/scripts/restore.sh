@@ -32,6 +32,17 @@ if [[ "$target" == "$db" ]]; then
   trap 'compose start api web >/dev/null 2>&1 || true' EXIT
   # shellcheck disable=SC2016 # expanded inside the container
   pg sh -c 'pg_restore --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --clean --if-exists --no-owner --no-privileges --single-transaction --exit-on-error' <"$file"
+  # A new epoch: on their next pull, devices see it and download everything again (their sync
+  # cursors point past the restored data). A dump older than the table gets its first epoch
+  # from the migrations when the api starts.
+  # shellcheck disable=SC2016 # expanded inside the container
+  pg sh -c 'psql --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --quiet -v ON_ERROR_STOP=1' <<'SQL'
+DO $$ BEGIN
+  IF to_regclass('public.server_instance') IS NOT NULL THEN
+    INSERT INTO server_instance (device_id) VALUES ('restore');
+  END IF;
+END $$;
+SQL
 else
   # shellcheck disable=SC2016 # expanded inside the container
   pg sh -c 'PGOPTIONS="-c client_min_messages=warning" dropdb --username="$POSTGRES_USER" --if-exists "$1" && createdb --username="$POSTGRES_USER" "$1"' _ "$target"

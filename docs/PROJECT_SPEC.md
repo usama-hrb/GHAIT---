@@ -103,7 +103,7 @@ Fabric (الموديل: روزا)
 ### 4.1 البيع بالدين
 - `customer` له رصيد **مشتق** من الفواتير والدفعات.
 - الفاتورة: `total_cents`, `paid_cents` (مشتق من الدفعات), `due_date` اختياري.
-- `payment`: مبلغ، تاريخ. تُطبَّق على فاتورة أو أكثر عبر `payment_allocation` (الدفعة العامة تُوزَّع على أقدم الفواتير)، ويُحفظ مع كل تطبيق جزء رأس المال وجزء الربح وقت تسجيله.
+- `payment`: مبلغ، تاريخ. تُطبَّق على فاتورة أو أكثر عبر `payment_allocation` (الدفعة العامة تُوزَّع على أقدم الفواتير)، ويُحفظ مع كل تطبيق مبلغه؛ جزء رأس المال وجزء الربح يُشتقّان منه بتكلفة الفاتورة الحالية ما دامت الفترة غير مقفلة، ويُثبَّتان عند إقفالها.
 - **الزيادة في الدفع:** ليست دخلاً، بل رصيد دائن للزبون: تُطبَّق أولاً على فواتيره المفتوحة الأخرى (الأقدم أولاً)، وما بقي يُعرض عند بيعه التالي أو يُردّ له نقداً.
 - شاشة "ديون الزبائن": من عليه كم ومنذ متى، مرتبة.
 - **ديون معدومة (bad debt):** تُشطب بحركة `write_off` وتُحسب خسارة (القسم 8) بقدر **رأس المال غير المسترد** منها فقط (ربحها لم يُعترف به أصلاً). وإن دفع الزبون بعد الشطب، فالدفعة تسترد الخسارة أولاً (ربح في فترتها) ثم تُعدّ ربحاً.
@@ -266,14 +266,16 @@ purchase          id, supplier_id?, date, method (meter|piece|kg), total_cost_ce
                   paid_cents, weight_g?, notes
 roll              id, short_code (R-0123), variant_id, purchase_id, length_cm_initial,
                   cost_total_cents, length_estimated, status (active|remnant|empty|written_off)
-stock_move        id, roll_id, type (purchase|sale|loss|length_correction|adjustment|return),
-                  delta_cm, ref_id (sale_line/purchase/…), date, note
+stock_move        id, roll_id, type (purchase|sale|loss|length_correction|adjustment|return|reversal),
+                  delta_cm, ref_id (sale_line/purchase/the move a reversal cancels/…), date, note
 customer          id, name, phone?, notes
-sale              id, date, customer_id?, total_cents, discount_cents, due_date?, note
-sale_line         id, sale_id, roll_id, sold_cm, ref_price_per_m_cents,
-                  actual_price_per_m_cents, line_total_cents, line_cost_cents
-payment           id, customer_id?, amount_cents, date, method (cash|bank|other), note
-payment_allocation id, payment_id, sale_id, amount_cents, capital_cents, profit_cents, date
+sale              id, date, customer_id?, total_cents, discount_cents, due_date?, confirmed_below_cost, note
+sale_line         id, sale_id, roll_id, sold_cm, ref_price_per_m_cents, min_price_per_m_cents,
+                  actual_price_per_m_cents, whole_piece, line_total_cents   (التكلفة مشتقة من حركات الرول)
+sale_void         id, sale_id, date, reason, refund_id?
+write_off         id, sale_id, date, reason   (دين معدوم: يبقى على الزبون ويخرج من المستحق)
+payment           id, customer_id?, kind (payment|refund), amount_cents, date, method (cash|bank|other), note
+payment_allocation id, payment_id, sale_id, amount_cents, date
 expense           id, date, category, amount_cents, paid_date?, note
 recurring_expense id, category, amount_cents?, day_of_month, active
 partner           id, name, ownership_bp (basis points، 5000=50%), is_owner
@@ -291,7 +293,7 @@ zakat_report      id, hawl_date, gold_price_per_g_cents, nisab_cents, base_break
 setting           key, value, effective_from?
 audit_log         id, at, user, entity, entity_id, action, before(json), after(json), reason
 ```
-**مشتقات (views/دوال):** المتبقي من رول = `length_cm_initial + Σ delta_cm` (دون حركة `purchase`، فهي تسجّل الطول الابتدائي نفسه). رصيد زبون = Σ فواتير − Σ دفعات (سالب = رصيد دائن له). رصيد شريك = Σ حصصه من التسويات − Σ سحوباته. رأس مال الشريك = Σ `capital_move`.
+**مشتقات (views/دوال):** المتبقي من رول = `length_cm_initial + Σ delta_cm` (دون حركة `purchase`، فهي تسجّل الطول الابتدائي نفسه). رصيد زبون = Σ فواتير − Σ دفعات + Σ ردود (سالب = رصيد دائن له)، والفواتير الملغاة لا تُحسب. رصيد شريك = Σ حصصه من التسويات − Σ سحوباته. رأس مال الشريك = Σ `capital_move`.
 
 ---
 
@@ -400,3 +402,12 @@ audit_log         id, at, user, entity, entity_id, action, before(json), after(j
   - §8.1، §13: قاعدة القسمة أوزان 1/1/1 بدل نقاط الأساس `(3334/3333/3333)` التي لا تعطي أثلاثاً (S1، T6). فرق الجرد النقدي يدخل نتيجة الفترة، وعمود `cash_over_short_cents` في التسوية (I2).
   - §9: أرصدة الزبائن الدائنة جزء من المعادلة، وفروق الجرد النقدي جزء من الصندوق (I1، I2).
   - §10: المحل "مدير"، وخيار "محتكر" لا يُبنى (Z4).
+- **2026-10-30:** بالتفويض نفسه، مع شريحة نقطة البيع (BUILD_PROMPTS 3.4؛ التفاصيل في `docs/accounting-assumptions.md`):
+  - §2.4، §13: تكلفة سطر البيع لا تُخزَّن في `sale_line`، بل تُشتق من حركات الرول كالتالف (P9، R1)، فيُعاد حسابها بعد القياس دون تعديل سطر. يُحفظ مع السطر الحد الأدنى للسعر وعلامة "قطعة كاملة".
+  - §4.1، §13: `payment_allocation` يحفظ المبلغ فقط؛ جزءا رأس المال والربح مشتقان حتى إقفال الفترة (P10). السبب: جهازان دون اتصال لا يتفقان على تكلفة الفاتورة لحظة التسجيل، وقياس الرول بعد البيع يجب أن يصل إلى الربح المعترف به.
+  - §3، §4: تأكيد البيع دون التكلفة يُحفظ (`confirmed_below_cost`)، ويرفض الخادم بيعاً دون التكلفة بلا تأكيد (P8). اقتراح الرول واقتسام الطول (P11)، والدفع عند البيع (P12).
+  - §13: إلغاء البيع سجلٌّ مستقل `sale_void` مع سببه، وحركة `reversal` لكل سطر تُعيد القماش، و`payment.kind = refund` لما دُفع (P13).
+  - إعداد `shop_name` لاسم المحل في الفاتورة المشارَكة.
+- **2026-10-30:** بالتفويض نفسه، مع شريحة الزبائن والديون (BUILD_PROMPTS 3.5):
+  - §13: رصيد الزبون يشمل الردود، والشطب سجلٌّ مستقل `write_off` لكل فاتورة (P14، P16).
+  - §4.1: الدفعة الموجّهة لفاتورة تسدّدها أولاً ثم الأقدم؛ الدفعة العامة تتخطى الديون المعدومة؛ الرصيد الدائن يُرَدّ نقداً أو يُطبَّق على الفواتير المفتوحة، الأقدم أولاً (P15، P17).
