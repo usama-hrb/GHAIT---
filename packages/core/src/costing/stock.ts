@@ -1,8 +1,11 @@
 import { assertInteger } from '../numeric/index.js';
 
-/** stock_move.type (SPEC §13). */
+/**
+ * stock_move.type (SPEC §13). A `reversal` cancels one earlier move (a voided sale's lines): it
+ * gives back that move's length, and costing treats both as if neither had been made.
+ */
 export type StockMoveType =
-  'purchase' | 'sale' | 'loss' | 'length_correction' | 'adjustment' | 'return';
+  'purchase' | 'sale' | 'loss' | 'length_correction' | 'adjustment' | 'return' | 'reversal';
 
 /** A stock_move as costing sees it: a signed length (sales and losses are negative). */
 export interface StockMove {
@@ -22,6 +25,9 @@ function assertMove(move: StockMove): void {
   }
   if (move.type === 'return' && move.deltaCm <= 0) {
     throw new RangeError(`return must have a positive deltaCm, got ${String(move.deltaCm)}`);
+  }
+  if (move.type === 'reversal' && move.deltaCm === 0) {
+    throw new RangeError('a reversal must give back some length');
   }
 }
 
