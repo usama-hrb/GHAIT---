@@ -1,0 +1,4 @@
+{
+  "extends": "@fabric/config-ts/nest.json",
+  "include": ["src", "test", "*.config.ts"]
+}
