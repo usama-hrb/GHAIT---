@@ -1,0 +1,78 @@
+# Production stack: Postgres, api, web and Caddy (automatic HTTPS for $DOMAIN).
+#   make up STACK=prod
+# Secrets come from the server's .env at runtime; images never contain them.
+name: fabric-shop
+
+x-hardened: &hardened
+  restart: unless-stopped
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: [/tmp]
+
+services:
+  postgres:
+    image: postgres:16.15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set in .env}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  api:
+    <<: *hardened
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.api
+    image: fabric-shop-api:${IMAGE_TAG:-latest}
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      # Single API instance: it applies pending migrations before listening.
+      MIGRATE_ON_START: 'true'
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?set in .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    <<: *hardened
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.web
+    image: fabric-shop-web:${IMAGE_TAG:-latest}
+    tmpfs: [/tmp, /app/apps/web/.next/cache]
+
+  proxy:
+    image: caddy:2.11.7-alpine
+    restart: unless-stopped
+    environment:
+      DOMAIN: ${DOMAIN:?set in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set in .env}
+    ports:
+      - ${HTTP_PORT:-80}:80
+      - ${HTTPS_PORT:-443}:443
+      - ${HTTPS_PORT:-443}:443/udp
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+
+volumes:
+  pg_data:
+  caddy_data:
+  caddy_config:

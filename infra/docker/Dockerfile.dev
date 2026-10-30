@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1
+# Dev image shared by the api, web and packages services in compose.dev.yml.
+# Source is bind-mounted at /repo; node_modules live in named volumes owned by `node`.
+
+ARG NODE_IMAGE=node:24.22.2-alpine
+FROM ${NODE_IMAGE}
+
+ENV COREPACK_HOME=/usr/local/share/corepack \
+    COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+    HUSKY=0 \
+    NEXT_TELEMETRY_DISABLED=1 \
+    TURBO_TELEMETRY_DISABLED=1 \
+    npm_config_store_dir=/home/node/.pnpm-store
+
+# Bake the pnpm version pinned in package.json#packageManager into the image.
+WORKDIR /tmp/pm
+COPY package.json ./
+RUN corepack enable \
+ && corepack install \
+ && chmod -R a+rX "$COREPACK_HOME" \
+ && rm -rf /tmp/pm
+
+# Mount points exist in the image so the named volumes start out owned by `node`.
+RUN mkdir -p /repo/node_modules \
+             /repo/apps/api/node_modules /repo/apps/web/node_modules \
+             /repo/packages/core/node_modules /repo/packages/contracts/node_modules \
+             /repo/packages/config-eslint/node_modules \
+             /home/node/.pnpm-store \
+ && chown -R 1000:1000 /repo /home/node/.pnpm-store
+
+# 1000 = the image's unprivileged `node` user.
+USER 1000:1000
+WORKDIR /repo

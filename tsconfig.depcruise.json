@@ -1,0 +1,9 @@
+{
+  "//": "Used only by dependency-cruiser to resolve the web `@/*` alias from the repo root.",
+  "compilerOptions": {
+    "paths": {
+      "@/*": ["./apps/web/src/*"]
+    }
+  },
+  "include": ["apps/web/src"]
+}

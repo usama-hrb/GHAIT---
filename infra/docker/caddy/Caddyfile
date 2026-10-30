@@ -1,0 +1,26 @@
+{
+	email {$ACME_EMAIL}
+}
+
+# HTTPS certificates are issued automatically for {$DOMAIN} (Let's Encrypt; local CA for localhost).
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	# /api/health → api:4000/health
+	handle_path /api/* {
+		reverse_proxy api:4000
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+
+	log
+}

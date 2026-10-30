@@ -1,0 +1,10 @@
+{
+  "name": "@fabric/config-ts",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "description": "Shared strict tsconfig presets: base, library, nest, next.",
+  "files": [
+    "*.json"
+  ]
+}

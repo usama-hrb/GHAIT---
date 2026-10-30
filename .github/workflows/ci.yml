@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HUSKY: 0
+  TURBO_TELEMETRY_DISABLED: 1
+
+jobs:
+  check:
+    name: Lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # pnpm version comes from package.json#packageManager.
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Restore turbo cache
+        uses: actions/cache@v6
+        with:
+          path: .turbo/cache
+          key: turbo-${{ runner.os }}-${{ github.sha }}
+          restore-keys: turbo-${{ runner.os }}-
+
+      # The API's integration tests start Postgres with Testcontainers (Docker is on the runner).
+      - run: pnpm turbo run lint typecheck test build
+
+      # Offline → online → second device, in a real browser (BUILD_PROMPTS 3.1).
+      - name: End-to-end (Playwright)
+        working-directory: apps/web
+        run: |
+          pnpm exec playwright install --with-deps chromium
+          pnpm test:e2e
+
+      - name: Migrations match the schema
+        working-directory: apps/api
+        run: |
+          pnpm exec drizzle-kit check
+          pnpm exec drizzle-kit generate --name ci-drift-check
+          git status --porcelain drizzle | grep . && { echo "Schema changed without a migration: run make migrate-new" >&2; exit 1; } || true
+
+      - name: Dependency directions
+        run: pnpm depcruise apps packages
+
+      - name: Formatting
+        run: pnpm prettier --check .
+
+  docker:
+    name: Docker image (${{ matrix.app }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [api, web]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: infra/docker/Dockerfile.${{ matrix.app }}
+          push: false
+          tags: fabric-shop-${{ matrix.app }}:ci
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}

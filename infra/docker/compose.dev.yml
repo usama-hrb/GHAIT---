@@ -1,0 +1,133 @@
+# Development stack: Postgres + api/web with hot reload on the mounted source.
+#   make up            start (builds the dev image, waits until healthy)
+#   make up PROFILES=tools   also start pgAdmin
+# Variables come from the repo-root .env (see .env.example).
+name: fabric-shop-dev
+
+x-node-dev: &node-dev
+  build:
+    context: ../..
+    dockerfile: infra/docker/Dockerfile.dev
+  image: fabric-shop-dev:latest
+  volumes:
+    - ../..:/repo
+    # Container-owned installs so host and container binaries never mix.
+    - node_modules:/repo/node_modules
+    - api_node_modules:/repo/apps/api/node_modules
+    - web_node_modules:/repo/apps/web/node_modules
+    - core_node_modules:/repo/packages/core/node_modules
+    - contracts_node_modules:/repo/packages/contracts/node_modules
+    - config_eslint_node_modules:/repo/packages/config-eslint/node_modules
+    - pnpm_store:/home/node/.pnpm-store
+
+services:
+  postgres:
+    image: postgres:16.15-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?set in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
+      POSTGRES_DB: ${POSTGRES_DB:?set in .env}
+    ports:
+      - 127.0.0.1:${POSTGRES_HOST_PORT:-5440}:5432
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # One-shot: install dependencies and build workspace packages before the dev servers start.
+  install:
+    <<: *node-dev
+    command: sh -c "pnpm install --frozen-lockfile && pnpm turbo run build --filter='./packages/*'"
+
+  # Rebuilds packages/core and packages/contracts on change (tsup --watch).
+  packages:
+    <<: *node-dev
+    command: pnpm --filter './packages/*' --parallel run dev
+    depends_on:
+      install:
+        condition: service_completed_successfully
+
+  api:
+    <<: *node-dev
+    command: pnpm --filter @fabric/api run dev
+    # `make migrate` / `make owner` run `node dist/…` here.
+    working_dir: /repo/apps/api
+    environment:
+      NODE_ENV: development
+      PORT: 4000
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      MIGRATE_ON_START: 'true'
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev-only-change-me-insecure-access-secret}
+    ports:
+      - 127.0.0.1:${API_HOST_PORT:-4000}:4000
+    depends_on:
+      install:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:4000/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  web:
+    <<: *node-dev
+    command: pnpm --filter @fabric/web run dev
+    environment:
+      # Same origin as in production (Caddy): the web dev server proxies /api to the API.
+      API_PROXY_TARGET: http://api:4000
+    ports:
+      - 127.0.0.1:${WEB_HOST_PORT:-3000}:3000
+    depends_on:
+      install:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          CMD,
+          node,
+          -e,
+          "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  pgadmin:
+    image: dpage/pgadmin4:9.18
+    profiles: [tools]
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+    ports:
+      - 127.0.0.1:${PGADMIN_HOST_PORT:-5050}:80
+    volumes:
+      - ./pgadmin/servers.json:/pgadmin4/servers.json:ro
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pg_data:
+  pgadmin_data:
+  pnpm_store:
+  node_modules:
+  api_node_modules:
+  web_node_modules:
+  core_node_modules:
+  contracts_node_modules:
+  config_eslint_node_modules:

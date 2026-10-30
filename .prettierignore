@@ -1,0 +1,18 @@
+pnpm-lock.yaml
+dist/
+.next/
+out/
+coverage/
+.turbo/
+backups/
+next-env.d.ts
+
+# Owner-authored source documents: keep their formatting as written.
+docs/PROJECT_SPEC.md
+docs/BUILD_PROMPTS.md
+docs/DESIGN_SYSTEM.md
+
+# Contain upstream files verbatim (brand-tokens.css from brand-assets.zip, shadcn's tailwind.css).
+apps/web/src/app/globals.css
+apps/web/src/app/shadcn.css
+apps/web/AGENTS.md

@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1
+# Production image for apps/api. Build from the repo root:
+#   docker build -f infra/docker/Dockerfile.api -t fabric-shop-api .
+
+ARG NODE_IMAGE=node:24.22.2-alpine
+
+FROM ${NODE_IMAGE} AS base
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+    HUSKY=0 \
+    TURBO_TELEMETRY_DISABLED=1 \
+    npm_config_store_dir=/pnpm-store
+RUN corepack enable
+WORKDIR /repo
+
+# Keep only the api and the workspace packages it depends on.
+FROM base AS pruner
+COPY . .
+RUN pnpm dlx "turbo@$(node -p "require('./package.json').devDependencies.turbo.replace(/^\D+/, '')")" \
+      prune @fabric/api --docker
+
+FROM base AS builder
+COPY --from=pruner /repo/out/json/ ./
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm-store \
+    pnpm install --frozen-lockfile
+COPY --from=pruner /repo/out/full/ ./
+RUN pnpm turbo run build --filter=@fabric/api
+# Production node_modules + dist only (workspace packages are copied with their dist/).
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm-store \
+    pnpm deploy --filter=@fabric/api --prod --legacy /prod/api
+
+FROM ${NODE_IMAGE} AS runner
+ENV NODE_ENV=production \
+    PORT=4000
+WORKDIR /app
+# Root-owned and read-only for the runtime user.
+COPY --from=builder /prod/api ./
+# 1000 = the image's unprivileged `node` user.
+USER 1000:1000
+EXPOSE 4000
+HEALTHCHECK --interval=15s --timeout=3s --start-period=10s --retries=3 \
+  CMD ["node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||4000)+'/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+CMD ["node", "dist/main.js"]

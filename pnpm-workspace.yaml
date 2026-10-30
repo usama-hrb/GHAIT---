@@ -1,0 +1,35 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Fail install on a Node/pnpm version outside `engines`.
+engineStrict: true
+
+# Versions shared by several workspace packages. Reference with "catalog:".
+catalog:
+  '@types/node': ^24.0.0
+  eslint: ^10.13.0
+  tsup: ^9.0.0
+  # typescript-eslint supports TypeScript < 6.1; do not bump past 6.0.x until it does.
+  typescript: ~6.0.3
+  vitest: ^5.0.5
+  zod: ^4.6.7
+
+# Install scripts not needed: prebuilt binaries come through optionalDependencies
+# (esbuild, @swc/core, unrs-resolver), native extras are optional with a JS fallback
+# (ssh2, cpu-features, both from testcontainers), protobufjs's script only prints a notice,
+# and @scarf/scarf (via swagger-ui-dist) is install telemetry, deliberately never run.
+ignoredBuiltDependencies:
+  - '@scarf/scarf'
+  - '@swc/core'
+  - cpu-features
+  - esbuild
+  - protobufjs
+  - ssh2
+  - unrs-resolver
+
+# eslint-import-resolver-typescript lists eslint-plugin-import as an optional peer; pnpm installs it,
+# but nothing loads it, so its ESLint <= 9 peer range does not apply.
+peerDependencyRules:
+  allowedVersions:
+    eslint-plugin-import>eslint: '10'
