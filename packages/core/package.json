@@ -1,0 +1,38 @@
+{
+  "name": "@fabric/core",
+  "version": "0.0.0",
+  "private": true,
+  "license": "UNLICENSED",
+  "description": "Pure accounting logic (money, length, costing, pricing, payments, settlement, integrity, zakat). No I/O, no runtime dependencies.",
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@fabric/config-eslint": "workspace:*",
+    "@fabric/config-ts": "workspace:*",
+    "@vitest/coverage-v8": "^5.0.5",
+    "eslint": "catalog:",
+    "fast-check": "^4.10.2",
+    "tsup": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
