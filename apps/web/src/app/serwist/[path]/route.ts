@@ -1,0 +1,27 @@
+import { randomUUID } from 'node:crypto';
+import { createSerwistRoute } from '@serwist/turbopack';
+
+// A new revision on every build, so the precached pages are fetched again after each deploy.
+const revision = randomUUID();
+
+/** The app's shell pages: precached, so the PWA opens and navigates with no network. */
+const SHELL_PAGES = [
+  '/',
+  '/login',
+  '/inventory',
+  '/inventory/fabric',
+  '/inventory/suppliers',
+  '/purchases',
+  '/purchases/new',
+  '/purchases/view',
+  '/~offline',
+];
+
+/** Builds and serves /serwist/sw.js from src/app/sw.ts (Serwist for Turbopack). */
+export const { dynamic, dynamicParams, revalidate, generateStaticParams, GET } = createSerwistRoute(
+  {
+    swSrc: 'src/app/sw.ts',
+    additionalPrecacheEntries: SHELL_PAGES.map((url) => ({ url, revision })),
+    useNativeEsbuild: true,
+  },
+);

@@ -1,0 +1,336 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import './shadcn.css';
+
+/* Dark mode is class-based (next-themes sets `class="dark"` on <html>). */
+@custom-variant dark (&:is(.dark *));
+
+/* >>> brand-tokens.css (brand-assets.zip, 2026-10-29), merged verbatim. Edit tokens here only
+   with the owner's approval; src/app/tokens.contrast.test.ts guards contrast. >>> */
+/* ==========================================================================
+   GHAIT / غيث — Design tokens
+   Source: logo colors sampled from the logo file. Compatible with
+   Tailwind CSS v4 (@theme) and shadcn/ui variable names.
+   Put in: apps/web/src/app/globals.css (after @import "tailwindcss";)
+   ========================================================================== */
+
+/* ---------- 1. Raw brand scales (do not use directly in components) ---------- */
+:root {
+  /* Burgundy — brand background. 800 = logo color */
+  --burgundy-50: #fbf1f2;
+  --burgundy-100: #f5dde0;
+  --burgundy-200: #e8b9bf;
+  --burgundy-300: #d58b95;
+  --burgundy-400: #bc5766;
+  --burgundy-500: #9a3446;
+  --burgundy-600: #7a222f;
+  --burgundy-700: #5f1823;
+  --burgundy-800: #491017; /* BRAND */
+  --burgundy-900: #350b11;
+  --burgundy-950: #22070a;
+
+  /* Gold — brand accent. 500 = logo color */
+  --gold-50: #fdf8ea;
+  --gold-100: #faefc9;
+  --gold-200: #f4dd93;
+  --gold-300: #edc85b;
+  --gold-400: #e3b23a;
+  --gold-500: #d8a123; /* BRAND */
+  --gold-600: #b5800f;
+  --gold-700: #9a6f10;
+  --gold-800: #7a5a0b; /* gold used as TEXT on light surfaces (>= 5.9:1) */
+  --gold-900: #5a420a;
+  --gold-950: #342606;
+
+  /* Cream — brand light. 300 = logo color */
+  --cream-50: #fffdf9; /* cards */
+  --cream-100: #fbf5ec; /* page background */
+  --cream-200: #f5eadb;
+  --cream-300: #f0dbc6; /* BRAND */
+  --cream-400: #e6c9ab;
+  --cream-500: #d4b08a;
+
+  /* Ink — logo shadow / text base */
+  --ink-900: #17140f; /* BRAND */
+  --ink-800: #2b1a17; /* body text on light */
+  --ink-600: #6e5a50; /* secondary text on light */
+}
+
+/* ---------- 2. Semantic tokens (shadcn names) — LIGHT (default) ---------- */
+:root {
+  --radius: 0.5rem;
+
+  --background: #fbf5ec;
+  --foreground: #2b1a17;
+
+  --card: #fffdf9;
+  --card-foreground: #2b1a17;
+  --popover: #fffdf9;
+  --popover-foreground: #2b1a17;
+
+  --primary: #491017; /* burgundy */
+  --primary-foreground: #fbf5ec; /* 14.1:1 */
+
+  --secondary: #f0dbc6; /* cream */
+  --secondary-foreground: #491017; /* 11.4:1 */
+
+  --muted: #f3e8d8;
+  --muted-foreground: #6e5a50; /* 5.4:1 on muted */
+
+  --accent: #d8a123; /* gold: fills, highlights, primary CTA of a flow */
+  --accent-foreground: #17140f; /* 7.9:1 */
+
+  --destructive: #c62828;
+  --destructive-foreground: #ffffff; /* 5.6:1 */
+
+  --border: #e6d3bd; /* decorative dividers */
+  --input: #9c856d; /* input outlines (>= 3:1) */
+  --ring: #b5800f; /* focus ring: always 2px + 2px offset */
+
+  /* Status */
+  --success: #2e7d4f;
+  --success-foreground: #ffffff;
+  --warning: #b45309;
+  --warning-foreground: #ffffff;
+  --info: #2b5f8e;
+  --info-foreground: #ffffff;
+
+  /* Business semantics (use these names in feature code, not raw colors) */
+  --profit: var(--success);
+  --loss: var(--destructive);
+  --debt: var(--warning);
+  --capital: var(--info);
+  --estimated: var(--gold-800); /* "estimated"/provisional values */
+
+  /* Charts */
+  --chart-1: #7a222f;
+  --chart-2: #d8a123;
+  --chart-3: #2b5f8e;
+  --chart-4: #2e7d4f;
+  --chart-5: #8c6d5b;
+
+  /* App shell: sidebar is brand burgundy in both themes */
+  --sidebar: #491017;
+  --sidebar-foreground: #f0dbc6;
+  --sidebar-primary: #d8a123;
+  --sidebar-primary-foreground: #17140f;
+  --sidebar-accent: #5f1823;
+  --sidebar-accent-foreground: #fbf5ec;
+  --sidebar-border: #5f1823;
+  --sidebar-ring: #d8a123;
+
+  /* Elevation (warm) */
+  --shadow-sm: 0 1px 2px rgba(73, 16, 23, 0.06);
+  --shadow-md: 0 4px 12px rgba(73, 16, 23, 0.08);
+  --shadow-lg: 0 12px 32px rgba(73, 16, 23, 0.12);
+}
+
+/* ---------- 3. DARK ---------- */
+.dark {
+  --background: #2a0a0f;
+  --foreground: #f5e6d3;
+
+  --card: #3a1119;
+  --card-foreground: #f5e6d3;
+  --popover: #3a1119;
+  --popover-foreground: #f5e6d3;
+
+  --primary: #d8a123;
+  --primary-foreground: #17140f;
+
+  --secondary: #4a1b24;
+  --secondary-foreground: #f0dbc6;
+
+  --muted: #3a1119;
+  --muted-foreground: #c9b3a0; /* 8.2:1 */
+
+  --accent: #d8a123;
+  --accent-foreground: #17140f;
+
+  --destructive: #ff7b7b;
+  --destructive-foreground: #2a0a0f;
+
+  --border: #5a2a33;
+  --input: #8a5f66;
+  --ring: #d8a123;
+
+  --success: #5fbf86;
+  --success-foreground: #0f2a1a;
+  --warning: #f0a04b;
+  --warning-foreground: #2a1604;
+  --info: #7fb2e5;
+  --info-foreground: #0b2236;
+
+  --estimated: var(--gold-300);
+
+  --chart-1: #e8b9bf;
+  --chart-2: #d8a123;
+  --chart-3: #7fb2e5;
+  --chart-4: #5fbf86;
+  --chart-5: #c9b3a0;
+
+  --sidebar: #22070a;
+  --sidebar-border: #3a1119;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+
+/* ---------- 4. Tailwind v4 theme mapping ---------- */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-profit: var(--profit);
+  --color-loss: var(--loss);
+  --color-debt: var(--debt);
+  --color-capital: var(--capital);
+  --color-estimated: var(--estimated);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* raw scales available as utilities: bg-burgundy-800, text-gold-800 … */
+  --color-burgundy-50: var(--burgundy-50);
+  --color-burgundy-100: var(--burgundy-100);
+  --color-burgundy-200: var(--burgundy-200);
+  --color-burgundy-300: var(--burgundy-300);
+  --color-burgundy-400: var(--burgundy-400);
+  --color-burgundy-500: var(--burgundy-500);
+  --color-burgundy-600: var(--burgundy-600);
+  --color-burgundy-700: var(--burgundy-700);
+  --color-burgundy-800: var(--burgundy-800);
+  --color-burgundy-900: var(--burgundy-900);
+  --color-burgundy-950: var(--burgundy-950);
+  --color-gold-50: var(--gold-50);
+  --color-gold-100: var(--gold-100);
+  --color-gold-200: var(--gold-200);
+  --color-gold-300: var(--gold-300);
+  --color-gold-400: var(--gold-400);
+  --color-gold-500: var(--gold-500);
+  --color-gold-600: var(--gold-600);
+  --color-gold-700: var(--gold-700);
+  --color-gold-800: var(--gold-800);
+  --color-gold-900: var(--gold-900);
+  --color-gold-950: var(--gold-950);
+  --color-cream-50: var(--cream-50);
+  --color-cream-100: var(--cream-100);
+  --color-cream-200: var(--cream-200);
+  --color-cream-300: var(--cream-300);
+  --color-cream-400: var(--cream-400);
+  --color-cream-500: var(--cream-500);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+
+  /* Fonts are loaded with next/font and exposed as these variables */
+  --font-sans: var(--font-body), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-heading), var(--font-body), ui-sans-serif, sans-serif;
+}
+
+/* ---------- 5. Base ---------- */
+@layer base {
+  html {
+    font-family: var(--font-sans);
+  }
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-size: 16px; /* >= 16px avoids iOS input zoom */
+    line-height: 1.7; /* Arabic needs more leading */
+    -webkit-font-smoothing: antialiased;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+    line-height: 1.35;
+  }
+  /* Money, lengths and any figures: aligned digits */
+  .num,
+  [data-num] {
+    font-variant-numeric: tabular-nums lining-nums;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: var(--gold-200);
+    color: var(--ink-900);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* ---------- 6. Brand signature: the gold diamond (from the logo) ---------- */
+.diamond {
+  display: inline-block;
+  width: 0.5em;
+  height: 0.5em;
+  background: var(--gold-500);
+  transform: rotate(45deg);
+  flex: none;
+}
+/* <<< end brand-tokens.css <<< */
+
+/* ---------- App additions (no new colors) ---------- */
+
+/* shadcn's base rule: bare `border`/`divide` utilities use the --border token, not currentColor. */
+@layer base {
+  *,
+  ::before,
+  ::after {
+    border-color: var(--border);
+  }
+}
+
+/* shadcn components use `font-heading`: same stack as the tokens' `font-display`. A utility
+   (not a theme key) so it never shadows the --font-heading variable set by next/font. */
+@utility font-heading {
+  font-family: var(--font-heading), var(--font-body), ui-sans-serif, sans-serif;
+}
