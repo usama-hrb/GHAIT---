@@ -9,15 +9,13 @@ import {
 } from '@fabric/contracts';
 import { Controller, Get, HttpCode, Inject, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiNoContentResponse, ApiTags } from '@nestjs/swagger';
-import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { SkipThrottle, ThrottlerGuard } from '@nestjs/throttler';
 import type { CookieOptions, Request, Response } from 'express';
 import { ZodBody, ZodResponse } from '../../common/index.js';
 import { APP_CONFIG, type AppConfig } from '../../config/index.js';
 import { AuditExempt } from '../audit/index.js';
 import { type AuthenticatedUser, CurrentUser, Public } from './auth.decorators.js';
 import { AuthService, type IssuedTokens } from './auth.service.js';
-
-const MINUTE_MS = 60_000;
 
 /**
  * The access token is returned in the body (the web client keeps it in memory); the refresh
@@ -33,6 +31,7 @@ export class AuthController {
 
   @Public()
   @UseGuards(ThrottlerGuard)
+  @SkipThrottle({ refresh: true })
   @Post('login')
   @HttpCode(200)
   @ZodResponse(accessTokenResponseSchema)
@@ -50,7 +49,7 @@ export class AuthController {
     'rotation runs its own transaction: a reused token must revoke its family although the request fails',
   )
   @UseGuards(ThrottlerGuard)
-  @Throttle({ default: { limit: 30, ttl: MINUTE_MS } })
+  @SkipThrottle({ login: true })
   @Post('refresh')
   @HttpCode(200)
   @ZodResponse(accessTokenResponseSchema)

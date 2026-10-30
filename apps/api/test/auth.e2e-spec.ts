@@ -291,3 +291,27 @@ describe('login rate limit', () => {
     expect(errorCode(blocked.body)).toBe('too_many_requests');
   });
 });
+
+describe('refresh rate limit', () => {
+  let t: TestApp;
+
+  beforeAll(async () => {
+    t = await createTestApp({ env: { AUTH_REFRESH_RATE_LIMIT: '2' } });
+  });
+
+  afterAll(async () => {
+    await t.close();
+  });
+
+  it('limits refreshes by AUTH_REFRESH_RATE_LIMIT, on a counter of their own', async () => {
+    let cookie = (await t.login()).refreshCookie;
+    for (let refresh = 0; refresh < 2; refresh++) {
+      const response = await t.http().post('/auth/refresh').set('cookie', cookie).expect(200);
+      cookie = refreshCookieOf(response) ?? '';
+    }
+    const blocked = await t.http().post('/auth/refresh').set('cookie', cookie).expect(429);
+    expect(errorCode(blocked.body)).toBe('too_many_requests');
+    // Logins still count against their own limit only.
+    await t.login();
+  });
+});

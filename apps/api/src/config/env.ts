@@ -19,6 +19,8 @@ const envSchema = z
     AUTH_COOKIE_PATH: z.string().startsWith('/').default('/api/auth'),
     /** Login attempts per client IP per minute (brute-force guard). */
     AUTH_LOGIN_RATE_LIMIT: z.coerce.number().int().min(1).max(1000).default(5),
+    /** Token refreshes per client IP per minute: one per page load, so above login's limit. */
+    AUTH_REFRESH_RATE_LIMIT: z.coerce.number().int().min(1).max(1000).default(30),
   })
   .refine((env) => env.NODE_ENV !== 'production' || !env.JWT_ACCESS_SECRET.includes('change-me'), {
     path: ['JWT_ACCESS_SECRET'],
@@ -37,6 +39,7 @@ export interface AppConfig {
     readonly refreshTtlDays: number;
     readonly cookiePath: string;
     readonly loginRateLimit: number;
+    readonly refreshRateLimit: number;
     /** Secure cookies everywhere but local development and tests (plain http). */
     readonly cookieSecure: boolean;
   };
@@ -67,6 +70,7 @@ export function parseConfig(env: Readonly<Record<string, string | undefined>>): 
       refreshTtlDays: data.REFRESH_TOKEN_TTL_DAYS,
       cookiePath: data.AUTH_COOKIE_PATH,
       loginRateLimit: data.AUTH_LOGIN_RATE_LIMIT,
+      refreshRateLimit: data.AUTH_REFRESH_RATE_LIMIT,
       cookieSecure: data.NODE_ENV === 'production',
     },
   };

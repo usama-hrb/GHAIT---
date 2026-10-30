@@ -1,7 +1,18 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestApp, type TestApp } from './support/app.js';
 
-const APPEND_ONLY = new Set(['audit_log', 'stock_move', 'sync_conflict', 'sync_op']);
+const APPEND_ONLY = new Set([
+  'audit_log',
+  'payment',
+  'payment_allocation',
+  'sale_line',
+  'sale_void',
+  'server_instance',
+  'stock_move',
+  'sync_conflict',
+  'sync_op',
+  'write_off',
+]);
 const BASE_COLUMNS = ['id', 'created_at', 'updated_at', 'device_id', 'voided_at', 'server_seq'];
 
 describe('database rules (CLAUDE.md "Data rules")', () => {
@@ -26,16 +37,24 @@ describe('database rules (CLAUDE.md "Data rules")', () => {
       'app_user',
       'audit_log',
       'auth_session',
+      'customer',
       'device',
       'fabric',
+      'payment',
+      'payment_allocation',
       'purchase',
       'roll',
+      'sale',
+      'sale_line',
+      'sale_void',
+      'server_instance',
       'setting',
       'stock_move',
       'supplier',
       'sync_conflict',
       'sync_op',
       'variant',
+      'write_off',
     ]);
   });
 

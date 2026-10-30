@@ -1,9 +1,20 @@
-import type { Roll, StockMove } from '@fabric/contracts';
-import { Injectable, type OnModuleInit } from '@nestjs/common';
-import { type SyncedRow, SyncRegistry } from '../sync/index.js';
+import {
+  checkStockMove,
+  type Roll,
+  type RollDetail,
+  type RollHistory,
+  rollLedgerOf,
+  type StockMove,
+} from '@fabric/contracts';
+import type { RollLedger } from '@fabric/core';
+import { HttpStatus, Injectable, type OnModuleInit } from '@nestjs/common';
+import { AppHttpException } from '../../common/index.js';
+import { type SyncedRow, type SyncHandler, SyncRegistry, SyncRejection } from '../sync/index.js';
 import { RollRepository, StockMoveRepository } from './inventory.repositories.js';
 
-/** Rolls and their stock moves (SPEC §2.2, §13). Screens and corrections: BUILD_PROMPTS 3.3. */
+const stored = <R>(row: SyncedRow<R>) => ({ ...row.record, serverSeq: row.serverSeq });
+
+/** Rolls and their stock moves (SPEC §2.2, §2.4, §13). Derived values come from @fabric/core. */
 @Injectable()
 export class InventoryService implements OnModuleInit {
   constructor(
@@ -14,7 +25,13 @@ export class InventoryService implements OnModuleInit {
 
   onModuleInit(): void {
     this.registry.register(this.rolls);
-    this.registry.register(this.moves);
+    const moves: SyncHandler<'stock_move'> = {
+      entity: 'stock_move',
+      find: (id) => this.moves.find(id),
+      pull: (since, limit) => this.moves.pull(since, limit),
+      append: (move, context) => this.record(move, context),
+    };
+    this.registry.register(moves);
   }
 
   /** For a purchase: its rolls and their `purchase` moves, in the caller's transaction. */
@@ -24,7 +41,75 @@ export class InventoryService implements OnModuleInit {
     return inserted;
   }
 
+  /** Each roll with every move it has so far (for pricing a sale on the server's view). */
+  async histories(rollIds: readonly string[]): Promise<Map<string, RollHistory>> {
+    const unique = [...new Set(rollIds)];
+    const [rolls, moves] = await Promise.all([
+      this.rolls.findMany(unique),
+      this.moves.listByRolls(unique),
+    ]);
+    return new Map(
+      rolls.map((roll) => [
+        roll.record.id,
+        {
+          roll: roll.record,
+          moves: moves
+            .filter((move) => move.record.rollId === roll.record.id)
+            .map((move) => ({ ...move.record, serverSeq: move.serverSeq })),
+        },
+      ]),
+    );
+  }
+
+  async ledgers(rollIds: readonly string[]): Promise<Map<string, RollLedger>> {
+    const histories = await this.histories(rollIds);
+    return new Map(
+      [...histories].map(([id, history]) => [id, rollLedgerOf(history.roll, history.moves)]),
+    );
+  }
+
+  /** The moves these records caused (a sale's lines). */
+  async movesOf(refIds: readonly string[]): Promise<StockMove[]> {
+    return (await this.moves.listByRefs(refIds)).map((row) => row.record);
+  }
+
+  /** Moves that come inside another record's op (a sale, a void), in the caller's transaction. */
+  async insertMoves(moves: readonly StockMove[]): Promise<void> {
+    await this.moves.insertMany(moves);
+  }
+
   rollsOfPurchase(purchaseId: string): Promise<SyncedRow<Roll>[]> {
     return this.rolls.listByPurchase(purchaseId);
+  }
+
+  async detail(rollId: string): Promise<RollDetail> {
+    const roll = await this.rolls.find(rollId);
+    if (!roll) throw new AppHttpException('not_found', `No roll ${rollId}`, HttpStatus.NOT_FOUND);
+    const moves = await this.moves.listByRoll(rollId);
+    return {
+      roll: stored(roll),
+      moves: moves.map(stored),
+      ledger: rollLedgerOf(roll.record, moves.map(stored)),
+    };
+  }
+
+  /** A loss, stocktake count or measurement pushed by a device: re-checked against its roll. */
+  private async record(
+    move: StockMove,
+    context: { entityId: string; deviceId: string },
+  ): Promise<SyncedRow<StockMove>> {
+    if (move.id !== context.entityId || move.deviceId !== context.deviceId) {
+      throw new SyncRejection('bad_request', 'The move does not match the op (id or device)');
+    }
+    const roll = await this.rolls.find(move.rollId);
+    if (!roll) throw new SyncRejection('conflict', 'Refers to a roll the server does not have');
+    const history = (await this.moves.listByRoll(move.rollId)).map((row) => row.record);
+    const issues = checkStockMove(move, roll.record, history);
+    if (issues.length > 0)
+      throw new SyncRejection('validation_failed', 'Invalid stock move', issues);
+    await this.moves.insertMany([move]);
+    const inserted = await this.moves.find(move.id);
+    if (!inserted) throw new Error(`stock move ${move.id} not stored`);
+    return inserted;
   }
 }

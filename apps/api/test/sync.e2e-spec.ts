@@ -228,6 +228,33 @@ describe('sync push and pull (ADR 0002)', () => {
     expect(now[0]?.name).toBe('مكتب أحدث');
   });
 
+  it('a clock set ahead of the server does not win every conflict (BUILD_PROMPTS 3.6)', async () => {
+    const record = fabric({ deviceId: 'desk' });
+    const [created] = await push(upsert(record));
+    const base = created?.serverSeq ?? null;
+    // The phone's clock says next year: stored as at most 5 minutes after the server got it.
+    const ahead = new Date(Date.now() + 365 * 24 * 3_600_000).toISOString();
+    const [phone] = await push(
+      upsert({ ...record, deviceId: 'phone', name: 'المستقبل', updatedAt: ahead }, base),
+    );
+    expect(phone?.status).toBe('applied');
+    const { rows } = await t.sql.query<{ updated_at: Date }>(
+      `SELECT updated_at FROM fabric WHERE id = $1`,
+      [record.id],
+    );
+    expect(rows[0]?.updated_at.getTime()).toBeLessThanOrEqual(Date.now() + 5 * 60_000);
+    // So a later edit from a clock only slightly ahead wins, as it should.
+    const later = new Date(Date.now() + 10 * 60_000).toISOString();
+    const [desk] = await push(upsert({ ...record, name: 'لاحقاً', updatedAt: later }, base));
+    expect(desk?.status).toBe('applied');
+  });
+
+  it('devices pull the conflict log, and every page says which data set it comes from', async () => {
+    const first = await pull(0, 500);
+    expect(first.changes.some((change) => change.entity === 'sync_conflict')).toBe(true);
+    expect(first.epoch).toBe((await pull(first.nextSince)).epoch);
+  });
+
   it('an edit on the current version applies even with an older clock (no conflict)', async () => {
     const record = fabric({ updatedAt: at(30) });
     const [created] = await push(upsert(record));
@@ -304,7 +331,7 @@ describe('sync push and pull (ADR 0002)', () => {
     expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
     // Settings changed through the API reach the devices too (pull only).
     expect(new Set(all.changes.map((change) => change.entity))).toEqual(
-      new Set(['fabric', 'setting']),
+      new Set(['fabric', 'setting', 'sync_conflict']),
     );
     expect(all.changes.some((change) => (change.record as Fabric).voidedAt !== null)).toBe(true);
 
@@ -317,7 +344,12 @@ describe('sync push and pull (ADR 0002)', () => {
       if (!response.hasMore) break;
     }
     expect(paged).toEqual(seqs);
-    await expect(pull(since)).resolves.toEqual({ changes: [], nextSince: since, hasMore: false });
+    await expect(pull(since)).resolves.toEqual({
+      changes: [],
+      nextSince: since,
+      hasMore: false,
+      epoch: expect.any(String) as string,
+    });
   });
 
   it('requires a signed-in owner', async () => {

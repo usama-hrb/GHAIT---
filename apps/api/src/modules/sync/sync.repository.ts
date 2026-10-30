@@ -1,7 +1,8 @@
-import type { SyncOp, SyncOpResult } from '@fabric/contracts';
+import type { SyncConflict, SyncOp, SyncOpResult } from '@fabric/contracts';
 import { Injectable } from '@nestjs/common';
-import { eq } from 'drizzle-orm';
-import { schema, TransactionHost } from '../../database/index.js';
+import { asc, desc, eq, gt } from 'drizzle-orm';
+import { baseOf, schema, TransactionHost } from '../../database/index.js';
+import type { SyncedRow } from './sync.registry.js';
 
 export type SyncOpRow = typeof schema.syncOp.$inferSelect;
 type StoredStatus = SyncOpRow['status'];
@@ -48,5 +49,37 @@ export class SyncRepository {
       winnerRecord: conflict.winnerRecord,
       deviceId: conflict.op.deviceId,
     });
+  }
+
+  async pullConflicts(since: number, limit: number): Promise<SyncedRow<SyncConflict>[]> {
+    const rows = await this.tx.db
+      .select()
+      .from(schema.syncConflict)
+      .where(gt(schema.syncConflict.serverSeq, since))
+      .orderBy(asc(schema.syncConflict.serverSeq))
+      .limit(limit);
+    return rows.map((row) => ({
+      serverSeq: row.serverSeq,
+      record: {
+        ...baseOf(row),
+        opId: row.opId,
+        entity: row.entity,
+        entityId: row.entityId,
+        winner: row.winner === 'incoming' ? 'incoming' : 'server',
+        loser: row.loser,
+        winnerRecord: row.winnerRecord,
+      },
+    }));
+  }
+
+  /** The current epoch: the newest server_instance (migration 0011 adds the first). */
+  async epoch(): Promise<string> {
+    const [row] = await this.tx.db
+      .select({ id: schema.serverInstance.id })
+      .from(schema.serverInstance)
+      .orderBy(desc(schema.serverInstance.serverSeq))
+      .limit(1);
+    if (!row) throw new Error('server_instance is empty: run the migrations');
+    return row.id;
   }
 }

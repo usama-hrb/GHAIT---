@@ -7,3 +7,11 @@ export function deviceCodeOf(n: number): string {
   }
   return code;
 }
+
+/** A → 1, Z → 26, AA → 27 (the inverse of deviceCodeOf). */
+export function deviceNumberOf(code: string): number {
+  if (!/^[A-Z]{1,3}$/.test(code)) throw new RangeError(`not a device code: ${code}`);
+  let n = 0;
+  for (const letter of code) n = n * 26 + (letter.charCodeAt(0) - 64);
+  return n;
+}

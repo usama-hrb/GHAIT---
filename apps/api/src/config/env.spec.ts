@@ -19,6 +19,7 @@ describe('parseConfig', () => {
         refreshTtlDays: 30,
         cookiePath: '/api/auth',
         loginRateLimit: 5,
+        refreshRateLimit: 30,
         cookieSecure: false,
       },
     });

@@ -17,11 +17,15 @@ import { UsersRepository } from './users.repository.js';
     AuditModule,
     // Secrets are passed per call from the validated config.
     JwtModule.register({}),
-    // Only the routes with @UseGuards(ThrottlerGuard) are limited: login (AUTH_LOGIN_RATE_LIMIT
-    // a minute per client IP) and refresh (its own limit, AuthController).
+    // Only the routes with @UseGuards(ThrottlerGuard) are limited, each by its own throttler
+    // (AuthController skips the other): login (AUTH_LOGIN_RATE_LIMIT a minute per client IP) and
+    // refresh (AUTH_REFRESH_RATE_LIMIT).
     ThrottlerModule.forRootAsync({
       inject: [APP_CONFIG],
-      useFactory: (config: AppConfig) => [{ ttl: 60_000, limit: config.auth.loginRateLimit }],
+      useFactory: (config: AppConfig) => [
+        { name: 'login', ttl: 60_000, limit: config.auth.loginRateLimit },
+        { name: 'refresh', ttl: 60_000, limit: config.auth.refreshRateLimit },
+      ],
     }),
   ],
   controllers: [AuthController],

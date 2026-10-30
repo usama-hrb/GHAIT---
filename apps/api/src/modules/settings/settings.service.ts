@@ -6,7 +6,7 @@ import {
   type Setting,
   type SettingKey,
   settingInEffect,
-  SHOP_TIME_ZONE,
+  shopDate,
   type SyncedSetting,
 } from '@fabric/contracts';
 import { Injectable, type OnModuleInit } from '@nestjs/common';
@@ -17,7 +17,7 @@ import { type SettingRow, SettingsRepository } from './settings.repository.js';
 
 /** Today in the shop's time zone, YYYY-MM-DD. */
 export function shopToday(now = new Date()): string {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: SHOP_TIME_ZONE }).format(now);
+  return shopDate(now);
 }
 
 /**

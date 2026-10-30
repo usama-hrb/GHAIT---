@@ -39,3 +39,12 @@ export const syncConflict = pgTable(
   },
   (table) => [index('sync_conflict_entity_idx').on(table.entity, table.entityId)],
 );
+
+/**
+ * The server's data set (ADR 0002, BUILD_PROMPTS 3.6): the newest row's id is the epoch every
+ * pull reports. A restore (backup or export) adds a row, so devices know to pull from 0 again.
+ * Append-only.
+ */
+export const serverInstance = pgTable('server_instance', {
+  ...baseColumns('server_instance'),
+});

@@ -17,10 +17,14 @@ import { DatabaseModule } from './database/index.js';
 import { AuditInterceptor, AuditModule } from './modules/audit/index.js';
 import { AuthModule } from './modules/auth/index.js';
 import { CatalogModule } from './modules/catalog/index.js';
+import { CustomersModule } from './modules/customers/index.js';
+import { DataModule } from './modules/data/index.js';
 import { DevicesModule } from './modules/devices/index.js';
 import { HealthModule } from './modules/health/index.js';
 import { InventoryModule } from './modules/inventory/index.js';
 import { PurchasingModule } from './modules/purchasing/index.js';
+import { ReceivablesModule } from './modules/receivables/index.js';
+import { SalesModule } from './modules/sales/index.js';
 import { SettingsModule } from './modules/settings/index.js';
 import { SyncModule } from './modules/sync/index.js';
 
@@ -41,6 +45,10 @@ export class AppModule implements NestModule {
         DevicesModule,
         InventoryModule,
         PurchasingModule,
+        ReceivablesModule,
+        SalesModule,
+        CustomersModule,
+        DataModule,
         HealthModule,
       ],
       providers: [

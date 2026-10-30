@@ -9,7 +9,7 @@ import {
   type SyncPullResponse,
   voidPayloadSchema,
 } from '@fabric/contracts';
-import { HttpStatus, Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable, type OnModuleInit } from '@nestjs/common';
 import type { z } from 'zod';
 import {
   AppHttpException,
@@ -29,10 +29,25 @@ type OpOutcome = Omit<SyncOpResult, 'opId' | 'originalStatus'> & {
   status: 'applied' | 'conflict' | 'rejected';
 };
 
+/** How far ahead of the server's clock a device's updatedAt may be when it is stored (5 min). */
+export const MAX_CLOCK_AHEAD_MS = 5 * 60_000;
+
 /** (updatedAt, deviceId) of `a` is later than `b`'s: last write wins (ADR 0002). */
 function isLater(a: RecordBase, b: RecordBase): boolean {
   const difference = Date.parse(a.updatedAt) - Date.parse(b.updatedAt);
   return difference !== 0 ? difference > 0 : a.deviceId > b.deviceId;
+}
+
+/**
+ * A pushed record's updatedAt, at most MAX_CLOCK_AHEAD_MS after the server received it: a device
+ * whose clock runs ahead cannot win every later conflict (BUILD_PROMPTS 3.6). The device gets
+ * the stored value back on its next pull.
+ */
+function withinClock(record: AnyRecord, now = Date.now()): AnyRecord {
+  const cap = now + MAX_CLOCK_AHEAD_MS;
+  return Date.parse(record.updatedAt) > cap
+    ? { ...record, updatedAt: new Date(cap).toISOString() }
+    : record;
 }
 
 /** What an op of this entity carries: its pushSchema when it has one, else its record. */
@@ -53,13 +68,21 @@ const applied = (serverSeq: number): OpOutcome => ({ status: 'applied', serverSe
  * voidedAt.
  */
 @Injectable()
-export class SyncService {
+export class SyncService implements OnModuleInit {
   constructor(
     private readonly registry: SyncRegistry,
     private readonly repository: SyncRepository,
     private readonly audit: AuditService,
     private readonly tx: TransactionHost,
   ) {}
+
+  onModuleInit(): void {
+    const conflicts: SyncHandler<'sync_conflict'> = {
+      entity: 'sync_conflict',
+      pull: (since, limit) => this.repository.pullConflicts(since, limit),
+    };
+    this.registry.register(conflicts);
+  }
 
   /** Each op in its own transaction, in order; one failing op does not stop the others. */
   async push(ops: readonly SyncOp[]): Promise<SyncOpResult[]> {
@@ -85,6 +108,7 @@ export class SyncService {
       changes,
       nextSince: changes.at(-1)?.serverSeq ?? since,
       hasMore: merged.length > limit,
+      epoch: await this.repository.epoch(),
     };
   }
 
@@ -305,7 +329,7 @@ export class SyncService {
         issuesOf(parsed.error, ['payload']),
       );
     }
-    const record = parsed.data as AnyRecord;
+    const record = withinClock(parsed.data);
     if (record.id !== op.entityId || record.deviceId !== op.deviceId) {
       throw new SyncRejection('bad_request', 'The record does not match the op (id or device)');
     }
