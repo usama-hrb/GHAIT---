@@ -27,6 +27,11 @@ export const optionalTextSchema = (max: number) =>
 /** The shop's time zone: "today" and period boundaries are computed in it. */
 export const SHOP_TIME_ZONE = 'Africa/Casablanca';
 
+/** The shop's calendar date (YYYY-MM-DD) at `now`: the same day on every device and the API. */
+export function shopDate(now: Date): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: SHOP_TIME_ZONE }).format(now);
+}
+
 /** Request headers shared by the web client and the API. */
 export const HEADERS = {
   /** The device making the change; stored in device_id (ADR 0002). */

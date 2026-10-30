@@ -14,6 +14,8 @@ export const SETTINGS = {
     schema: z.enum(['average', 'last']),
     default: DEFAULT_EST_CM_PER_KG_POLICY,
   },
+  /** SPEC §4: the shop's name at the top of a shared invoice. */
+  shop_name: { schema: z.string().trim().min(1).max(80), default: 'غيث' },
   /** SPEC §4: a roll under this length becomes a remnant. */
   remnant_threshold_cm: { schema: z.int().min(0).max(100_000), default: 100 },
   /** SPEC §10. */

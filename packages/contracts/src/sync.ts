@@ -1,6 +1,12 @@
 import { z } from 'zod';
 import { fabricSchema, recordBaseSchema, supplierSchema, variantSchema } from './catalog.js';
 import { deviceIdSchema, idSchema, isoDateSchema, timestampSchema } from './common.js';
+import {
+  customerSchema,
+  paymentAllocationSchema,
+  paymentSchema,
+  writeOffSchema,
+} from './customers.js';
 import { errorCodeSchema, validationIssueSchema } from './errors.js';
 import {
   purchaseAggregateSchema,
@@ -8,24 +14,66 @@ import {
   rollSchema,
   stockMoveSchema,
 } from './purchasing.js';
+import { creditApplicationSchema, paymentAggregateSchema } from './receivables.js';
+import {
+  saleAggregateSchema,
+  saleLineSchema,
+  saleSchema,
+  saleVoidAggregateSchema,
+  saleVoidSchema,
+} from './sales.js';
 
 /**
  * Every entity the devices sync (ADR 0002). Each slice adds its entities here, with how the
  * server merges them:
  * - mutable: upsert and void ops, last write wins on (updatedAt, deviceId);
  * - append_only: append ops, never overwritten (stock_move, payment…);
- * - pull_only: devices receive it, but change it through the API (settings, for now) or
- *   another entity's op (rolls and their moves come with their purchase).
+ * - pull_only: devices receive it, but change it through the API (settings, for now).
  * `schema` is the record as stored and pulled; `pushSchema`, when given, is an op's payload.
  */
+/**
+ * The losing side of a last-write-wins conflict (ADR 0002), kept on the server and pulled by
+ * every device for the read-only conflict screen (BUILD_PROMPTS 3.6).
+ */
+export const syncConflictSchema = recordBaseSchema.extend({
+  opId: idSchema,
+  entity: z.string(),
+  entityId: idSchema,
+  /** `incoming`: the pushed change won; `server`: the version already there won. */
+  winner: z.enum(['incoming', 'server']),
+  loser: z.unknown(),
+  winnerRecord: z.unknown(),
+});
+export type SyncConflict = z.output<typeof syncConflictSchema>;
+
 export const SYNC_ENTITIES = {
   fabric: { merge: 'mutable', schema: fabricSchema },
   variant: { merge: 'mutable', schema: variantSchema },
   supplier: { merge: 'mutable', schema: supplierSchema },
   /** A purchase op carries its rolls and moves (purchaseAggregateSchema), applied atomically. */
   purchase: { merge: 'append_only', schema: purchaseSchema, pushSchema: purchaseAggregateSchema },
-  roll: { merge: 'pull_only', schema: rollSchema },
-  stock_move: { merge: 'pull_only', schema: stockMoveSchema },
+  /** Only its remnant mark changes after the purchase (checkRollUpdate). */
+  roll: { merge: 'mutable', schema: rollSchema },
+  /** Losses, stocktake counts and measurements (checkStockMove); never overwritten. */
+  stock_move: { merge: 'append_only', schema: stockMoveSchema },
+  customer: { merge: 'mutable', schema: customerSchema },
+  /** A sale op carries its lines, moves and the payment made there (checkSaleAggregate). */
+  sale: { merge: 'append_only', schema: saleSchema, pushSchema: saleAggregateSchema },
+  /** Lines arrive inside their sale. */
+  sale_line: { merge: 'pull_only', schema: saleLineSchema },
+  /** A customer's payment or refund with its allocations (checkPaymentAggregate); a payment at the counter comes inside its sale. */
+  payment: { merge: 'append_only', schema: paymentSchema, pushSchema: paymentAggregateSchema },
+  /** A credit applied to unpaid invoices (checkAllocations). */
+  payment_allocation: {
+    merge: 'append_only',
+    schema: paymentAllocationSchema,
+    pushSchema: creditApplicationSchema,
+  },
+  /** A bad debt (checkWriteOff). */
+  write_off: { merge: 'append_only', schema: writeOffSchema },
+  /** A void op carries the reversals and the refund (checkSaleVoid); the sale gets voidedAt. */
+  sale_void: { merge: 'append_only', schema: saleVoidSchema, pushSchema: saleVoidAggregateSchema },
+  sync_conflict: { merge: 'pull_only', schema: syncConflictSchema },
   setting: {
     merge: 'pull_only',
     schema: recordBaseSchema.extend({
@@ -133,5 +181,10 @@ export const syncPullResponseSchema = z.object({
   /** Pass as `since` next time. */
   nextSince: z.int().min(0),
   hasMore: z.boolean(),
+  /**
+   * The server's data set. It changes when the database is restored from a backup or an export:
+   * a device that sees a new epoch pulls everything again from 0 (its cursor is meaningless now).
+   */
+  epoch: idSchema,
 });
 export type SyncPullResponse = z.infer<typeof syncPullResponseSchema>;

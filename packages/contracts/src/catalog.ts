@@ -90,16 +90,18 @@ export type VariantInput = z.input<typeof variantInputSchema>;
 export const variantSchema = recordBaseSchema.extend(variantFields.shape);
 export type Variant = z.output<typeof variantSchema>;
 
+/** Western digits (inputs normalise Arabic-Indic ones first); blank becomes null. */
+export const phoneSchema = z
+  .string()
+  .trim()
+  .regex(/^\+?[0-9 ()-]{6,20}$/)
+  .nullable()
+  .or(z.literal('').transform(() => null))
+  .default(null);
+
 const supplierFields = z.object({
   name: z.string().trim().min(1).max(80),
-  /** Western digits (inputs normalise Arabic-Indic ones first). */
-  phone: z
-    .string()
-    .trim()
-    .regex(/^\+?[0-9 ()-]{6,20}$/)
-    .nullable()
-    .or(z.literal('').transform(() => null))
-    .default(null),
+  phone: phoneSchema,
   notes: optionalText(1000).default(null),
 });
 export const supplierInputSchema = supplierFields;
