@@ -27,7 +27,7 @@ test('a fabric added offline reaches the server and a second device', async ({
   await page.getByRole('button', { name: 'حفظ' }).click();
   await expect(page).toHaveURL(/\/inventory\/fabric\?id=/);
   await page.getByRole('link', { name: 'العودة إلى الأقمشة' }).click();
-  await expect(page.getByRole('link', { name: 'روزا' })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'روزا', exact: true })).toBeVisible();
   await expect(status).toContainText('عملية معلّقة واحدة');
   expect((await serverFabrics(request)).map((fabric) => fabric.name)).not.toContain('روزا');
 
@@ -46,7 +46,7 @@ test('a fabric added offline reaches the server and a second device', async ({
   });
   const phonePage = await phone.newPage();
   await signIn(phonePage);
-  await expect(phonePage.getByRole('link', { name: 'روزا' })).toBeVisible();
+  await expect(phonePage.getByRole('link', { name: 'روزا', exact: true })).toBeVisible();
 
   await desk.close();
   await phone.close();

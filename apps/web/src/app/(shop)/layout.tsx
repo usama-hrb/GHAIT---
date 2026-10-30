@@ -2,7 +2,7 @@
 
 import { usePathname, useRouter } from 'next/navigation';
 import { type ReactNode, useEffect } from 'react';
-import { SignOutButton, SyncStatus } from '@/features/sync';
+import { SignOutButton, SyncStatus, UpdateNotice } from '@/features/sync';
 import { messages } from '@/i18n';
 import { useSession } from '@/local-db';
 import { AppShell, LoadingState } from '@/shared/brand';
@@ -41,6 +41,7 @@ export default function ShopLayout({ children }: { children: ReactNode }) {
         </>
       }
     >
+      <UpdateNotice />
       {children}
     </AppShell>
   );

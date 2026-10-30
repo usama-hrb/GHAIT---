@@ -8,7 +8,7 @@ import { useId, useState } from 'react';
 import { toast } from 'sonner';
 import { messages } from '@/i18n';
 import { type Local, useLiveQuery, useRepositories, ValidationError } from '@/local-db';
-import { EmptyState, LoadingState, OfflineNotice } from '@/shared/brand';
+import { EmptyState, LoadingState, OfflineNotice, VoidDialog } from '@/shared/brand';
 import { errorsByField } from '@/shared/lib/form-errors';
 import { Button } from '@/shared/ui/button';
 import {
@@ -23,7 +23,6 @@ import { Field, FieldError, FieldGroup, FieldLabel } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/shared/ui/input-group';
 import { Textarea } from '@/shared/ui/textarea';
-import { VoidDialog } from './void-dialog';
 
 const t = messages.catalog;
 

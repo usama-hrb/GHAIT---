@@ -16,7 +16,13 @@ import { TooltipProvider } from '@/shared/ui/tooltip';
  */
 export function AppProviders({ children }: { children: ReactNode }) {
   return (
-    <SerwistProvider swUrl="/serwist/sw.js" disable={process.env.NODE_ENV === 'development'}>
+    // No reload when the connection comes back (Serwist's default): it would throw away a form
+    // being filled in, and sync resumes by itself on the `online` event.
+    <SerwistProvider
+      swUrl="/serwist/sw.js"
+      disable={process.env.NODE_ENV === 'development'}
+      reloadOnOnline={false}
+    >
       <ThemeProvider>
         <DirectionProvider dir={dir}>
           <TooltipProvider>

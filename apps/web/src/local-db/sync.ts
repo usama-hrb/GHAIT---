@@ -16,6 +16,8 @@ import { type Session, SignedOutError } from './session';
 import type { LocalStore } from './store';
 
 const PULL_CURSOR = 'pullCursor';
+/** The server's data set the cursor belongs to (ADR 0002, slice 6). */
+const SYNC_EPOCH = 'syncEpoch';
 const PULL_LIMIT = 200;
 
 type AnyLocal = Local<{ id: string }>;
@@ -29,9 +31,18 @@ const TABLES = {
   purchase: 'purchases',
   roll: 'rolls',
   stock_move: 'stockMoves',
+  customer: 'customers',
+  sale: 'sales',
+  sale_line: 'saleLines',
+  payment: 'payments',
+  payment_allocation: 'paymentAllocations',
+  sale_void: 'saleVoids',
+  write_off: 'writeOffs',
+  sync_conflict: 'syncConflicts',
 } as const satisfies Record<SyncEntity, keyof ShopDatabase>;
 
-function tableOf(db: ShopDatabase, entity: SyncEntity): Table<AnyLocal, string> {
+/** The Dexie table of a synced entity. */
+export function tableOf(db: ShopDatabase, entity: SyncEntity): Table<AnyLocal, string> {
   return db.table<AnyLocal, string>(TABLES[entity]);
 }
 
@@ -264,6 +275,11 @@ export class SyncEngine {
     }
   }
 
+  /**
+   * Pulls page by page. A new epoch means the server's database was restored (a backup or an
+   * export): the cursor points into data that no longer exists, so everything is pulled again
+   * from 0. Pending local changes stay and are pushed as usual.
+   */
   private async pull(): Promise<void> {
     const { db } = this.store;
     for (;;) {
@@ -273,6 +289,14 @@ export class SyncEngine {
         `/sync/pull?since=${String(since)}&limit=${String(PULL_LIMIT)}`,
         syncPullResponseSchema,
       );
+      const epoch = await this.store.getMeta(SYNC_EPOCH);
+      if (epoch !== page.epoch) {
+        await this.store.setMeta(SYNC_EPOCH, page.epoch);
+        if (typeof epoch === 'string' && since > 0) {
+          await this.store.setMeta(PULL_CURSOR, 0);
+          continue;
+        }
+      }
       await applyPulledChanges(db, page);
       if (!page.hasMore) return;
     }

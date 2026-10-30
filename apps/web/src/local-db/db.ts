@@ -1,13 +1,21 @@
 import type {
+  Customer,
   Fabric,
+  Payment,
+  PaymentAllocation,
   Purchase,
   Roll,
+  Sale,
+  SaleLine,
+  SaleVoid,
   StockMove,
   Supplier,
+  SyncConflict,
   SyncedSetting,
   SyncOp,
   SyncOpResult,
   Variant,
+  WriteOff,
 } from '@fabric/contracts';
 import { Dexie, type EntityTable } from 'dexie';
 
@@ -43,6 +51,14 @@ export class ShopDatabase extends Dexie {
   purchases!: EntityTable<Local<Purchase>, 'id'>;
   rolls!: EntityTable<Local<Roll>, 'id'>;
   stockMoves!: EntityTable<Local<StockMove>, 'id'>;
+  customers!: EntityTable<Local<Customer>, 'id'>;
+  sales!: EntityTable<Local<Sale>, 'id'>;
+  saleLines!: EntityTable<Local<SaleLine>, 'id'>;
+  payments!: EntityTable<Local<Payment>, 'id'>;
+  paymentAllocations!: EntityTable<Local<PaymentAllocation>, 'id'>;
+  saleVoids!: EntityTable<Local<SaleVoid>, 'id'>;
+  writeOffs!: EntityTable<Local<WriteOff>, 'id'>;
+  syncConflicts!: EntityTable<Local<SyncConflict>, 'id'>;
   outbox!: EntityTable<OutboxEntry, 'seq'>;
   meta!: EntityTable<MetaEntry, 'key'>;
 
@@ -62,6 +78,24 @@ export class ShopDatabase extends Dexie {
       purchases: 'id, date',
       rolls: 'id, variantId, purchaseId, shortCode',
       stockMoves: 'id, rollId',
+    });
+    // v3, BUILD_PROMPTS 3.4: sales, their lines, customers, payments and voids; moves by cause.
+    this.version(3).stores({
+      stockMoves: 'id, rollId, refId',
+      customers: 'id, name',
+      sales: 'id, date, customerId',
+      saleLines: 'id, saleId, rollId',
+      payments: 'id, customerId',
+      paymentAllocations: 'id, saleId, paymentId',
+      saleVoids: 'id, saleId',
+    });
+    // v4, BUILD_PROMPTS 3.5: bad-debt write-offs.
+    this.version(4).stores({
+      writeOffs: 'id, saleId',
+    });
+    // v5, BUILD_PROMPTS 3.6: the server's conflict log, for the read-only sync screen.
+    this.version(5).stores({
+      syncConflicts: 'id, entityId',
     });
   }
 }

@@ -1,4 +1,4 @@
-export { DateAr, type DateArFormat } from './date-ar';
+export { DateAr, type DateArFormat, formatDateAr } from './date-ar';
 export { Kilograms } from './kilograms';
 export { MeterInput } from './meter-input';
 export { Meters } from './meters';

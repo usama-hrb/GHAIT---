@@ -24,6 +24,13 @@ export interface LocalDb {
 }
 
 export function createLocalDb(db = new ShopDatabase()): LocalDb {
+  // A newer app version (another tab, or after an update) upgrades the database: this tab's
+  // code is older, so it lets go and reloads with the new code. Its data is already saved.
+  db.on('versionchange', () => {
+    db.close();
+    window.location.reload();
+    return false;
+  });
   const store = new LocalStore(db);
   const session = new Session(store, new ApiClient(store));
   return {

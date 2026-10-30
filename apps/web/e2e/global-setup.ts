@@ -99,8 +99,9 @@ async function startApps(databaseUrl: string, children: ChildProcess[]): Promise
     MIGRATE_ON_START: 'true',
     LOG_LEVEL: 'warn',
     JWT_ACCESS_SECRET: 'e2e-only-secret-0123456789abcdefghijklmnop',
-    // Every test signs one or two browsers in from 127.0.0.1.
+    // Every test signs one or two browsers in from 127.0.0.1, and each page load refreshes.
     AUTH_LOGIN_RATE_LIMIT: '100',
+    AUTH_REFRESH_RATE_LIMIT: '1000',
   };
   children.push(start('node', ['dist/main.js'], API_DIR, apiEnv));
   await waitFor(`${E2E.apiUrl}/health`);

@@ -172,6 +172,7 @@ describe('applying the server’s answers', () => {
       ],
       nextSince: 23,
       hasMore: false,
+      epoch: crypto.randomUUID(),
     });
     expect((await repos.fabrics.get(local))?.name).toBe('محلي');
     expect(await repos.fabrics.get(other.id)).toMatchObject({
@@ -187,6 +188,8 @@ function fakeServer() {
   const records: { entity: string; serverSeq: number; record: unknown }[] = [];
   let seq = 0;
   let refreshValid = true;
+  let epoch = crypto.randomUUID();
+  const pushSizes: number[] = [];
   const calls: string[] = [];
   const json = (status: number, body: unknown) =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -212,6 +215,7 @@ function fakeServer() {
       const { ops } = JSON.parse(init.body as string) as {
         ops: { opId: string; entity: string; payload: unknown }[];
       };
+      pushSizes.push(ops.length);
       const results = ops.map((op) => {
         seq += 1;
         records.push({ entity: op.entity, serverSeq: seq, record: op.payload });
@@ -221,14 +225,35 @@ function fakeServer() {
     }
     if (url.pathname === '/api/sync/pull') {
       const since = Number(url.searchParams.get('since'));
-      const changes = records.filter((change) => change.serverSeq > since);
+      const limit = Number(url.searchParams.get('limit') ?? 200);
+      const after = records.filter((change) => change.serverSeq > since);
+      const changes = after.slice(0, limit);
       return Promise.resolve(
-        json(200, { changes, nextSince: changes.at(-1)?.serverSeq ?? since, hasMore: false }),
+        json(200, {
+          changes,
+          nextSince: changes.at(-1)?.serverSeq ?? since,
+          hasMore: after.length > limit,
+          epoch,
+        }),
       );
     }
     return Promise.resolve(json(404, { error: { code: 'not_found', message: url.pathname } }));
   };
-  return { fetchFn, records, calls, expireRefresh: () => (refreshValid = false), token };
+  /** The server's database restored from an older copy: only the first `keep` records, a new epoch. */
+  const restore = (keep: number) => {
+    records.splice(keep);
+    seq = records.at(-1)?.serverSeq ?? 0;
+    epoch = crypto.randomUUID();
+  };
+  return {
+    fetchFn,
+    records,
+    calls,
+    pushSizes,
+    restore,
+    expireRefresh: () => (refreshValid = false),
+    token,
+  };
 }
 
 describe('session and sync engine', () => {
@@ -258,6 +283,57 @@ describe('session and sync engine', () => {
       serverSeq: 1,
     });
     await otherDb.delete();
+  });
+
+  it('a large backlog goes in batches of 200, and pulls page by page (BUILD_PROMPTS 3.6)', async () => {
+    const server = fakeServer();
+    const session = new Session(store, new ApiClient(store, server.fetchFn));
+    await session.login({ username: 'owner', password: 'x' });
+    for (let index = 0; index < 450; index++) {
+      await repos.fabrics.save({ ...ROSA, name: `قماش ${String(index)}` });
+    }
+    await new SyncEngine(store, session, { isOnline: () => true }).syncNow();
+    expect(server.pushSizes).toEqual([200, 200, 50]);
+    expect(await db.outbox.count()).toBe(0);
+
+    const otherDb = new ShopDatabase(`test-${crypto.randomUUID()}`);
+    const otherStore = new LocalStore(otherDb);
+    const otherSession = new Session(otherStore, new ApiClient(otherStore, server.fetchFn));
+    await otherSession.login({ username: 'owner', password: 'x' });
+    await new SyncEngine(otherStore, otherSession, { isOnline: () => true }).syncNow();
+    expect(await otherDb.fabrics.count()).toBe(450);
+    expect(
+      server.calls.filter((call) => call === 'GET /api/sync/pull').length,
+    ).toBeGreaterThanOrEqual(4);
+    await otherDb.delete();
+  });
+
+  it('after the server is restored (a new epoch), pulls everything again from 0', async () => {
+    const server = fakeServer();
+    const session = new Session(store, new ApiClient(store, server.fetchFn));
+    await session.login({ username: 'owner', password: 'x' });
+    const kept = await repos.fabrics.save({ ...ROSA, name: 'قبل النسخة' });
+    await repos.fabrics.save({ ...ROSA, name: 'بعد النسخة' });
+    const engine = new SyncEngine(store, session, { isOnline: () => true });
+    await engine.syncNow();
+    expect(await store.getMeta('pullCursor')).toBe(2);
+
+    // Restored from a backup taken after the first fabric; a new one is then added there.
+    server.restore(1);
+    server.records.push({
+      entity: 'fabric',
+      serverSeq: 2,
+      record: {
+        ...(await repos.fabrics.get(kept)),
+        id: crypto.randomUUID(),
+        name: 'بعد الاسترجاع',
+      },
+    });
+    await engine.syncNow();
+    const names = (await db.fabrics.toArray()).map((fabric) => fabric.name);
+    // Without the reset the cursor (2) would skip the server's new record 2.
+    expect(names).toContain('بعد الاسترجاع');
+    expect(await store.getMeta('pullCursor')).toBe(2);
   });
 
   it('stays usable offline and when the session is refused', async () => {

@@ -28,6 +28,14 @@ function formatterFor(format: DateArFormat): Intl.DateTimeFormat {
   return formatter;
 }
 
+/** As DateAr shows it, for plain text (a shared invoice). */
+export function formatDateAr(
+  value: Date | string | number,
+  format: DateArFormat = 'medium',
+): string {
+  return formatterFor(format).format(value instanceof Date ? value : new Date(value));
+}
+
 /** A Gregorian date in Arabic with Western digits ("29 أكتوبر 2026"). Hijri lives in the zakat module. */
 export function DateAr({
   value,

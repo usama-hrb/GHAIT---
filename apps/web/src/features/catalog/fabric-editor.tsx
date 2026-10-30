@@ -7,12 +7,11 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { messages } from '@/i18n';
 import { useLiveQuery, useRepositories } from '@/local-db';
-import { EmptyState, LoadingState, OfflineNotice } from '@/shared/brand';
+import { EmptyState, LoadingState, OfflineNotice, VoidDialog } from '@/shared/brand';
 import { useAppNavigation } from '@/shared/lib/navigation';
 import { Button } from '@/shared/ui/button';
 import { FabricForm } from './fabric-form';
 import { VariantsEditor } from './variants-editor';
-import { VoidDialog } from './void-dialog';
 
 const t = messages.catalog;
 

@@ -22,12 +22,15 @@ export function VoidDialog({
   title,
   description,
   onConfirm,
+  confirmLabel = messages.voidDialog.confirm,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
   description: string;
   onConfirm: (reason: string) => Promise<void>;
+  /** The confirm button (default: confirm the cancellation). */
+  confirmLabel?: string;
 }) {
   const id = useId();
   const [reason, setReason] = useState('');
@@ -87,7 +90,7 @@ export function VoidDialog({
               </Button>
             </DialogClose>
             <Button type="submit" variant="destructive" disabled={busy}>
-              {messages.voidDialog.confirm}
+              {confirmLabel}
             </Button>
           </DialogFooter>
         </form>

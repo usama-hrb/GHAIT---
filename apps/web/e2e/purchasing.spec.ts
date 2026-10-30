@@ -1,43 +1,19 @@
-import { expect, type Page, test } from '@playwright/test';
-import { choose, connectivity, serverGet, signIn, waitForAppShell } from './helpers';
-
-/** A fabric with two colours, through the UI (prices in rial: 400 rial = 20 dh). */
-async function addFabric(page: Page, name: string): Promise<void> {
-  await page.goto('/inventory/fabric');
-  await page.getByLabel('اسم القماش').fill(name);
-  await page.getByLabel('السعر المرجعي للمتر').fill('400');
-  await page.getByLabel('أقل سعر للمتر').fill('360');
-  await page.getByRole('button', { name: 'حفظ' }).click();
-  await expect(page).toHaveURL(/\/inventory\/fabric\?id=/);
-  for (const color of ['أحمر', 'أزرق']) {
-    await page.getByRole('button', { name: 'إضافة لون' }).click();
-    const dialog = page.getByRole('dialog');
-    await dialog.getByLabel('اسم اللون').fill(color);
-    await dialog.getByRole('button', { name: 'حفظ' }).click();
-    await expect(page.getByText(color, { exact: true })).toBeVisible();
-  }
-}
-
-async function startPurchase(page: Page, method: string, fabric: string): Promise<void> {
-  await page.goto('/purchases/new');
-  await page.getByRole('tab', { name: method }).click();
-  await choose(page, 'القماش', fabric);
-}
-
-async function reviewAndSave(page: Page): Promise<void> {
-  await page.getByRole('button', { name: 'مراجعة الشراء' }).click();
-  const dialog = page.getByRole('dialog');
-  await expect(dialog.getByText(/^R-[A-Z]+\d{4}$/).first()).toBeVisible();
-  await dialog.getByRole('button', { name: 'حفظ الشراء' }).click();
-  await expect(page).toHaveURL(/\/purchases\/view\?id=/);
-}
+import { expect, test } from '@playwright/test';
+import {
+  addFabric,
+  choose,
+  connectivity,
+  reviewAndSave,
+  serverGet,
+  signIn,
+  startPurchase,
+  waitForAppShell,
+} from './helpers';
 
 test('purchases by the metre, piece and kg make rolls; one made offline syncs', async ({
   page,
   request,
 }) => {
-  // Four purchases and a fabric through the UI.
-  test.setTimeout(120_000);
   await signIn(page);
   await waitForAppShell(page);
   await addFabric(page, 'كريب');
@@ -104,6 +80,7 @@ test('purchases by the metre, piece and kg make rolls; one made offline syncs', 
       [`${prefix}0005`, 85_000],
       [`${prefix}0006`, 85_000],
     ]);
+  // The specs share one server: at least this test's four purchases are there.
   const purchases = await serverGet<unknown[]>(request, '/purchases');
-  expect(purchases).toHaveLength(4);
+  expect(purchases.length).toBeGreaterThanOrEqual(4);
 });

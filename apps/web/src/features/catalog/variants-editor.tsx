@@ -6,7 +6,7 @@ import { useId, useState } from 'react';
 import { toast } from 'sonner';
 import { messages } from '@/i18n';
 import { type Local, useLiveQuery, useRepositories, ValidationError } from '@/local-db';
-import { EmptyState, LoadingState } from '@/shared/brand';
+import { EmptyState, LoadingState, VoidDialog } from '@/shared/brand';
 import { MeterInput, Meters } from '@/shared/format';
 import { errorsByField } from '@/shared/lib/form-errors';
 import { Button } from '@/shared/ui/button';
@@ -21,7 +21,6 @@ import {
 } from '@/shared/ui/dialog';
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
-import { VoidDialog } from './void-dialog';
 
 const t = messages.catalog;
 const DEFAULT_THRESHOLD_CM = 500;

@@ -5,3 +5,4 @@ export { Logo } from './logo';
 export { OfflineNotice } from './offline-notice';
 export { SearchTrigger } from './search-trigger';
 export { EmptyState, ErrorState, LoadingState } from './states';
+export { VoidDialog } from './void-dialog';

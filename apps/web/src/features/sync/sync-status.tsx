@@ -24,9 +24,11 @@ export function SyncStatus() {
     <div className="flex items-center gap-1.5">
       <ConnectivityStatus pendingCount={sync.pendingCount} />
       {sync.rejectedCount > 0 && (
-        <Badge variant="warning">
-          <TriangleAlertIcon aria-hidden />
-          <span className="max-sm:sr-only">{messages.sync.rejected(sync.rejectedCount)}</span>
+        <Badge asChild variant="warning">
+          <Link href="/settings/sync">
+            <TriangleAlertIcon aria-hidden />
+            <span className="max-sm:sr-only">{messages.sync.rejected(sync.rejectedCount)}</span>
+          </Link>
         </Badge>
       )}
       {session.needsSignIn && (
