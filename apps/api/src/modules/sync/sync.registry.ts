@@ -35,6 +35,20 @@ export interface SyncHandler<E extends SyncEntity = SyncEntity> {
     payload: SyncPushPayload<E>,
     context: { entityId: string; deviceId: string },
   ): Promise<SyncedRow<SyncRecord<E>>>;
+  /**
+   * The dates a change is accounted on, when they are not all in the payload (a sale void is
+   * dated by its sale too). Default: periodDatesOf (@fabric/contracts).
+   */
+  periodDates?(payload: SyncPushPayload<E>): Promise<(string | null)[]>;
+}
+
+/**
+ * Refuses a change dated inside a settled period (BUILD_PROMPTS 4.3), in the change's
+ * transaction. Registered by the settlements module.
+ */
+export interface PeriodGuard {
+  /** Throws SyncRejection('period_locked') when one of the dates is locked. */
+  assertOpen(dates: readonly (string | null)[]): Promise<void>;
 }
 
 /** A pushed op the server refuses; recorded as `rejected`, so a replay answers the same. */
@@ -51,6 +65,16 @@ export class SyncRejection extends Error {
 @Injectable()
 export class SyncRegistry {
   private readonly handlers = new Map<SyncEntity, SyncHandler>();
+  private guard: PeriodGuard | undefined;
+
+  setPeriodGuard(guard: PeriodGuard): void {
+    if (this.guard) throw new Error('Two period guards registered');
+    this.guard = guard;
+  }
+
+  periodGuard(): PeriodGuard | undefined {
+    return this.guard;
+  }
 
   register(handler: SyncHandler): void {
     if (this.handlers.has(handler.entity)) {

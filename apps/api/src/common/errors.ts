@@ -17,6 +17,8 @@ export class AppHttpException extends HttpException {
     readonly code: ErrorCode,
     message: string,
     status: HttpStatus,
+    /** Why, for a rule the request breaks (e.g. `period_locked`). */
+    readonly issues?: ValidationIssue[],
   ) {
     super(message, status);
   }
@@ -69,7 +71,7 @@ export function toErrorResponse(
     );
   }
   if (exception instanceof AppHttpException) {
-    return body(exception.getStatus(), exception.code, exception.message);
+    return body(exception.getStatus(), exception.code, exception.message, exception.issues);
   }
   if (exception instanceof HttpException) {
     const status = exception.getStatus();

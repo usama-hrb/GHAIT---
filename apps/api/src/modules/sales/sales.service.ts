@@ -65,6 +65,11 @@ export class SalesService implements OnModuleInit {
       find: (id) => this.voids.find(id),
       pull: (since, limit) => this.voids.pull(since, limit),
       append: (aggregate, context) => this.receiveVoid(aggregate, context),
+      // A void changes its sale: it is locked with the sale's period too (BUILD_PROMPTS 4.3).
+      periodDates: async (aggregate) => [
+        aggregate.saleVoid.date,
+        (await this.sales.find(aggregate.saleVoid.saleId))?.record.date ?? null,
+      ],
     };
     this.registry.register(sales);
     this.registry.register(lines);

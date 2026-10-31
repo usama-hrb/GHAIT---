@@ -5,6 +5,7 @@ import {
   type RollHistory,
   rollLedgerOf,
   type StockMove,
+  withLockedCosts,
 } from '@fabric/contracts';
 import type { RollLedger } from '@fabric/core';
 import { HttpStatus, Injectable, type OnModuleInit } from '@nestjs/common';
@@ -41,22 +42,21 @@ export class InventoryService implements OnModuleInit {
     return inserted;
   }
 
-  /** Each roll with every move it has so far (for pricing a sale on the server's view). */
+  /**
+   * Each roll with every move it has so far (for pricing a sale on the server's view), with the
+   * costs settlements froze (P9).
+   */
   async histories(rollIds: readonly string[]): Promise<Map<string, RollHistory>> {
     const unique = [...new Set(rollIds)];
-    const [rolls, moves] = await Promise.all([
+    const [rolls, rows] = await Promise.all([
       this.rolls.findMany(unique),
       this.moves.listByRolls(unique),
     ]);
+    const moves = await this.withLockedCosts(rows.map(stored));
     return new Map(
       rolls.map((roll) => [
         roll.record.id,
-        {
-          roll: roll.record,
-          moves: moves
-            .filter((move) => move.record.rollId === roll.record.id)
-            .map((move) => ({ ...move.record, serverSeq: move.serverSeq })),
-        },
+        { roll: roll.record, moves: moves.filter((move) => move.rollId === roll.record.id) },
       ]),
     );
   }
@@ -85,12 +85,18 @@ export class InventoryService implements OnModuleInit {
   async detail(rollId: string): Promise<RollDetail> {
     const roll = await this.rolls.find(rollId);
     if (!roll) throw new AppHttpException('not_found', `No roll ${rollId}`, HttpStatus.NOT_FOUND);
-    const moves = await this.moves.listByRoll(rollId);
+    const moves = (await this.moves.listByRoll(rollId)).map(stored);
     return {
       roll: stored(roll),
-      moves: moves.map(stored),
-      ledger: rollLedgerOf(roll.record, moves.map(stored)),
+      moves,
+      ledger: rollLedgerOf(roll.record, await this.withLockedCosts(moves)),
     };
+  }
+
+  private async withLockedCosts<M extends StockMove & { serverSeq: number }>(
+    moves: readonly M[],
+  ): Promise<M[]> {
+    return withLockedCosts(moves, await this.moves.lockedCosts(moves.map((move) => move.id)));
   }
 
   /** A loss, stocktake count or measurement pushed by a device: re-checked against its roll. */

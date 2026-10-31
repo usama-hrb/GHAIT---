@@ -32,6 +32,9 @@ const DAY_MS = 86_400_000;
  */
 const REUSE_GRACE_MS = 30_000;
 
+/** Who may sign in (BUILD_PROMPTS 4.2): the owner, and the partner read-only. */
+const SIGN_IN_ROLES: ReadonlySet<string> = new Set(['owner', 'partner']);
+
 function toAuthUser(user: UserRow): AuthUser {
   return { id: user.id, username: user.username, displayName: user.displayName, role: user.role };
 }
@@ -72,10 +75,10 @@ export class AuthService {
         HttpStatus.UNAUTHORIZED,
       );
     }
-    if (user.role !== 'owner') {
+    if (!SIGN_IN_ROLES.has(user.role)) {
       throw new AppHttpException(
         'forbidden',
-        'Only the owner can sign in for now',
+        'This account cannot sign in yet',
         HttpStatus.FORBIDDEN,
       );
     }
@@ -123,7 +126,7 @@ export class AuthService {
         return { kind: 'reused' } as const;
       }
       const user = await this.users.findById(session.userId);
-      if (session.expiresAt <= now || !user || user.voidedAt || user.role !== 'owner') {
+      if (session.expiresAt <= now || !user || user.voidedAt || !SIGN_IN_ROLES.has(user.role)) {
         return { kind: 'invalid' } as const;
       }
       if (retry) await this.sessions.revokeFamily(session.familyId, now, { except: session.id });
@@ -198,6 +201,54 @@ export class AuthService {
           before: null,
           after: auditView(user),
           reason: 'owner created from the command line',
+        });
+        return 'created';
+      }
+      const updated = await this.users.setPassword(existing.id, passwordHash, SERVER_DEVICE_ID);
+      await this.sessions.revokeAllOfUser(existing.id, new Date());
+      await this.audit.record({
+        entity: 'app_user',
+        entityId: existing.id,
+        action: 'password_set',
+        before: auditView(existing),
+        after: auditView(updated),
+        reason: 'password reset from the command line',
+      });
+      return 'password_reset';
+    });
+  }
+
+  /**
+   * For the create-partner-user command: a read-only account for the partner (BUILD_PROMPTS
+   * 4.2), or a new password for it (signing it out everywhere).
+   */
+  async setPartnerUser(input: {
+    username: string;
+    password: string;
+    displayName?: string;
+  }): Promise<'created' | 'password_reset'> {
+    const username = usernameSchema.parse(input.username);
+    const passwordHash = await this.hasher.hash(newPasswordSchema.parse(input.password));
+    return this.tx.run(async () => {
+      const existing = await this.users.findByUsername(username);
+      if (existing && existing.role !== 'partner') {
+        throw new Error(`${username} is the ${existing.role}'s account, not a partner's`);
+      }
+      if (!existing) {
+        const user = await this.users.insert({
+          username,
+          displayName: input.displayName?.trim() || username,
+          passwordHash,
+          role: 'partner',
+          deviceId: SERVER_DEVICE_ID,
+        });
+        await this.audit.record({
+          entity: 'app_user',
+          entityId: user.id,
+          action: 'create',
+          before: null,
+          after: auditView(user),
+          reason: 'partner account created from the command line',
         });
         return 'created';
       }

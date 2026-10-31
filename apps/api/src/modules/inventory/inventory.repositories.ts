@@ -1,6 +1,6 @@
 import { checkRollUpdate, type Roll, type StockMove } from '@fabric/contracts';
 import { Injectable } from '@nestjs/common';
-import { asc, eq, gt, inArray } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull } from 'drizzle-orm';
 import { schema, TransactionHost } from '../../database/index.js';
 import { type SyncedRow, type SyncHandler, SyncRejection } from '../sync/index.js';
 
@@ -205,6 +205,26 @@ export class StockMoveRepository {
       .where(inArray(schema.stockMove.refId, [...refIds]))
       .orderBy(asc(schema.stockMove.createdAt), asc(schema.stockMove.id));
     return rows.map(moveOf);
+  }
+
+  /** The costs live settlements froze for these moves (P9). */
+  async lockedCosts(
+    moveIds: readonly string[],
+  ): Promise<{ stockMoveId: string; costCents: number; voidedAt: null }[]> {
+    if (moveIds.length === 0) return [];
+    const rows = await this.tx.db
+      .select({
+        stockMoveId: schema.lockedCost.stockMoveId,
+        costCents: schema.lockedCost.costCents,
+      })
+      .from(schema.lockedCost)
+      .where(
+        and(
+          inArray(schema.lockedCost.stockMoveId, [...moveIds]),
+          isNull(schema.lockedCost.voidedAt),
+        ),
+      );
+    return rows.map((row) => ({ ...row, voidedAt: null }));
   }
 
   async insertMany(moves: readonly StockMove[]): Promise<void> {

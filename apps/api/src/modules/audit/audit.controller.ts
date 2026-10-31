@@ -1,4 +1,5 @@
 import {
+  auditActorsSchema,
   type AuditListQuery,
   type AuditListResponse,
   auditListQuerySchema,
@@ -16,9 +17,17 @@ import { AuditService } from './audit.service.js';
 export class AuditController {
   constructor(private readonly audit: AuditService) {}
 
+  /** Newest first; filter by entity (and id), account, and days in the shop's time zone. */
   @Get()
   @ZodResponse(auditListResponseSchema)
   list(@ZodQuery(auditListQuerySchema) query: AuditListQuery): Promise<AuditListResponse> {
     return this.audit.list(query);
+  }
+
+  /** The accounts that can appear in the log, for its filter. */
+  @Get('actors')
+  @ZodResponse(auditActorsSchema)
+  actors() {
+    return this.audit.actors();
   }
 }

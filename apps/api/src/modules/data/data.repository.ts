@@ -19,6 +19,16 @@ const TABLES = {
   payment_allocation: schema.paymentAllocation,
   sale_void: schema.saleVoid,
   write_off: schema.writeOff,
+  recurring_expense: schema.recurringExpense,
+  expense: schema.expense,
+  cash_adjustment: schema.cashAdjustment,
+  partner: schema.partner,
+  profit_split_rule: schema.profitSplitRule,
+  settlement: schema.settlement,
+  settlement_share: schema.settlementShare,
+  locked_cost: schema.lockedCost,
+  capital_move: schema.capitalMove,
+  partner_draw: schema.partnerDraw,
   sync_conflict: schema.syncConflict,
 } as const satisfies Record<keyof DataExport['records'], unknown>;
 

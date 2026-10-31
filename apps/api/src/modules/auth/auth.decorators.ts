@@ -4,9 +4,16 @@ import type { Request } from 'express';
 import { requestContext } from '../../common/index.js';
 
 export const IS_PUBLIC = Symbol('is-public');
+export const PARTNER_MAY_WRITE = Symbol('partner-may-write');
 
 /** Opens a route to anyone: the global AuthGuard requires a valid access token everywhere else. */
 export const Public = (): MethodDecorator & ClassDecorator => SetMetadata(IS_PUBLIC, true);
+
+/**
+ * A non-GET route a read-only partner account may still call (it changes no shop data, e.g.
+ * registering the device for its code). Everything else that writes needs the owner.
+ */
+export const PartnerMayCall = (): MethodDecorator => SetMetadata(PARTNER_MAY_WRITE, true);
 
 export interface AuthenticatedUser {
   id: string;

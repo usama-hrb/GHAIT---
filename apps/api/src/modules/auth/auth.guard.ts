@@ -1,7 +1,12 @@
 import { type CanActivate, type ExecutionContext, HttpStatus, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { AppHttpException } from '../../common/index.js';
-import { actAs, type AuthenticatedRequest, IS_PUBLIC } from './auth.decorators.js';
+import {
+  actAs,
+  type AuthenticatedRequest,
+  IS_PUBLIC,
+  PARTNER_MAY_WRITE,
+} from './auth.decorators.js';
 import { TokenService } from './token.service.js';
 
 function bearerToken(header: string | undefined): string | undefined {
@@ -9,10 +14,12 @@ function bearerToken(header: string | undefined): string | undefined {
   return match?.[1];
 }
 
+const READS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
 /**
- * Global: every route needs a valid access token unless it is @Public(). The schema has the
- * owner, partner and cashier roles (SPEC §11); only the owner is let in for now (BUILD_PROMPTS
- * 2.1). Per-role rules arrive with the partner and cashier accounts.
+ * Global: every route needs a valid access token unless it is @Public(). Roles (SPEC §11,
+ * BUILD_PROMPTS 4.2): the owner may do everything; a partner may read everything and write
+ * nothing (only routes marked @PartnerMayCall()). The cashier role is not let in yet (5.3).
  */
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -34,10 +41,18 @@ export class AuthGuard implements CanActivate {
       throw new AppHttpException('unauthorized', 'Missing bearer token', HttpStatus.UNAUTHORIZED);
     }
     const claims = await this.tokens.verifyAccess(token);
-    if (claims.role !== 'owner') {
+    const mayCall =
+      claims.role === 'owner' ||
+      (claims.role === 'partner' &&
+        (READS.has(request.method) ||
+          this.reflector.get<boolean | undefined>(PARTNER_MAY_WRITE, context.getHandler()) ===
+            true));
+    if (!mayCall) {
       throw new AppHttpException(
         'forbidden',
-        'Only the owner can use the API for now',
+        claims.role === 'partner'
+          ? 'A partner account can read, not change, the shop'
+          : 'Not allowed',
         HttpStatus.FORBIDDEN,
       );
     }

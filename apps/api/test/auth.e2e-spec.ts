@@ -215,24 +215,39 @@ describe('roles and the owner account', () => {
     await t.close();
   });
 
-  it('only lets the owner in for now (roles exist in the schema)', async () => {
+  it('lets the owner do everything, a partner only read, and no one else in (BUILD_PROMPTS 4.2)', async () => {
     const jwt = t.app.get(JwtService);
-    const partnerToken = await jwt.signAsync(
-      { role: 'partner', sid: crypto.randomUUID() },
-      {
-        subject: crypto.randomUUID(),
-        secret: t.config.auth.accessSecret,
-        issuer: 'fabric-shop',
-        audience: 'fabric-shop-api',
-        expiresIn: 60,
-      },
-    );
-    const response = await t
+    const tokenFor = (role: string) =>
+      jwt.signAsync(
+        { role, sid: crypto.randomUUID() },
+        {
+          subject: crypto.randomUUID(),
+          secret: t.config.auth.accessSecret,
+          issuer: 'fabric-shop',
+          audience: 'fabric-shop-api',
+          expiresIn: 60,
+        },
+      );
+    const partner = await tokenFor('partner');
+    await t.http().get('/settings').auth(partner, { type: 'bearer' }).expect(200);
+    const refused = await t
+      .http()
+      .put(`/fabrics/${crypto.randomUUID()}`)
+      .auth(partner, { type: 'bearer' })
+      .send({ name: 'x', refPricePerMeterCents: 1, minPricePerMeterCents: 1 })
+      .expect(403);
+    expect(errorCode(refused.body)).toBe('forbidden');
+    await t
+      .http()
+      .post('/sync/push')
+      .auth(partner, { type: 'bearer' })
+      .send({ ops: [] })
+      .expect(403);
+    await t
       .http()
       .get('/settings')
-      .auth(partnerToken, { type: 'bearer' })
+      .auth(await tokenFor('cashier'), { type: 'bearer' })
       .expect(403);
-    expect(errorCode(response.body)).toBe('forbidden');
 
     const forged = await jwt.signAsync(
       { role: 'owner', sid: crypto.randomUUID() },
@@ -243,6 +258,42 @@ describe('roles and the owner account', () => {
       },
     );
     await t.http().get('/settings').auth(forged, { type: 'bearer' }).expect(401);
+  });
+
+  it('a partner account (create-partner-user) signs in and reads; its writes are refused', async () => {
+    const auth = t.app.get(AuthService);
+    await expect(
+      auth.setPartnerUser({
+        username: 'shareek',
+        password: 'a-long-partner-password',
+        displayName: 'الشريك',
+      }),
+    ).resolves.toBe('created');
+    await expect(
+      auth.setPartnerUser({ username: OWNER.username, password: 'another-long-password' }),
+    ).rejects.toThrow(/owner's account/);
+    const login = await t
+      .http()
+      .post('/auth/login')
+      .send({ username: 'shareek', password: 'a-long-partner-password' })
+      .expect(200);
+    const { accessToken, user } = accessTokenResponseSchema.parse(login.body);
+    expect(user.role).toBe('partner');
+    await t.http().get('/fabrics').auth(accessToken, { type: 'bearer' }).expect(200);
+    await t.http().get('/sync/pull?since=0').auth(accessToken, { type: 'bearer' }).expect(200);
+    // Registering its device changes no shop data: allowed, so its sync works.
+    await t
+      .http()
+      .post('/devices/register')
+      .auth(accessToken, { type: 'bearer' })
+      .set(HEADERS.deviceId, 'partner-phone')
+      .expect(200);
+    await t
+      .http()
+      .put(`/partners/${crypto.randomUUID()}`)
+      .auth(accessToken, { type: 'bearer' })
+      .send({ name: 'x', ownershipBp: 5000, isOwner: false })
+      .expect(403);
   });
 
   it('create-owner: resets the password and signs the owner out everywhere', async () => {

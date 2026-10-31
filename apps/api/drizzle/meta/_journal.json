@@ -85,6 +85,62 @@
       "when": 1793367978194,
       "tag": "0011_server_instance_seed",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793371488286,
+      "tag": "0012_expenses",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1793371488917,
+      "tag": "0013_expenses_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1793372412662,
+      "tag": "0014_partners",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1793372413291,
+      "tag": "0015_partners_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1793404862478,
+      "tag": "0016_settlements",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1793404874389,
+      "tag": "0017_settlements_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1793408112391,
+      "tag": "0018_cash_counts",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793408113899,
+      "tag": "0019_cash_counts_guards",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,6 @@
 import {
   type AuditAction,
+  type AuditActor,
   type AuditEntry,
   type AuditListQuery,
   type AuditListResponse,
@@ -29,6 +30,7 @@ function toEntry(row: AuditRow): AuditEntry {
     id: row.id,
     at: row.at.toISOString(),
     actorId: row.actorId,
+    actorName: row.actorName,
     entity: row.entity,
     entityId: row.entityId,
     action: row.action,
@@ -64,6 +66,10 @@ export class AuditService {
       deviceId: entry.deviceId ?? context?.deviceId ?? SERVER_DEVICE_ID,
     });
     this.scope.recorded();
+  }
+
+  actors(): Promise<AuditActor[]> {
+    return this.repository.actors();
   }
 
   async list(query: AuditListQuery): Promise<AuditListResponse> {

@@ -1,4 +1,5 @@
 import {
+  periodDatesOf,
   type RecordBase,
   SERVER_DEVICE_ID,
   SYNC_ENTITIES,
@@ -6,6 +7,7 @@ import {
   type SyncOp,
   type SyncOpResult,
   type SyncPullQuery,
+  type SyncRecord,
   type SyncPullResponse,
   voidPayloadSchema,
 } from '@fabric/contracts';
@@ -57,6 +59,22 @@ function pushSchemaOf(entity: SyncEntity): z.ZodType {
 }
 
 const applied = (serverSeq: number): OpOutcome => ({ status: 'applied', serverSeq, error: null });
+
+const REST_STATUS: Partial<Record<SyncRejection['code'], HttpStatus>> = {
+  conflict: HttpStatus.CONFLICT,
+  period_locked: HttpStatus.CONFLICT,
+  not_found: HttpStatus.NOT_FOUND,
+};
+
+/** A rule a REST change breaks, as that request's error. */
+function restError(error: SyncRejection): AppHttpException {
+  return new AppHttpException(
+    error.code,
+    error.message,
+    REST_STATUS[error.code] ?? HttpStatus.BAD_REQUEST,
+    error.issues,
+  );
+}
 
 /**
  * Applies device ops and serves changes (ADR 0002).
@@ -121,7 +139,13 @@ export class SyncService implements OnModuleInit {
     const parsed = SYNC_ENTITIES[entity].schema.safeParse(record);
     if (!parsed.success) throw new ValidationFailedException(parsed.error);
     const current = await handler.find(record.id);
-    const written = await handler.write(parsed.data);
+    let written: SyncedRow<AnyRecord>;
+    try {
+      await this.assertOpen(entity, handler, parsed.data, current?.record);
+      written = await handler.write(parsed.data);
+    } catch (error) {
+      throw error instanceof SyncRejection ? restError(error) : error;
+    }
     await this.audit.record({
       entity,
       entityId: record.id,
@@ -138,11 +162,17 @@ export class SyncService implements OnModuleInit {
     if (!current)
       throw new AppHttpException('not_found', `No ${entity} ${id}`, HttpStatus.NOT_FOUND);
     if ((current.record as AnyRecord).voidedAt !== null) return current;
-    const written = await handler.markVoided(
-      id,
-      new Date(),
-      requestContext()?.deviceId ?? SERVER_DEVICE_ID,
-    );
+    let written: SyncedRow<AnyRecord>;
+    try {
+      await this.assertOpen(entity, handler, current.record);
+      written = await handler.markVoided(
+        id,
+        new Date(),
+        requestContext()?.deviceId ?? SERVER_DEVICE_ID,
+      );
+    } catch (error) {
+      throw error instanceof SyncRejection ? restError(error) : error;
+    }
     await this.audit.record({
       entity,
       entityId: id,
@@ -154,9 +184,43 @@ export class SyncService implements OnModuleInit {
     return written;
   }
 
+  /**
+   * Every record of an entity, as devices pull it (with its server_seq, voided ones included):
+   * for what is computed from the whole shop (a settlement, the integrity check).
+   */
+  async readAll<E extends SyncEntity>(entity: E): Promise<SyncedRow<SyncRecord<E>>[]> {
+    const handler = this.registry.get(entity);
+    if (!handler) throw new Error(`No sync handler registered for ${entity}`);
+    // The handler is registered for this entity, so its rows are this entity's records.
+    return (await handler.pull(0, Number.MAX_SAFE_INTEGER)) as SyncedRow<SyncRecord<E>>[];
+  }
+
   /** Looks up a record of any registered entity (REST reads). */
   async find(entity: SyncEntity, id: string): Promise<SyncedRow<AnyRecord> | undefined> {
     return await this.mutableHandler(entity).find(id);
+  }
+
+  /**
+   * A change dated inside a settled period is refused (BUILD_PROMPTS 4.3): the new version's
+   * dates and, for an edit or a void, the current one's.
+   */
+  private async assertOpen(
+    entity: SyncEntity,
+    handler: SyncHandler,
+    payload: unknown,
+    current?: unknown,
+  ): Promise<void> {
+    const guard = this.registry.periodGuard();
+    if (!guard) return;
+    const datesOf = async (value: unknown) =>
+      handler.periodDates
+        ? await handler.periodDates(value as never)
+        : periodDatesOf(entity, value as never);
+    const dates = [
+      ...(await datesOf(payload)),
+      ...(current === undefined ? [] : await datesOf(current)),
+    ];
+    if (dates.length > 0) await guard.assertOpen(dates);
   }
 
   private mutableHandler(entity: SyncEntity): MutableHandler {
@@ -253,6 +317,7 @@ export class SyncService implements OnModuleInit {
     }
     const existing = await handler.find?.(op.entityId);
     if (existing) return applied(existing.serverSeq);
+    await this.assertOpen(op.entity, handler, parsed.data);
     const written = await this.appendAndAudit(op.entity, handler, parsed.data, {
       entityId: op.entityId,
       deviceId: op.deviceId,
@@ -283,19 +348,13 @@ export class SyncService implements OnModuleInit {
       );
     }
     try {
+      await this.assertOpen(entity, handler, parsed.data);
       return await this.appendAndAudit(entity, handler, parsed.data, {
         entityId,
         deviceId: requestContext()?.deviceId ?? SERVER_DEVICE_ID,
       });
     } catch (error) {
-      if (error instanceof SyncRejection) {
-        throw new AppHttpException(
-          error.code === 'validation_failed' ? 'validation_failed' : error.code,
-          error.message,
-          error.code === 'conflict' ? HttpStatus.CONFLICT : HttpStatus.BAD_REQUEST,
-        );
-      }
-      throw error;
+      throw error instanceof SyncRejection ? restError(error) : error;
     }
   }
 
@@ -335,6 +394,7 @@ export class SyncService implements OnModuleInit {
     }
 
     const current = await handler.find(op.entityId);
+    await this.assertOpen(op.entity, handler, record, current?.record);
     if (!current) {
       const written = await handler.write(record as never);
       await this.audit.record({
@@ -393,6 +453,7 @@ export class SyncService implements OnModuleInit {
     if (!current) throw new SyncRejection('not_found', `No ${op.entity} ${op.entityId}`);
     // Already voided (here or on another device): nothing changes.
     if ((current.record as AnyRecord).voidedAt !== null) return applied(current.serverSeq);
+    await this.assertOpen(op.entity, handler, current.record);
     const written = await handler.markVoided(op.entityId, new Date(op.clientTs), op.deviceId);
     await this.audit.record({
       entity: op.entity,
