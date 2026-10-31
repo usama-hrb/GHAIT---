@@ -33,10 +33,14 @@ export function createLocalDb(db = new ShopDatabase()): LocalDb {
   });
   const store = new LocalStore(db);
   const session = new Session(store, new ApiClient(store));
+  const sync = new SyncEngine(store, session);
   return {
-    repositories: createRepositories(store),
+    repositories: createRepositories(store, {
+      request: (path, schema, init) => session.request(path, schema, init),
+      syncNow: () => sync.syncNow(),
+    }),
     session,
-    sync: new SyncEngine(store, session),
+    sync,
     store,
   };
 }

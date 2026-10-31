@@ -15,6 +15,7 @@ import { shopToday } from '@/shared/lib/dates';
 import { matchesSearch } from '@/shared/lib/search';
 import type { Local } from './db';
 import { parseOrThrow, ValidationError } from './errors';
+import { withFrozenCosts } from './ledgers';
 import type { LocalStore } from './store';
 import type { FabricsRepository, RollsTable, SettingsRepository } from './tables';
 
@@ -157,7 +158,9 @@ export class InventoryRepository {
    * outbox op). A measurement of a kg roll also updates the fabric's est_cm_per_kg (C11).
    */
   async record(input: NewStockMoveInput): Promise<string> {
+    this.store.assertWritable();
     const parsed = parseOrThrow(newStockMoveSchema, input);
+    await this.store.assertPeriodOpen([parsed.date]);
     const { db } = this.store;
     const deviceId = await this.store.deviceId();
     const now = this.store.now().toISOString();
@@ -200,7 +203,11 @@ export class InventoryRepository {
   private async viewOf(roll: Local<Roll>): Promise<RollView> {
     const { db } = this.store;
     const [moves, variant, purchase, threshold] = await Promise.all([
-      db.stockMoves.where('rollId').equals(roll.id).toArray(),
+      db.stockMoves
+        .where('rollId')
+        .equals(roll.id)
+        .toArray()
+        .then((all) => withFrozenCosts(db, all)),
       db.variants.get(roll.variantId),
       db.purchases.get(roll.purchaseId),
       this.settings.get('remnant_threshold_cm', shopToday()),

@@ -11,6 +11,8 @@ export function issueMessage(
 ): string {
   const own = custom[issue.message];
   if (own) return own;
+  // A record dated in a settled period (BUILD_PROMPTS 4.3), whatever the form.
+  if (issue.message === 'period_locked') return messages.forms.periodLocked;
   switch (issue.code) {
     case 'invalid_type':
     case 'too_small':

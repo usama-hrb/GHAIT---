@@ -8,6 +8,7 @@ const FORMATS = {
   medium: { dateStyle: 'medium' },
   long: { dateStyle: 'long' },
   dateTime: { dateStyle: 'medium', timeStyle: 'short' },
+  month: { year: 'numeric', month: 'long' },
 } as const satisfies Record<string, Intl.DateTimeFormatOptions>;
 
 export type DateArFormat = keyof typeof FORMATS;

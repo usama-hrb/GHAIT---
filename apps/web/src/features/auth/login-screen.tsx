@@ -14,7 +14,7 @@ const t = messages.auth;
 
 /** Only same-app paths: `next` comes from the URL. */
 function safeNext(next: string | null): string {
-  return next?.startsWith('/') && !next.startsWith('//') ? next : '/inventory';
+  return next?.startsWith('/') && !next.startsWith('//') ? next : '/home';
 }
 
 function errorText(error: unknown): string {

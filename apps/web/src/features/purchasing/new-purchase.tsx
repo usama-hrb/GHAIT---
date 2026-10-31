@@ -52,6 +52,7 @@ import {
 } from '@/shared/ui/table';
 import { Tabs, TabsList, TabsTrigger } from '@/shared/ui/tabs';
 import { Textarea } from '@/shared/ui/textarea';
+import { PeriodLockHint, useLockedThrough } from '@/features/settlements';
 
 const t = messages.purchasing;
 const DEFAULT_ROLL_CM = 5000;
@@ -235,6 +236,7 @@ export function NewPurchaseScreen() {
   const [method, setMethod] = useState<PurchaseMethod>('meter');
   const [supplierId, setSupplierId] = useState<string | null>(null);
   const [date, setDate] = useState(() => shopToday());
+  const lockedThrough = useLockedThrough();
   const [notes, setNotes] = useState('');
   const [pricePerMeter, setPricePerMeter] = useState<number | null>(null);
   const [rollLength, setRollLength] = useState<number | null>(DEFAULT_ROLL_CM);
@@ -582,6 +584,7 @@ export function NewPurchaseScreen() {
                   setDate(event.target.value);
                 }}
               />
+              <PeriodLockHint date={date} lockedThrough={lockedThrough} />
             </Field>
             <Field>
               <FieldLabel htmlFor={`${id}-notes`}>{t.fields.notes}</FieldLabel>

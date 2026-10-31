@@ -2,8 +2,11 @@
 // repositories and hooks from here; they never touch Dexie or fetch.
 export type { AccountsRepository, CustomerAccountView, CustomerSummary } from './accounts';
 export { ApiError, NetworkError } from './api';
+export type { AuditFilters, AuditPage, AuditRepository } from './audit';
 export type { Local, OutboxEntry } from './db';
-export { ValidationError } from './errors';
+export { isPeriodLocked, ReadOnlyError, ValidationError } from './errors';
+export type { ExpenseCategory, ExpensesRepository, MonthView, ReminderView } from './expenses';
+export type { IntegrityRepository, RecentEvent } from './integrity';
 export type {
   ColorStock,
   ColorStockState,
@@ -18,6 +21,13 @@ export {
 } from './purchases';
 export type { MaintenanceRepository, RollToReview } from './maintenance';
 export {
+  NEEDS_CONFIRMATION,
+  PARTNER_SETUP_ISSUE,
+  type PartnerAccountView,
+  type PartnersRepository,
+  type PartnerView,
+} from './partners';
+export {
   createLocalDb,
   type LocalDb,
   LocalDbProvider,
@@ -29,6 +39,13 @@ export {
 } from './react';
 export type { Repositories } from './repositories';
 export type { RollChoice, SaleLineView, SalesRepository, SaleSummary, SaleView } from './sales';
+export {
+  NeedsServerError,
+  type ServerLink,
+  type SettlementsRepository,
+  type SettlementView,
+  type SplitRuleRow,
+} from './settlements';
 export type {
   CustomersRepository,
   FabricsRepository,

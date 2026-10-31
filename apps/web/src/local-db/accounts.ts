@@ -172,6 +172,7 @@ export class AccountsRepository {
     input: NewPaymentInput,
   ): Promise<{ paymentId: string; unappliedCents: number }> {
     const parsed = parseOrThrow(newPaymentSchema, input);
+    await this.store.assertPeriodOpen([parsed.date]);
     const paymentId = crypto.randomUUID();
     let unappliedCents = 0;
     await this.save(parsed.customerId, (records, meta) => {
@@ -191,6 +192,7 @@ export class AccountsRepository {
   /** Gives money back out of the customer's credit (never more than it). */
   async refund(input: NewRefundInput): Promise<string> {
     const parsed = parseOrThrow(newRefundSchema, input);
+    await this.store.assertPeriodOpen([parsed.date]);
     const paymentId = crypto.randomUUID();
     await this.save(parsed.customerId, (records, meta) => {
       const built = buildRefund(
@@ -207,6 +209,8 @@ export class AccountsRepository {
 
   /** Applies the customer's credit to their unpaid invoices, oldest first. */
   async applyCredit(customerId: string): Promise<void> {
+    this.store.assertWritable();
+    await this.store.assertPeriodOpen([shopToday(this.store.now())]);
     const { db } = this.store;
     const deviceId = await this.store.deviceId();
     const now = this.store.now().toISOString();
@@ -244,7 +248,9 @@ export class AccountsRepository {
 
   /** Writes off what is due on a credit sale as a bad debt (SPEC §4.1, S5); the reason is required. */
   async writeOff(saleId: string, reason: string): Promise<void> {
+    this.store.assertWritable();
     const payload = parseOrThrow(voidPayloadSchema, { reason });
+    await this.store.assertPeriodOpen([shopToday(this.store.now())]);
     const { db } = this.store;
     const deviceId = await this.store.deviceId();
     const now = this.store.now().toISOString();
@@ -284,6 +290,7 @@ export class AccountsRepository {
     customerId: string,
     build: (records: CustomerRecords, meta: { deviceId: string; now: string }) => PaymentAggregate,
   ): Promise<void> {
+    this.store.assertWritable();
     const { db } = this.store;
     const deviceId = await this.store.deviceId();
     const now = this.store.now().toISOString();

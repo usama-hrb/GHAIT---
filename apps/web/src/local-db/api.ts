@@ -1,4 +1,4 @@
-import { errorResponseSchema, HEADERS } from '@fabric/contracts';
+import { errorResponseSchema, HEADERS, type ValidationIssue } from '@fabric/contracts';
 import type { LocalStore } from './store';
 
 /** No network (or the server is unreachable): retry later; local work goes on. */
@@ -14,6 +14,8 @@ export class ApiError extends Error {
     /** errorCodeSchema value, or `unknown` for a body that is not the API's. */
     readonly code: string,
     message: string,
+    /** Which rules the request broke (e.g. settlement_preview_changed). */
+    readonly issues: readonly ValidationIssue[] = [],
   ) {
     super(message);
   }
@@ -60,6 +62,11 @@ export async function apiErrorOf(response: Response): Promise<ApiError> {
   const body: unknown = await response.json().catch(() => null);
   const parsed = errorResponseSchema.safeParse(body);
   return parsed.success
-    ? new ApiError(response.status, parsed.data.error.code, parsed.data.error.message)
+    ? new ApiError(
+        response.status,
+        parsed.data.error.code,
+        parsed.data.error.message,
+        parsed.data.error.issues,
+      )
     : new ApiError(response.status, 'unknown', `HTTP ${String(response.status)}`);
 }

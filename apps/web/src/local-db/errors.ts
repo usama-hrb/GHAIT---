@@ -22,3 +22,20 @@ export function parseOrThrow<S extends z.ZodType>(schema: S, value: unknown): z.
   }
   return result.data;
 }
+
+/** The signed-in account may read the shop but not change it (a partner, BUILD_PROMPTS 4.2). */
+export class ReadOnlyError extends Error {
+  override readonly name = 'ReadOnlyError';
+
+  constructor() {
+    super('This account can read the shop, not change it');
+  }
+}
+
+/** The change is dated inside a settled period (BUILD_PROMPTS 4.3): unlock the period first. */
+export function isPeriodLocked(error: unknown): boolean {
+  return (
+    error instanceof ValidationError &&
+    error.issues.some((issue) => issue.message === 'period_locked')
+  );
+}

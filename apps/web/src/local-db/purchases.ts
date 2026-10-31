@@ -41,7 +41,9 @@ export class PurchasesRepository {
 
   /** Saves the purchase; throws ValidationError for invalid input. Returns the purchase id. */
   async create(input: NewPurchaseInput): Promise<string> {
+    this.store.assertWritable();
     const parsed = parseOrThrow(newPurchaseSchema, input);
+    await this.store.assertPeriodOpen([parsed.date]);
     const { db } = this.store;
     const deviceId = await this.store.deviceId();
     const now = this.store.now().toISOString();

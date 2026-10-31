@@ -16,6 +16,7 @@ import { Button } from '@/shared/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
 import { whatsAppLink } from '@/shared/lib/whatsapp';
 import { invoiceText } from './invoice-text';
+import { isLockedOn, PeriodLockHint, useLockedThrough } from '@/features/settlements';
 
 const t = messages.sales;
 
@@ -27,6 +28,7 @@ export function SaleDetailScreen() {
   const isOwner = session.user?.role === 'owner';
   const { unit } = useMoneyUnit();
   const [voiding, setVoiding] = useState(false);
+  const lockedThrough = useLockedThrough();
   const [paying, setPaying] = useState(false);
   const data = useLiveQuery(async () => {
     const view = await repositories.sales.get(id);
@@ -292,17 +294,23 @@ export function SaleDetailScreen() {
               {messages.customers.recordPayment}
             </Button>
           )}
-          <Button
-            type="button"
-            variant="destructive"
-            size="lg"
-            className="ms-auto"
-            onClick={() => {
-              setVoiding(true);
-            }}
-          >
-            {t.voidAction}
-          </Button>
+          {isLockedOn(sale.date, lockedThrough) ? (
+            <div className="ms-auto">
+              <PeriodLockHint date={sale.date} lockedThrough={lockedThrough} />
+            </div>
+          ) : (
+            <Button
+              type="button"
+              variant="destructive"
+              size="lg"
+              className="ms-auto"
+              onClick={() => {
+                setVoiding(true);
+              }}
+            >
+              {t.voidAction}
+            </Button>
+          )}
         </div>
       )}
 

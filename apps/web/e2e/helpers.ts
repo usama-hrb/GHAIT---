@@ -6,7 +6,7 @@ export async function signIn(page: Page): Promise<void> {
   await page.getByLabel('اسم المستخدم').fill(E2E.owner.username);
   await page.getByLabel('كلمة المرور').fill(E2E.owner.password);
   await page.getByRole('button', { name: 'دخول' }).click();
-  await expect(page).toHaveURL(/\/inventory$/);
+  await expect(page).toHaveURL(/\/home$/);
 }
 
 /** The service worker controls the page once the app shell is precached. */

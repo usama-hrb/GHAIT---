@@ -1,13 +1,23 @@
 import type {
+  CapitalMove,
+  CashAdjustment,
   Customer,
+  Expense,
   Fabric,
+  LockedCost,
+  Partner,
+  PartnerDraw,
   Payment,
   PaymentAllocation,
   Purchase,
+  RecurringExpense,
   Roll,
   Sale,
   SaleLine,
   SaleVoid,
+  SettlementRecord,
+  SettlementShare,
+  SplitRule,
   StockMove,
   Supplier,
   SyncConflict,
@@ -59,6 +69,16 @@ export class ShopDatabase extends Dexie {
   saleVoids!: EntityTable<Local<SaleVoid>, 'id'>;
   writeOffs!: EntityTable<Local<WriteOff>, 'id'>;
   syncConflicts!: EntityTable<Local<SyncConflict>, 'id'>;
+  expenses!: EntityTable<Local<Expense>, 'id'>;
+  recurringExpenses!: EntityTable<Local<RecurringExpense>, 'id'>;
+  partners!: EntityTable<Local<Partner>, 'id'>;
+  capitalMoves!: EntityTable<Local<CapitalMove>, 'id'>;
+  partnerDraws!: EntityTable<Local<PartnerDraw>, 'id'>;
+  profitSplitRules!: EntityTable<Local<SplitRule>, 'id'>;
+  settlements!: EntityTable<Local<SettlementRecord>, 'id'>;
+  settlementShares!: EntityTable<Local<SettlementShare>, 'id'>;
+  lockedCosts!: EntityTable<Local<LockedCost>, 'id'>;
+  cashAdjustments!: EntityTable<Local<CashAdjustment>, 'id'>;
   outbox!: EntityTable<OutboxEntry, 'seq'>;
   meta!: EntityTable<MetaEntry, 'key'>;
 
@@ -97,5 +117,25 @@ export class ShopDatabase extends Dexie {
     this.version(5).stores({
       syncConflicts: 'id, entityId',
     });
+    // v6, BUILD_PROMPTS 4.1: expenses and their recurring templates.
+    this.version(6).stores({
+      expenses: 'id, date, paidDate, recurringExpenseId',
+      recurringExpenses: 'id',
+    });
+    // v7, BUILD_PROMPTS 4.2: the partners, their capital moves and draws.
+    this.version(7).stores({
+      partners: 'id',
+      capitalMoves: 'id, partnerId',
+      partnerDraws: 'id, partnerId',
+    });
+    // v8, BUILD_PROMPTS 4.3: split rules, settlements, the partners' shares and frozen costs.
+    this.version(8).stores({
+      profitSplitRules: 'id',
+      settlements: 'id, periodEnd',
+      settlementShares: 'id, settlementId, partnerId',
+      lockedCosts: 'id, stockMoveId, settlementId',
+    });
+    // v9, BUILD_PROMPTS 4.4: cash counts.
+    this.version(9).stores({ cashAdjustments: 'id, date' });
   }
 }

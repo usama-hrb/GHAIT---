@@ -33,6 +33,7 @@ import {
 import { shopToday } from '@/shared/lib/dates';
 import type { Local, ShopDatabase } from './db';
 import { parseOrThrow, ValidationError } from './errors';
+import { withFrozenCosts } from './ledgers';
 import type { LocalStore } from './store';
 import type { SettingsRepository } from './tables';
 
@@ -86,7 +87,11 @@ async function historiesOf(
   const ids = [...new Set(rollIds)];
   const [rolls, moves] = await Promise.all([
     db.rolls.bulkGet(ids),
-    db.stockMoves.where('rollId').anyOf(ids).toArray(),
+    db.stockMoves
+      .where('rollId')
+      .anyOf(ids)
+      .toArray()
+      .then((all) => withFrozenCosts(db, all)),
   ]);
   const histories = new Map<string, LocalHistory>();
   for (const roll of rolls) {
@@ -179,7 +184,9 @@ export class SalesRepository {
 
   /** Saves the sale; throws ValidationError when it is invalid or unconfirmed under cost. */
   async create(input: NewSaleInput): Promise<string> {
+    this.store.assertWritable();
     const parsed = parseOrThrow(newSaleSchema, input);
+    await this.store.assertPeriodOpen([parsed.date]);
     const { db } = this.store;
     const deviceId = await this.store.deviceId();
     const now = this.store.now().toISOString();
@@ -189,6 +196,7 @@ export class SalesRepository {
       [
         db.rolls,
         db.stockMoves,
+        db.lockedCosts,
         db.sales,
         db.saleLines,
         db.payments,
@@ -247,6 +255,7 @@ export class SalesRepository {
    * paid on it is refunded. The reason is required and goes to the audit log.
    */
   async voidSale(saleId: string, reason: string): Promise<void> {
+    this.store.assertWritable();
     const payload = parseOrThrow(voidPayloadSchema, { reason });
     const { db } = this.store;
     const deviceId = await this.store.deviceId();
@@ -260,12 +269,15 @@ export class SalesRepository {
         db.payments,
         db.paymentAllocations,
         db.saleVoids,
+        db.settlements,
         db.outbox,
       ],
       async () => {
         const sale = await db.sales.get(saleId);
         if (!sale) throw new Error(`No sale ${saleId}`);
         if (sale.voidedAt !== null) return;
+        // A sale of a settled period stays as it is (BUILD_PROMPTS 4.3).
+        await this.store.assertPeriodOpen([sale.date, shopToday(this.store.now())]);
         const lineIds = (await db.saleLines.where('saleId').equals(saleId).toArray()).map(
           (line) => line.id,
         );

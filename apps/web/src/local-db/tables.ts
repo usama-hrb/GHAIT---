@@ -5,6 +5,7 @@ import {
   customerSchema,
   type Fabric,
   type FabricInput,
+  periodDatesOf,
   type Roll,
   rollSchema,
   fabricInputSchema,
@@ -43,12 +44,24 @@ type Base = {
  * Writes for one synced entity: the record and its outbox op in one local transaction
  * (ADR 0002), validated with the same contract schema the server applies.
  */
-class SyncedTable<R extends Base> {
+export class SyncedTable<R extends Base> {
   protected readonly table: Table<Local<R>, string>;
 
   constructor(
     protected readonly store: LocalStore,
-    tableName: 'fabrics' | 'variants' | 'suppliers' | 'rolls' | 'customers',
+    tableName:
+      | 'fabrics'
+      | 'variants'
+      | 'suppliers'
+      | 'rolls'
+      | 'customers'
+      | 'expenses'
+      | 'recurringExpenses'
+      | 'partners'
+      | 'capitalMoves'
+      | 'partnerDraws'
+      | 'profitSplitRules'
+      | 'cashAdjustments',
     private readonly entity: SyncEntity,
     private readonly recordSchema: z.ZodType<R>,
   ) {
@@ -61,10 +74,11 @@ class SyncedTable<R extends Base> {
 
   /** Creates (no id) or updates the record; throws ValidationError for invalid fields. Returns its id. */
   protected async write(fields: object, id: string = crypto.randomUUID()): Promise<string> {
+    this.store.assertWritable();
     const { db } = this.store;
     const deviceId = await this.store.deviceId();
     const now = this.store.now().toISOString();
-    await db.transaction('rw', this.table, db.outbox, async () => {
+    await db.transaction('rw', [this.table, db.outbox, db.settlements], async () => {
       const existing = await this.table.get(id);
       const record = parseOrThrow(this.recordSchema, {
         ...fields,
@@ -74,6 +88,10 @@ class SyncedTable<R extends Base> {
         deviceId,
         voidedAt: existing?.voidedAt ?? null,
       });
+      await this.store.assertPeriodOpen([
+        ...this.periodDates(record),
+        ...(existing ? this.periodDates(existing) : []),
+      ]);
       await this.table.put({ ...record, serverSeq: existing?.serverSeq ?? null });
       await db.outbox.add({
         opId: crypto.randomUUID(),
@@ -94,14 +112,16 @@ class SyncedTable<R extends Base> {
 
   /** No delete (CLAUDE.md): the record stays, voided, with the reason in the op and the audit log. */
   async void(id: string, reason: string): Promise<void> {
+    this.store.assertWritable();
     const payload = parseOrThrow(voidPayloadSchema, { reason });
     const { db } = this.store;
     const deviceId = await this.store.deviceId();
     const now = this.store.now().toISOString();
-    await db.transaction('rw', this.table, db.outbox, async () => {
+    await db.transaction('rw', [this.table, db.outbox, db.settlements], async () => {
       const existing = await this.table.get(id);
       if (!existing) throw new Error(`No ${this.entity} ${id}`);
       if (existing.voidedAt !== null) return;
+      await this.store.assertPeriodOpen(this.periodDates(existing));
       await this.table.put({ ...existing, voidedAt: now, updatedAt: now, deviceId });
       await db.outbox.add({
         opId: crypto.randomUUID(),
@@ -117,6 +137,12 @@ class SyncedTable<R extends Base> {
       });
     });
     this.store.changed();
+  }
+
+  /** The dates the record is accounted on (periodDatesOf): none for undated entities. */
+  private periodDates(record: R): (string | null)[] {
+    // A mutable entity's payload is its record (SyncPushPayload).
+    return periodDatesOf(this.entity, record as never);
   }
 }
 

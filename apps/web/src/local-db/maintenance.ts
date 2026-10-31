@@ -10,8 +10,9 @@ import {
 } from '@fabric/contracts';
 import type { RollLedger } from '@fabric/core';
 import type { Local, OutboxEntry } from './db';
+import { withFrozenCosts } from './ledgers';
 import type { LocalStore } from './store';
-import { tableOf } from './sync';
+import { PULLED_AT, tableOf } from './sync';
 
 export interface RollToReview {
   roll: Local<Roll>;
@@ -27,6 +28,14 @@ export interface RollToReview {
  */
 export class MaintenanceRepository {
   constructor(private readonly store: LocalStore) {}
+
+  /**
+   * Whether this device has pulled the whole shop at least once. Until then a missing record may
+   * just not be here yet: a set-up screen waits instead of creating a second one.
+   */
+  async pulledOnce(): Promise<boolean> {
+    return (await this.store.getMeta(PULLED_AT)) !== undefined;
+  }
 
   /** Changes the server refused, oldest first (never retried as they are, ADR 0002). */
   rejected(): Promise<OutboxEntry[]> {
@@ -46,7 +55,7 @@ export class MaintenanceRepository {
     const { db } = this.store;
     const [rolls, moves, variants, fabrics] = await Promise.all([
       db.rolls.toArray(),
-      db.stockMoves.toArray(),
+      db.stockMoves.toArray().then((all) => withFrozenCosts(db, all)),
       db.variants.toArray(),
       db.fabrics.toArray(),
     ]);

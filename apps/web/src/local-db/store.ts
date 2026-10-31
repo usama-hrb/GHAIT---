@@ -1,4 +1,6 @@
+import { lockedThroughOf, periodLockIssues } from '@fabric/contracts';
 import type { ShopDatabase } from './db';
+import { ReadOnlyError, ValidationError } from './errors';
 
 const DEVICE_ID = 'deviceId';
 
@@ -9,11 +11,38 @@ const DEVICE_ID = 'deviceId';
 export class LocalStore {
   private deviceIdPromise: Promise<string> | undefined;
   private readonly listeners = new Set<() => void>();
+  private readOnly = false;
 
   constructor(
     readonly db: ShopDatabase,
     private readonly clock: () => Date = () => new Date(),
-  ) {}
+  ) {
+    // Every change goes with an outbox op in the same transaction: refusing the op refuses the
+    // change, whichever repository makes it (a partner's account is read-only, BUILD_PROMPTS 4.2).
+    db.outbox.hook('creating', () => {
+      this.assertWritable();
+    });
+  }
+
+  /** Set by the session from the signed-in user's role. */
+  setReadOnly(readOnly: boolean): void {
+    this.readOnly = readOnly;
+  }
+
+  /** Every write starts here: a read-only account gets a ReadOnlyError before anything is saved. */
+  assertWritable(): void {
+    if (this.readOnly) throw new ReadOnlyError();
+  }
+
+  /**
+   * A change dated inside a settled period is refused until that period is unlocked
+   * (BUILD_PROMPTS 4.3); the server checks it again. In a transaction, include db.settlements.
+   */
+  async assertPeriodOpen(dates: readonly (string | null)[]): Promise<void> {
+    if (dates.every((date) => date === null)) return;
+    const issues = periodLockIssues(dates, lockedThroughOf(await this.db.settlements.toArray()));
+    if (issues.length > 0) throw new ValidationError(issues);
+  }
 
   now(): Date {
     return this.clock();

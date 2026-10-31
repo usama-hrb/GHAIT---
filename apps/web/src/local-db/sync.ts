@@ -16,6 +16,8 @@ import { type Session, SignedOutError } from './session';
 import type { LocalStore } from './store';
 
 const PULL_CURSOR = 'pullCursor';
+/** When this device last pulled everything the server had: it knows the whole shop. */
+export const PULLED_AT = 'pulledAt';
 /** The server's data set the cursor belongs to (ADR 0002, slice 6). */
 const SYNC_EPOCH = 'syncEpoch';
 const PULL_LIMIT = 200;
@@ -39,6 +41,16 @@ const TABLES = {
   sale_void: 'saleVoids',
   write_off: 'writeOffs',
   sync_conflict: 'syncConflicts',
+  expense: 'expenses',
+  recurring_expense: 'recurringExpenses',
+  partner: 'partners',
+  capital_move: 'capitalMoves',
+  partner_draw: 'partnerDraws',
+  profit_split_rule: 'profitSplitRules',
+  settlement: 'settlements',
+  settlement_share: 'settlementShares',
+  locked_cost: 'lockedCosts',
+  cash_adjustment: 'cashAdjustments',
 } as const satisfies Record<SyncEntity, keyof ShopDatabase>;
 
 /** The Dexie table of a synced entity. */
@@ -298,7 +310,10 @@ export class SyncEngine {
         }
       }
       await applyPulledChanges(db, page);
-      if (!page.hasMore) return;
+      if (!page.hasMore) {
+        await this.store.setMeta(PULLED_AT, this.store.now().toISOString());
+        return;
+      }
     }
   }
 

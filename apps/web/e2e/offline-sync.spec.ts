@@ -12,6 +12,7 @@ test('a fabric added offline reaches the server and a second device', async ({
   const page = await desk.newPage();
   await signIn(page);
   await waitForAppShell(page);
+  await page.goto('/inventory');
   const status = connectivity(page);
   await expect(status).toContainText('متصل');
 
@@ -46,6 +47,7 @@ test('a fabric added offline reaches the server and a second device', async ({
   });
   const phonePage = await phone.newPage();
   await signIn(phonePage);
+  await phonePage.goto('/inventory');
   await expect(phonePage.getByRole('link', { name: 'روزا', exact: true })).toBeVisible();
 
   await desk.close();

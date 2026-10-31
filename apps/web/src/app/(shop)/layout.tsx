@@ -6,6 +6,7 @@ import { SignOutButton, SyncStatus, UpdateNotice } from '@/features/sync';
 import { messages } from '@/i18n';
 import { useSession } from '@/local-db';
 import { AppShell, LoadingState } from '@/shared/brand';
+import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { ThemeToggle } from '@/shared/theme';
 import { shopNavigation } from '../navigation';
 
@@ -42,6 +43,11 @@ export default function ShopLayout({ children }: { children: ReactNode }) {
       }
     >
       <UpdateNotice />
+      {session.user?.role !== 'owner' && (
+        <Alert className="mb-4" role="status">
+          <AlertDescription>{messages.auth.readOnly}</AlertDescription>
+        </Alert>
+      )}
       {children}
     </AppShell>
   );
