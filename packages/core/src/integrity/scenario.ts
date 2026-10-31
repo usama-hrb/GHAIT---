@@ -1,10 +1,5 @@
 import { allocateLineCost } from '../costing/index.js';
-import {
-  allocatePayment,
-  amountDueCents,
-  splitSaleCapitalProfit,
-  unrecoveredCapitalCents,
-} from '../payments/index.js';
+import { amountDueCents, splitSaleCapitalProfit } from '../payments/index.js';
 import { computeSaleLine } from '../pricing/index.js';
 import {
   computeSettlement,
@@ -14,6 +9,7 @@ import {
   type PartnerOwnership,
   periodNetProfit,
   type PeriodResult,
+  periodResultOf,
   type Settlement,
 } from '../settlement/index.js';
 import {
@@ -44,6 +40,8 @@ export type ScenarioEvent =
   /** One line on one roll; paidCents 0 is a credit sale, any amount over the total an overpayment. */
   | { type: 'sale'; roll: number; soldCm: number; pricePerMeterCents: number; paidCents: number }
   | { type: 'payment'; sale: number; amountCents: number }
+  /** A payment on a written-off invoice (S5): its capital is recovered first, then profit. */
+  | { type: 'recovery'; sale: number; amountCents: number }
   | { type: 'expense'; amountCents: number }
   | { type: 'loss'; roll: number; lengthCm: number }
   /** Writes off an invoice that still has something due (bad debt). */
@@ -76,7 +74,7 @@ export interface Ledger {
   }[];
   payments: { sale: number; amountCents: number; period: number }[];
   lossMoves: { roll: number; lengthCm: number; costCents: number; period: number }[];
-  writeOffs: { sale: number; lossCents: number; period: number }[];
+  writeOffs: { sale: number; period: number }[];
   expenses: { amountCents: number; period: number }[];
   draws: { partnerId: string; amountCents: number; period: number }[];
   cashAdjustments: { diffCents: number; period: number }[];
@@ -129,6 +127,7 @@ function cashCents(ledger: Ledger): number {
     sum(ledger.capitalMoves.filter((move) => move.type === type).map((move) => move.amountCents));
   return cashBalanceCents({
     customerPaymentsCents: sum(ledger.payments.map((payment) => payment.amountCents)),
+    customerRefundsCents: 0,
     contributionsCents: moves('contribution'),
     capitalWithdrawalsCents: -moves('withdrawal'),
     purchasesPaidCents: sum(ledger.purchases.map((purchase) => purchase.paidCents)),
@@ -138,38 +137,48 @@ function cashCents(ledger: Ledger): number {
   });
 }
 
-/** What the API gathers for a settlement (BUILD_PROMPTS 4.3), from the records alone. */
+/** The date of a period's records: its first day. */
+const dateOf = (period: number) => periodDates(period).periodStart;
+
+/** What a settlement gathers from the records alone (periodResultOf, BUILD_PROMPTS 4.3). */
 export function periodResult(ledger: Ledger, period: number): PeriodResult {
-  let recognizedProfitCents = 0;
-  for (const [sale] of ledger.sales.entries()) {
-    const amounts = saleSplit(ledger, sale);
-    const before: number[] = [];
-    for (const payment of salePayments(ledger, sale)) {
-      const allocation = allocatePayment(amounts, before, payment.amountCents);
-      if (payment.period === period) recognizedProfitCents += allocation.profitRecognizedCents;
-      before.push(payment.amountCents);
-    }
-  }
-  const inPeriod = <T extends { period: number }>(records: readonly T[]) =>
-    records.filter((record) => record.period === period);
-  const previous = ledger.settlements[period - 1];
-  return {
-    recognizedProfitCents,
-    losses: {
-      damageCents: sum(inPeriod(ledger.lossMoves).map((move) => move.costCents)),
-      badDebtCents: sum(inPeriod(ledger.writeOffs).map((writeOff) => writeOff.lossCents)),
-      belowCostCents: sum(
-        [...ledger.sales.entries()]
-          .filter(([, sale]) => sale.period === period)
-          .map(([index]) => saleSplit(ledger, index).lossCents),
-      ),
+  const writtenOffOn = new Map(
+    ledger.writeOffs.map((writeOff) => [writeOff.sale, dateOf(writeOff.period)]),
+  );
+  return periodResultOf(
+    {
+      sales: ledger.sales.map((sale, index) => {
+        const { totalCents, capitalCents } = saleSplit(ledger, index);
+        return {
+          date: dateOf(sale.period),
+          totalCents,
+          capitalCents,
+          allocations: salePayments(ledger, index).map((payment) => ({
+            date: dateOf(payment.period),
+            amountCents: payment.amountCents,
+          })),
+          writtenOffOn: writtenOffOn.get(index) ?? null,
+        };
+      }),
+      losses: ledger.lossMoves.map((move) => ({
+        date: dateOf(move.period),
+        costCents: move.costCents,
+      })),
+      expenses: ledger.expenses.map((expense) => ({
+        paidDate: dateOf(expense.period),
+        amountCents: expense.amountCents,
+      })),
+      cashAdjustments: ledger.cashAdjustments.map((count) => ({
+        date: dateOf(count.period),
+        diffCents: count.diffCents,
+      })),
     },
-    expensesCents: sum(inPeriod(ledger.expenses).map((expense) => expense.amountCents)),
-    cashOverShortCents: sum(
-      inPeriod(ledger.cashAdjustments).map((adjustment) => adjustment.diffCents),
-    ),
-    carriedDeficitInCents: previous?.carryDeficitOutCents ?? 0,
-  };
+    {
+      after: period === 0 ? null : periodDates(period - 1).periodEnd,
+      end: periodDates(period).periodEnd,
+    },
+    ledger.settlements[period - 1]?.carryDeficitOutCents ?? 0,
+  );
 }
 
 /** The integrity check's amounts, derived from the records only. */
@@ -324,13 +333,16 @@ export function applyEvent(ledger: Ledger, event: ScenarioEvent): void {
       const chosen = pick(owing, event.sale);
       if (!chosen) return;
       const [index, sale] = chosen;
-      const paid = salePayments(ledger, index).map((payment) => payment.amountCents);
-      ledger.writeOffs.push({
-        sale: index,
-        lossCents: unrecoveredCapitalCents(saleSplit(ledger, index), paid),
-        period,
-      });
+      ledger.writeOffs.push({ sale: index, period });
       sale.writtenOff = true;
+      return;
+    }
+    case 'recovery': {
+      const writtenOff = [...ledger.sales.entries()].filter(([, sale]) => sale.writtenOff);
+      const chosen = pick(writtenOff, event.sale);
+      if (!chosen) return;
+      const amountCents = Math.max(1, Math.abs(event.amountCents));
+      ledger.payments.push({ sale: chosen[0], amountCents, period });
       return;
     }
     case 'draw': {

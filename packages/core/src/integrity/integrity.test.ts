@@ -14,6 +14,7 @@ import {
   integrityStateOf,
   type Ledger,
   periodDates,
+  periodResult,
   runScenario,
   type ScenarioEvent,
 } from './scenario.js';
@@ -101,14 +102,27 @@ describe('checkIntegrity (SPEC §9)', () => {
       { type: 'write_off', sale: 0 },
     ];
     const ledger = runScenario(events);
-    expect(ledger.writeOffs).toEqual([{ sale: 0, lossCents: dh(60), period: 0 }]);
+    expect(ledger.writeOffs).toEqual([{ sale: 0, period: 0 }]);
+    // 60 dh, not the 100 dh due: the 40 dh of profit in it were never recognised.
+    expect(periodResult(ledger, 0).losses.badDebtCents).toBe(dh(60));
     expect(check(ledger).ok).toBe(true);
+  });
 
-    // Writing off the whole amount due (100 dh) would count 40 dh of never-recognised profit.
-    const writeOff = ledger.writeOffs[0];
-    if (!writeOff) throw new Error('written off');
-    writeOff.lossCents = dh(100);
-    expect(check(ledger).diffCents).toBe(dh(40));
+  it('a bad debt paid the next month: its capital is a gain of that month, the rest profit (S5)', () => {
+    const ledger = runScenario([
+      { type: 'contribution', partner: 'owner', amountCents: dh(1000) },
+      { type: 'purchase', lengthCm: 1000, costCents: dh(160) },
+      { type: 'sale', roll: 0, soldCm: 1000, pricePerMeterCents: dh(20), paidCents: dh(100) },
+      { type: 'write_off', sale: 0 },
+      { type: 'settlement' },
+      { type: 'recovery', sale: 0, amountCents: dh(150) }, // 50 dh more than was due: credit
+    ]);
+    expect(periodResult(ledger, 1)).toMatchObject({
+      recoveredBadDebtCents: dh(60),
+      recognizedProfitCents: dh(40),
+    });
+    expect(integrityStateOf(ledger).customerCreditsCents).toBe(dh(50));
+    expect(check(ledger).ok).toBe(true);
   });
 
   it('an overpayment is held for the customer (I1), so it is a claim', () => {
@@ -176,6 +190,7 @@ describe('checkIntegrity (SPEC §9)', () => {
       { type: 'loss', roll: 0, lengthCm: 10 },
       { type: 'payment', sale: 0, amountCents: 100 }, // no sale
       { type: 'write_off', sale: 0 },
+      { type: 'recovery', sale: 0, amountCents: 100 }, // nothing written off
       { type: 'cash_count', differenceCents: 0 },
       { type: 'cash_count', differenceCents: -100 }, // nothing in the till to be short of
     ]);
@@ -206,6 +221,7 @@ describe('checkIntegrity (SPEC §9)', () => {
       lengthCm: fc.nat({ max: 500 }),
     }),
     fc.record({ type: fc.constant('write_off' as const), sale: fc.nat() }),
+    fc.record({ type: fc.constant('recovery' as const), sale: fc.nat(), amountCents: amount }),
     fc.record({ type: fc.constant('draw' as const), partner: role, amountCents: amount }),
     fc.record({
       type: fc.constant('cash_count' as const),
@@ -336,6 +352,7 @@ describe('integrity amounts', () => {
     expect(
       cashBalanceCents({
         customerPaymentsCents: 30_000,
+        customerRefundsCents: 3000,
         contributionsCents: 200_000,
         capitalWithdrawalsCents: 10_000,
         purchasesPaidCents: 80_000,
@@ -343,10 +360,11 @@ describe('integrity amounts', () => {
         drawsCents: 2000,
         cashAdjustmentsCents: -500,
       }),
-    ).toBe(136_500);
+    ).toBe(133_500);
     expect(() =>
       cashBalanceCents({
         customerPaymentsCents: -1,
+        customerRefundsCents: 0,
         contributionsCents: 0,
         capitalWithdrawalsCents: 0,
         purchasesPaidCents: 0,

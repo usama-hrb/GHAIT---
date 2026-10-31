@@ -14,6 +14,11 @@ export interface SettlementInput {
   periodEnd: string;
   /** Σ profitRecognizedCents of the payments dated in the period (allocatePayment, SPEC §8.2). */
   recognizedProfitCents: number;
+  /**
+   * Capital recovered in the period by payments on written-off invoices (S5): written off as a
+   * loss before, so a gain now.
+   */
+  recoveredBadDebtCents: number;
   /** SPEC §8.1 "الخسائر", each at cost. */
   losses: {
     /** Loss moves dated in the period: damage and wasted remnants (T12). */
@@ -40,6 +45,7 @@ export interface SettlementInput {
 /** One line of the settlement's breakdown; the UI labels each key through i18n. */
 export type SettlementLineKey =
   | 'recognized_profit'
+  | 'bad_debt_recovered'
   | 'loss_damage'
   | 'loss_bad_debt'
   | 'loss_below_cost'
@@ -66,12 +72,13 @@ export interface Settlement {
   periodStart: string;
   periodEnd: string;
   recognizedProfitCents: number;
+  recoveredBadDebtCents: number;
   /** damage + bad debts + below cost. */
   lossesCents: number;
   expensesCents: number;
   cashOverShortCents: number;
   carriedDeficitInCents: number;
-  /** recognized − losses − expenses ± cash over/short − carried deficit; may be negative. */
+  /** recognized + recovered − losses − expenses ± cash over/short − carried deficit; may be negative. */
   netProfitCents: number;
   ownerShareCents: number;
   partnerShareCents: number;
@@ -91,6 +98,7 @@ export interface Settlement {
 export type PeriodResult = Pick<
   SettlementInput,
   | 'recognizedProfitCents'
+  | 'recoveredBadDebtCents'
   | 'losses'
   | 'expensesCents'
   | 'cashOverShortCents'
@@ -98,9 +106,9 @@ export type PeriodResult = Pick<
 >;
 
 /**
- * SPEC §8.1: net = recognized profit − losses − paid expenses ± cash over/short − carried
- * deficit (may be negative). For the open period so far, this is the integrity check's
- * unsettled net profit (§9).
+ * SPEC §8.1: net = recognized profit + recovered bad debts − losses − paid expenses ± cash
+ * over/short − carried deficit (may be negative). For the open period so far, this is the
+ * integrity check's unsettled net profit (§9).
  */
 export function periodNetProfit(result: PeriodResult): {
   lossesCents: number;
@@ -108,6 +116,7 @@ export function periodNetProfit(result: PeriodResult): {
 } {
   const { losses } = result;
   assertInteger(result.recognizedProfitCents, 'recognizedProfitCents', 0);
+  assertInteger(result.recoveredBadDebtCents, 'recoveredBadDebtCents', 0);
   assertInteger(losses.damageCents, 'damageCents', 0);
   assertInteger(losses.badDebtCents, 'badDebtCents', 0);
   assertInteger(losses.belowCostCents, 'belowCostCents', 0);
@@ -116,7 +125,8 @@ export function periodNetProfit(result: PeriodResult): {
   assertInteger(result.carriedDeficitInCents, 'carriedDeficitInCents', 0);
   const lossesCents = losses.damageCents + losses.badDebtCents + losses.belowCostCents;
   const netProfitCents =
-    result.recognizedProfitCents -
+    result.recognizedProfitCents +
+    result.recoveredBadDebtCents -
     lossesCents -
     result.expensesCents +
     result.cashOverShortCents -
@@ -127,11 +137,13 @@ export function periodNetProfit(result: PeriodResult): {
 
 /**
  * Settles one period (SPEC §8.1, T6, T7, T9, T10).
- * net = recognized profit − losses − paid expenses ± cash over/short − carried deficit.
+ * net = recognized profit + recovered bad debts − losses − paid expenses ± cash over/short −
+ * carried deficit.
  * - net ≤ 0: nothing is distributed, the deficit carries to the next period, capital is untouched.
  * - net > 0: owner / partner / shop by the split rule, the division cents to the shop; the shop
  *   share becomes capital (retained_profit) split between the partners by ownership.
- * Gathering the inputs and locking the period are the API's job (BUILD_PROMPTS 4.3).
+ * periodResultOf gathers the amounts from the records; locking the period is the API's job
+ * (BUILD_PROMPTS 4.3).
  */
 export function computeSettlement(input: SettlementInput): Settlement {
   const { periodStart, periodEnd, losses } = input;
@@ -166,6 +178,7 @@ export function computeSettlement(input: SettlementInput): Settlement {
   // `0 - x` rather than `-x`: a zero deduction stays +0.
   const breakdown: SettlementLine[] = [
     { key: 'recognized_profit', cents: input.recognizedProfitCents },
+    { key: 'bad_debt_recovered', cents: input.recoveredBadDebtCents },
     { key: 'loss_damage', cents: 0 - losses.damageCents },
     { key: 'loss_bad_debt', cents: 0 - losses.badDebtCents },
     { key: 'loss_below_cost', cents: 0 - losses.belowCostCents },
@@ -186,6 +199,7 @@ export function computeSettlement(input: SettlementInput): Settlement {
     periodStart,
     periodEnd,
     recognizedProfitCents: input.recognizedProfitCents,
+    recoveredBadDebtCents: input.recoveredBadDebtCents,
     lossesCents,
     expensesCents: input.expensesCents,
     cashOverShortCents: input.cashOverShortCents,

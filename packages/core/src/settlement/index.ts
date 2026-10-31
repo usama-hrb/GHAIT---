@@ -1,4 +1,13 @@
-export { type CapitalMoveType, partnerBalance, partnerCapital } from './balances.js';
+export {
+  type CapitalMoveType,
+  drawWarnings,
+  type PartnerAccount,
+  partnerAccount,
+  partnerBalance,
+  partnerCapital,
+  type PartnerWarning,
+  withdrawalWarnings,
+} from './balances.js';
 export {
   computeSettlement,
   periodNetProfit,
@@ -17,3 +26,10 @@ export {
   splitNetProfit,
   splitRuleForPeriod,
 } from './split-rule.js';
+export {
+  inPeriod,
+  type PeriodBounds,
+  type PeriodRecords,
+  periodResultOf,
+  type PeriodSale,
+} from './period.js';

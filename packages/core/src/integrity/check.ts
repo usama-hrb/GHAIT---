@@ -6,6 +6,8 @@ import { amountDueCents, type SaleAmounts, unrecoveredCapitalCents } from '../pa
 export interface CashFlows {
   /** Cash sales and customer payments, overpayments included. */
   customerPaymentsCents: number;
+  /** Money given back to customers: a voided sale's payments, a credit paid out (P6, P13). */
+  customerRefundsCents: number;
   /** capital_move contributions (retained_profit moves no cash). */
   contributionsCents: number;
   /** capital_move withdrawals, as a positive amount. */
@@ -18,13 +20,14 @@ export interface CashFlows {
 }
 
 /**
- * Cash the records say the till holds (SPEC §9): payments in + contributions − withdrawals −
- * purchases − expenses − draws ± cash adjustments. A physical count is compared with it, and
+ * Cash the records say the till holds (SPEC §9): payments in − refunds + contributions −
+ * withdrawals − purchases − expenses − draws ± cash adjustments. A physical count is compared with it, and
  * the difference is recorded as a cash_adjustment (cash over/short of its period, I2).
  */
 export function cashBalanceCents(flows: CashFlows): number {
   const names: (keyof CashFlows)[] = [
     'customerPaymentsCents',
+    'customerRefundsCents',
     'contributionsCents',
     'capitalWithdrawalsCents',
     'purchasesPaidCents',
@@ -34,7 +37,8 @@ export function cashBalanceCents(flows: CashFlows): number {
   for (const name of names) assertInteger(flows[name], name, 0);
   assertInteger(flows.cashAdjustmentsCents, 'cashAdjustmentsCents');
   return (
-    flows.customerPaymentsCents +
+    flows.customerPaymentsCents -
+    flows.customerRefundsCents +
     flows.contributionsCents -
     flows.capitalWithdrawalsCents -
     flows.purchasesPaidCents -
@@ -75,8 +79,8 @@ export function receivablesPosition(invoices: readonly ReceivableInvoice[]): {
   let unrecovered = 0;
   let credits = 0;
   for (const invoice of invoices) {
-    if (invoice.writtenOff) continue;
-    unrecovered += unrecoveredCapitalCents(invoice, invoice.paymentsCents);
+    // A written-off invoice's capital was booked as a loss; money paid beyond it is still credit.
+    if (!invoice.writtenOff) unrecovered += unrecoveredCapitalCents(invoice, invoice.paymentsCents);
     credits += Math.max(0, -amountDueCents(invoice.totalCents, invoice.paymentsCents));
   }
   return { unrecoveredCapitalCents: unrecovered, customerCreditsCents: credits };

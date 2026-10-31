@@ -2,7 +2,13 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { fromDirham } from '../money/index.js';
 import { allocatePayment, splitSaleCapitalProfit } from '../payments/index.js';
-import { partnerBalance, partnerCapital } from './balances.js';
+import {
+  drawWarnings,
+  partnerAccount,
+  partnerBalance,
+  partnerCapital,
+  withdrawalWarnings,
+} from './balances.js';
 import { computeSettlement, type Settlement, type SettlementInput } from './compute.js';
 import { type PartnerOwnership, splitByOwnership } from './ownership.js';
 import {
@@ -25,6 +31,7 @@ function period(overrides: Partial<SettlementInput> = {}): SettlementInput {
     periodStart: '2026-10-01',
     periodEnd: '2026-10-31',
     recognizedProfitCents: 0,
+    recoveredBadDebtCents: 0,
     losses: NO_LOSSES,
     expensesCents: 0,
     cashOverShortCents: 0,
@@ -69,6 +76,7 @@ describe('computeSettlement (SPEC §8.1)', () => {
     ]);
     expect(settlement.breakdown).toEqual([
       { key: 'recognized_profit', cents: 40_000 },
+      { key: 'bad_debt_recovered', cents: 0 },
       { key: 'loss_damage', cents: 0 },
       { key: 'loss_bad_debt', cents: 0 },
       { key: 'loss_below_cost', cents: 0 },
@@ -143,7 +151,7 @@ describe('computeSettlement (SPEC §8.1)', () => {
     );
     expect(settlement).toMatchObject({ lossesCents: 480 + 5000 + 2000, netProfitCents: 22_520 });
     expect(shares(settlement)).toEqual([7506, 7506, 7508]);
-    expect(settlement.breakdown.slice(1, 4)).toEqual([
+    expect(settlement.breakdown.slice(2, 5)).toEqual([
       { key: 'loss_damage', cents: -480 },
       { key: 'loss_bad_debt', cents: -5000 },
       { key: 'loss_below_cost', cents: -2000 },
@@ -293,6 +301,7 @@ describe('computeSettlement (SPEC §8.1)', () => {
     [{ periodEnd: '2026-09-30' }, 'period ends (2026-09-30) before it starts (2026-10-01)'],
     [{ recognizedProfitCents: -1 }, 'recognizedProfitCents must be >= 0'],
     [{ recognizedProfitCents: 1.5 }, 'recognizedProfitCents must be a safe integer'],
+    [{ recoveredBadDebtCents: -1 }, 'recoveredBadDebtCents must be >= 0'],
     [{ losses: { ...NO_LOSSES, damageCents: -1 } }, 'damageCents must be >= 0'],
     [{ losses: { ...NO_LOSSES, badDebtCents: -1 } }, 'badDebtCents must be >= 0'],
     [{ losses: { ...NO_LOSSES, belowCostCents: -1 } }, 'belowCostCents must be >= 0'],
@@ -318,6 +327,7 @@ describe('computeSettlement (SPEC §8.1)', () => {
   const amount = fc.integer({ min: 0, max: 100_000_000 });
   const scenario = fc.record({
     recognizedProfitCents: amount,
+    recoveredBadDebtCents: amount,
     losses: fc.record({ damageCents: amount, badDebtCents: amount, belowCostCents: amount }),
     expensesCents: amount,
     cashOverShortCents: fc.integer({ min: -100_000_000, max: 100_000_000 }),
@@ -518,5 +528,90 @@ describe('partnerCapital (SPEC §8.4)', () => {
     [{ type: 'contribution', amountCents: 0.5 }, 'contribution amountCents must be a safe integer'],
   ] as const)('rejects %j', (move, message) => {
     expect(() => partnerCapital([move])).toThrow(message);
+  });
+});
+
+describe('partnerAccount (SPEC §6, §8.4, BUILD_PROMPTS 4.2)', () => {
+  const contributions = [
+    { type: 'contribution' as const, amountCents: 5_000_000 },
+    { type: 'contribution' as const, amountCents: 1_000_000, voided: true },
+    { type: 'retained_profit' as const, amountCents: 10_000 },
+    { type: 'withdrawal' as const, amountCents: -200_000 },
+  ];
+
+  it('derives every figure from the records only, voided ones left out', () => {
+    expect(
+      partnerAccount({
+        capitalMoves: contributions,
+        shares: [{ amountCents: 10_000 }, { amountCents: 5000, voided: true }],
+        draws: [{ amountCents: 3000 }, { amountCents: 900, voided: true }],
+      }),
+    ).toEqual({
+      capitalCents: 4_810_000,
+      contributionsCents: 5_000_000,
+      retainedProfitCents: 10_000,
+      withdrawalsCents: 200_000,
+      sharesCents: 10_000,
+      drawsCents: 3000,
+      undrawnCents: 7000,
+    });
+  });
+
+  it('warns before capital goes below zero or a draw goes beyond the share', () => {
+    const account = partnerAccount({
+      capitalMoves: contributions,
+      shares: [{ amountCents: 10_000 }],
+      draws: [],
+    });
+    expect(withdrawalWarnings(account, 4_810_000)).toEqual([]);
+    expect(withdrawalWarnings(account, 4_810_001)).toEqual(['capital_below_zero']);
+    expect(drawWarnings(account, 10_000)).toEqual([]);
+    expect(drawWarnings(account, 10_001)).toEqual(['draw_beyond_share']);
+    // Nothing recorded: zeros, never -0.
+    const empty = partnerAccount({ capitalMoves: [], shares: [], draws: [] });
+    expect(Object.is(empty.drawsCents, 0) && Object.is(empty.withdrawalsCents, 0)).toBe(true);
+    // Before any settlement there is no share yet: every draw is ahead of it.
+    expect(drawWarnings(partnerAccount({ capitalMoves: [], shares: [], draws: [] }), 1)).toEqual([
+      'draw_beyond_share',
+    ]);
+    expect(() => drawWarnings(account, 0)).toThrow(RangeError);
+  });
+
+  it('property: capital = contributions + retained − withdrawals, undrawn = shares − draws', () => {
+    const move = fc.oneof(
+      fc.record({
+        type: fc.constant('contribution' as const),
+        amountCents: fc.integer({ min: 1, max: 1e7 }),
+        voided: fc.boolean(),
+      }),
+      fc.record({
+        type: fc.constant('retained_profit' as const),
+        amountCents: fc.integer({ min: 1, max: 1e6 }),
+        voided: fc.boolean(),
+      }),
+      fc.record({
+        type: fc.constant('withdrawal' as const),
+        amountCents: fc.integer({ min: -1e6, max: -1 }),
+        voided: fc.boolean(),
+      }),
+    );
+    const amount = fc.record({
+      amountCents: fc.integer({ min: 1, max: 1e6 }),
+      voided: fc.boolean(),
+    });
+    fc.assert(
+      fc.property(
+        fc.array(move),
+        fc.array(amount),
+        fc.array(amount),
+        (capitalMoves, shares, draws) => {
+          const account = partnerAccount({ capitalMoves, shares, draws });
+          expect(account.capitalCents).toBe(
+            account.contributionsCents + account.retainedProfitCents - account.withdrawalsCents,
+          );
+          expect(account.undrawnCents).toBe(account.sharesCents - account.drawsCents);
+        },
+      ),
+    );
   });
 });

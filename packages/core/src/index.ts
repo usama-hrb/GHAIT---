@@ -1,4 +1,5 @@
 export * from './costing/index.js';
+export * from './expenses/index.js';
 export * from './integrity/index.js';
 export * from './length/index.js';
 export * from './money/index.js';
