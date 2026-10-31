@@ -12,6 +12,8 @@ export const ERROR_CODES = [
   'forbidden',
   'not_found',
   'conflict',
+  /** The record is dated inside a settled period: unlock the period first (BUILD_PROMPTS 4.3). */
+  'period_locked',
   'too_many_requests',
   'internal_error',
 ] as const;

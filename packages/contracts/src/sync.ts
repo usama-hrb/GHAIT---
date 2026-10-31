@@ -1,6 +1,15 @@
 import { z } from 'zod';
+import { cashAdjustmentSchema } from './cash-counts.js';
 import { fabricSchema, recordBaseSchema, supplierSchema, variantSchema } from './catalog.js';
 import { deviceIdSchema, idSchema, isoDateSchema, timestampSchema } from './common.js';
+import { expenseSchema, recurringExpenseSchema } from './expenses.js';
+import { capitalMoveSchema, partnerDrawSchema, partnerSchema } from './partners.js';
+import {
+  lockedCostSchema,
+  settlementSchema,
+  settlementShareSchema,
+  splitRuleSchema,
+} from './settlements.js';
 import {
   customerSchema,
   paymentAllocationSchema,
@@ -28,7 +37,7 @@ import {
  * server merges them:
  * - mutable: upsert and void ops, last write wins on (updatedAt, deviceId);
  * - append_only: append ops, never overwritten (stock_move, payment…);
- * - pull_only: devices receive it, but change it through the API (settings, for now).
+ * - pull_only: devices receive it, but change it through the API (settings, settlements).
  * `schema` is the record as stored and pulled; `pushSchema`, when given, is an op's payload.
  */
 /**
@@ -73,6 +82,22 @@ export const SYNC_ENTITIES = {
   write_off: { merge: 'append_only', schema: writeOffSchema },
   /** A void op carries the reversals and the refund (checkSaleVoid); the sale gets voidedAt. */
   sale_void: { merge: 'append_only', schema: saleVoidSchema, pushSchema: saleVoidAggregateSchema },
+  /** SPEC §5: edited and voided like the catalog (last write wins). */
+  expense: { merge: 'mutable', schema: expenseSchema },
+  recurring_expense: { merge: 'mutable', schema: recurringExpenseSchema },
+  /** SPEC §6: the owner and the partner. */
+  partner: { merge: 'mutable', schema: partnerSchema },
+  /** Created, or voided with a reason; never edited (checkCapitalMove, checkUnchanged). */
+  capital_move: { merge: 'mutable', schema: capitalMoveSchema },
+  partner_draw: { merge: 'mutable', schema: partnerDrawSchema },
+  /** SPEC §8.3: entered, changed or voided only while in the future (checkSplitRule). */
+  profit_split_rule: { merge: 'mutable', schema: splitRuleSchema },
+  /** Written by the server when the owner approves or unlocks (BUILD_PROMPTS 4.3). */
+  settlement: { merge: 'pull_only', schema: settlementSchema },
+  settlement_share: { merge: 'pull_only', schema: settlementShareSchema },
+  locked_cost: { merge: 'pull_only', schema: lockedCostSchema },
+  /** SPEC §9: a count of the shop's money; created or voided, never edited (checkCashAdjustment). */
+  cash_adjustment: { merge: 'mutable', schema: cashAdjustmentSchema },
   sync_conflict: { merge: 'pull_only', schema: syncConflictSchema },
   setting: {
     merge: 'pull_only',

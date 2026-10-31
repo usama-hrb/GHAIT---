@@ -54,8 +54,11 @@ export const INVENTORY_ISSUES = {
   rollFieldsFixed: 'roll_fields_are_fixed',
 } as const;
 
-/** A move as stored: with its server_seq once the server has it (history order, syncOrder). */
-export type SequencedMove = StockMove & { serverSeq?: number | null };
+/**
+ * A move as stored: with its server_seq once the server has it (history order, syncOrder), and
+ * the cost a settlement froze for it (withLockedCosts, P9).
+ */
+export type SequencedMove = StockMove & { serverSeq?: number | null; lockedCostCents?: number };
 
 /** The roll's costs, lengths and state from its moves (@fabric/core rollLedger). */
 export function rollLedgerOf(roll: Roll, moves: readonly SequencedMove[]): RollLedger {
@@ -70,6 +73,7 @@ export function rollLedgerOf(roll: Roll, moves: readonly SequencedMove[]): RollL
       type: move.type,
       deltaCm: move.deltaCm,
       reverses: move.type === 'reversal' ? move.refId : null,
+      lockedCostCents: move.lockedCostCents,
     })),
   );
 }

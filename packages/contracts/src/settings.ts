@@ -16,6 +16,30 @@ export const SETTINGS = {
   },
   /** SPEC §4: the shop's name at the top of a shared invoice. */
   shop_name: { schema: z.string().trim().min(1).max(80), default: 'غيث' },
+  /** SPEC §5: expense categories, a stable key and the label shown (keys stay on old expenses). */
+  expense_categories: {
+    schema: z
+      .array(
+        z.object({
+          key: z.string().regex(/^[a-z0-9_-]{1,40}$/),
+          label: z.string().trim().min(1).max(40),
+        }),
+      )
+      .min(1)
+      .max(50),
+    default: [
+      { key: 'rent', label: 'كراء' },
+      { key: 'electricity', label: 'كهرباء' },
+      { key: 'water', label: 'ماء' },
+      { key: 'internet', label: 'إنترنت' },
+      { key: 'wages', label: 'أجرة عامل' },
+      { key: 'transport', label: 'نقل' },
+      { key: 'packaging', label: 'تغليف' },
+      { key: 'other', label: 'أخرى' },
+    ],
+  },
+  /** SPEC §5 "يذكّر قبل الموعد": how many days before a recurring bill's due date (E2). */
+  expense_reminder_days: { schema: z.int().min(0).max(31), default: 3 },
   /** SPEC §4: a roll under this length becomes a remnant. */
   remnant_threshold_cm: { schema: z.int().min(0).max(100_000), default: 100 },
   /** SPEC §10. */

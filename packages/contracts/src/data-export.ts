@@ -22,6 +22,16 @@ export const EXPORT_ENTITIES = [
   'payment_allocation',
   'sale_void',
   'write_off',
+  'recurring_expense',
+  'expense',
+  'cash_adjustment',
+  'partner',
+  'profit_split_rule',
+  'settlement',
+  'settlement_share',
+  'locked_cost',
+  'capital_move',
+  'partner_draw',
   'sync_conflict',
 ] as const satisfies readonly SyncEntity[];
 
