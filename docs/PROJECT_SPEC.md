@@ -142,11 +142,12 @@ Fabric (الموديل: روزا)
 ### 8.1 معادلة الفترة
 ```
 الربح المعترف به   = مجموع الربح المحصَّل في الفترة (انظر 8.2)
+الديون المستردة    = رأس مال فواتير معدومة استُرد بدفعات في الفترة (يعكس خسارة سابقة)
 الخسائر            = تالف + ديون معدومة + بيع دون التكلفة (الجزء السالب)
 المصروفات          = مصروفات مدفوعة في الفترة
 فرق الجرد النقدي   = زيادة الصندوق − عجزه في الفترة (cash_adjustment، قد يكون سالباً)
 العجز المرحَّل     = عجز الفترات السابقة غير المغطّى
-صافي الربح         = الربح المعترف به − الخسائر − المصروفات + فرق الجرد النقدي − العجز المرحَّل
+صافي الربح         = الربح المعترف به + الديون المستردة − الخسائر − المصروفات + فرق الجرد النقدي − العجز المرحَّل
 ```
 - إذا `صافي الربح <= 0` ← لا يُوزَّع شيء، ويُرحَّل العجز (`carry_deficit = −net`) للفترة التالية، ولا يُمَس رأس المال.
 - إذا `> 0` ← يُقسَّم **ثلاثة أثلاث متساوية** **[قابل للإعداد]** (أوزان 1/1/1: المالك والشريك `floor(صافي × وزنه ÷ مجموع الأوزان)` والباقي للمحل):
@@ -276,16 +277,20 @@ sale_void         id, sale_id, date, reason, refund_id?
 write_off         id, sale_id, date, reason   (دين معدوم: يبقى على الزبون ويخرج من المستحق)
 payment           id, customer_id?, kind (payment|refund), amount_cents, date, method (cash|bank|other), note
 payment_allocation id, payment_id, sale_id, amount_cents, date
-expense           id, date, category, amount_cents, paid_date?, note
-recurring_expense id, category, amount_cents?, day_of_month, active
+expense           id, date, category, amount_cents, paid_date?, note, recurring_expense_id?
+recurring_expense id, name, category, amount_cents?, day_of_month, active
 partner           id, name, ownership_bp (basis points، 5000=50%), is_owner
 capital_move      id, partner_id, type (contribution|retained_profit|withdrawal),
-                  amount_cents, date, note
+                  amount_cents, date, note, settlement_id?   (للأرباح المحتجزة)
 partner_draw      id, partner_id, amount_cents, date, reason
-settlement        id, period_start, period_end, recognized_profit_cents, losses_cents,
-                  expenses_cents, cash_over_short_cents, carried_deficit_in_cents, net_profit_cents,
+settlement        id, period_start, period_end, recognized_profit_cents, recovered_bad_debt_cents,
+                  damage_cents, bad_debt_cents, below_cost_cents, expenses_cents,
+                  cash_over_short_cents, carried_deficit_in_cents, net_profit_cents,
                   owner_share_cents, partner_share_cents, shop_share_cents,
-                  carry_deficit_out_cents, locked_at?
+                  carry_deficit_out_cents, owner_weight, partner_weight, shop_weight, locked_at
+                  (فتح الفترة يُلغي التسوية: voided_at مع السبب في سجل التعديلات)
+settlement_share  id, settlement_id, partner_id, amount_cents   (حصة الشريك من التسوية)
+locked_cost       id, settlement_id, stock_move_id, cost_cents   (تكلفة ثبّتتها التسوية)
 profit_split_rule id, effective_from, owner_weight, partner_weight, shop_weight   (1/1/1)
 cash_adjustment   id, date, expected_cents, counted_cents, diff_cents, note
 zakat_report      id, hawl_date, gold_price_per_g_cents, nisab_cents, base_breakdown (json),
@@ -411,3 +416,18 @@ audit_log         id, at, user, entity, entity_id, action, before(json), after(j
 - **2026-10-30:** بالتفويض نفسه، مع شريحة الزبائن والديون (BUILD_PROMPTS 3.5):
   - §13: رصيد الزبون يشمل الردود، والشطب سجلٌّ مستقل `write_off` لكل فاتورة (P14، P16).
   - §4.1: الدفعة الموجّهة لفاتورة تسدّدها أولاً ثم الأقدم؛ الدفعة العامة تتخطى الديون المعدومة؛ الرصيد الدائن يُرَدّ نقداً أو يُطبَّق على الفواتير المفتوحة، الأقدم أولاً (P15، P17).
+- **2026-10-30:** بالتفويض نفسه، مع شريحة المصروفات (BUILD_PROMPTS 4.1):
+  - §5، §13: للقالب الشهري اسم، والمصروف يحفظ القالب الذي أُنشئ منه (`recurring_expense_id`)؛ الفئات إعداد `expense_categories`، والتذكير قبل الموعد بعدد أيام `expense_reminder_days` (E1–E4).
+- **2026-10-30:** بالتفويض نفسه، مع شريحة الشركاء (BUILD_PROMPTS 4.2):
+  - §8.4، §13: حركات رأس المال والسحوبات لا تُعدَّل، تُلغى بسبب فقط؛ سحب رأس المال يحتاج سبباً، وما ينزل برأس المال تحت الصفر أو يتجاوز الأرباح غير المسحوبة يحتاج تأكيداً صريحاً؛ الأرباح المحتجزة تسجّلها التسوية وحدها (PA1–PA3).
+  - §9: الصندوق يطرح ما رُدّ للزبائن (PA4).
+  - §11: حساب الشريك للاطلاع فقط (يقرأ ولا يعدّل)، تمهيداً للصلاحيات.
+- **2026-10-31:** بالتفويض نفسه، مع شريحة التسوية الشهرية (BUILD_PROMPTS 4.3):
+  - §8.1، §13: الدين المعدوم الذي يُستَرد رأس ماله بعد شطبه يظهر سطراً مستقلاً "الديون المستردة" يُضاف إلى صافي الربح، وعمود `recovered_bad_debt_cents` (S9). التسوية تحفظ الخسائر بأجزائها الثلاثة وأوزان القسمة التي سُوّيت بها.
+  - §8.3، §13: الفترات متتالية بلا فجوة، تبدأ بعد آخر تسوية وتُسوّى بعد انتهائها؛ الاعتماد على الخادم بعد معاينة؛ الإقفال يمنع إضافة أي سجل مؤرخ في الفترة أو تعديله أو إلغاءه، والفتح لآخر تسوية فقط وبسبب، فيُلغيها مع حصصها وأرباحها المحتجزة (S7، S11–S13، S16).
+  - §13: جدولا `settlement_share` (حصص الشريكين) و`locked_cost` (تكاليف البيع والتالف التي ثبّتتها التسوية حتى لا يغيّرها قياس لاحق)، و`capital_move.settlement_id` (S10، S14).
+  - §8.3: قاعدة القسمة الجديدة تبدأ بتاريخ قادم ولا تُغيَّر بعد سريانها (S15).
+- **2026-10-31:** بالتفويض نفسه، مع شريحة فحص التطابق والجرد وسجل التعديلات (BUILD_PROMPTS 4.4):
+  - §9: الجرد النقدي يشمل كل مال المحل: الصندوق وحسابه البنكي، لأن السجلات لا تفصل النقد عن البنك (I5). يُسجَّل مقابل سجلات الجهاز لحظة الجرد ولا يُعدَّل، يُلغى بسبب أو يُعاد الجرد (I6).
+  - §9: الأرصدة الدائنة للزبائن في الفحص: ما دُفع ولم يُطبَّق على فاتورة قائمة ولم يُرَدّ، لكل زبون (I7)؛ وصافي الربح غير المسوّى يشمل كل ما بعد آخر تسوية (I8).
+  - §11: سجل التعديلات يُقرأ من الخادم (يُصفّى بالنوع والحساب والأيام)، ويحفظ الجهاز آخر ما عُرض للاطلاع دون اتصال.

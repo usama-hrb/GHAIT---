@@ -44,7 +44,7 @@ Fabric Shop OS: POS, inventory, credit, partner settlement and zakat for a singl
 - No hard delete anywhere. Cancellation sets `voided_at` with a reason and is audit-logged.
 - Balances are derived from movements, never stored as an editable field: roll remaining length, customer balance, partner balance, partner capital, cash. A derived cache is fine if it can be rebuilt from movements.
 - Every change or void writes `audit_log` (who, when, entity, id, action, before, after, reason) through `AuditService.record`. A mutating request is one transaction that commits only if it wrote an audit entry ([ADR 0004](docs/adr/0004-api-foundation.md)); `@AuditExempt(why)` is the rare exception.
-- Records inside a locked settlement period change only through an explicit, audit-logged unlock.
+- Records inside a locked settlement period change only through an explicit, audit-logged unlock. A dated synced entity must be in `periodDatesOf` (`@fabric/contracts`) so the lock covers it ([ADR 0005](docs/adr/0005-settlement-and-period-lock.md)).
 
 ## Structure and dependency rules
 
@@ -100,22 +100,23 @@ How-to: [docs/design-usage.md](docs/design-usage.md); brand rationale: [docs/DES
 
 `make help` lists everything. Docker targets take `STACK=dev` (default) or `STACK=prod`.
 
-| Command                      | Does                                                                       |
-| ---------------------------- | -------------------------------------------------------------------------- |
-| `make up` / `make down`      | Start (and wait until healthy) / stop the stack; volumes are kept          |
-| `make logs SERVICE=api`      | Follow logs                                                                |
-| `make test`                  | Run all tests                                                              |
-| `make check`                 | Typecheck + lint + tests                                                   |
-| `make deps`                  | Dependency-direction check (dependency-cruiser)                            |
-| `make migrate`               | Apply pending migrations (the API also applies them on start)              |
-| `make migrate-new NAME=…`    | Generate a migration from the schema (`CUSTOM=1`: empty, hand-written SQL) |
-| `make owner USERNAME=…`      | Create the owner account or reset its password; see docs/runbooks/api.md   |
-| `make e2e`                   | Playwright on the real stack (Postgres container, API, web build): offline |
-| `make backup`                | Compressed, timestamped Postgres dump, keeps the newest 14                 |
-| `make backup-verify`         | Fresh dump restored into a scratch DB, row counts compared                 |
-| `make restore FILE=… [DB=…]` | Restore a dump (app DB asks for confirmation); see docs/runbooks/backup.md |
-| `make export [FILE=…]`       | The shop's data as one JSON file (what devices sync)                       |
-| `make import FILE=…`         | Load an export (server's or a device's) into an empty database             |
+| Command                        | Does                                                                       |
+| ------------------------------ | -------------------------------------------------------------------------- |
+| `make up` / `make down`        | Start (and wait until healthy) / stop the stack; volumes are kept          |
+| `make logs SERVICE=api`        | Follow logs                                                                |
+| `make test`                    | Run all tests                                                              |
+| `make check`                   | Typecheck + lint + tests                                                   |
+| `make deps`                    | Dependency-direction check (dependency-cruiser)                            |
+| `make migrate`                 | Apply pending migrations (the API also applies them on start)              |
+| `make migrate-new NAME=…`      | Generate a migration from the schema (`CUSTOM=1`: empty, hand-written SQL) |
+| `make owner USERNAME=…`        | Create the owner account or reset its password; see docs/runbooks/api.md   |
+| `make partner-user USERNAME=…` | The partner's read-only account (create, or reset its password)            |
+| `make e2e`                     | Playwright on the real stack (Postgres container, API, web build): offline |
+| `make backup`                  | Compressed, timestamped Postgres dump, keeps the newest 14                 |
+| `make backup-verify`           | Fresh dump restored into a scratch DB, row counts compared                 |
+| `make restore FILE=… [DB=…]`   | Restore a dump (app DB asks for confirmation); see docs/runbooks/backup.md |
+| `make export [FILE=…]`         | The shop's data as one JSON file (what devices sync)                       |
+| `make import FILE=…`           | Load an export (server's or a device's) into an empty database             |
 
 - Dev stack (`infra/docker/compose.dev.yml`): api http://localhost:4000, web http://localhost:3000 (it proxies `/api` to the API), Postgres on 127.0.0.1:5440, pgAdmin with `PROFILES=tools`. Source is mounted with hot reload; node_modules live in Docker volumes. The service worker is off under `next dev`.
 - Production: [docs/runbooks/deploy.md](docs/runbooks/deploy.md) (VPS, HTTPS, updates, rollback); nightly backups run in the prod stack. MVP sign-off: [docs/MVP_ACCEPTANCE.md](docs/MVP_ACCEPTANCE.md).

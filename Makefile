@@ -9,7 +9,7 @@ PROFILES ?=
 COMPOSE_PROFILES_ARG := $(foreach p,$(PROFILES),--profile $(p))
 
 .PHONY: help install dev up down logs ps build images lint typecheck test check deps \
-	migrate migrate-new owner e2e backup backup-verify restore export import clean format format-check
+	migrate migrate-new owner partner-user e2e backup backup-verify restore export import clean format format-check
 
 help: ## List targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
@@ -50,6 +50,13 @@ owner: .env ## Create the owner account or reset its password: USERNAME=<name> [
 	@printf 'Password for %s (12+ characters): ' "$(USERNAME)"; \
 	stty -echo 2>/dev/null; read -r pw; stty echo 2>/dev/null; echo; \
 	printf '%s' "$$pw" | $(COMPOSE) exec -T api node dist/create-owner.js \
+		--username "$(USERNAME)" $(if $(NAME),--name "$(NAME)")
+
+partner-user: .env ## Create the partner's read-only account or reset its password: USERNAME=<name> [NAME="…"]
+	@test -n "$(USERNAME)" || { echo 'usage: make partner-user USERNAME=<name> [NAME="<display name>"]' >&2; exit 1; }
+	@printf 'Password for %s (12+ characters): ' "$(USERNAME)"; \
+	stty -echo 2>/dev/null; read -r pw; stty echo 2>/dev/null; echo; \
+	printf '%s' "$$pw" | $(COMPOSE) exec -T api node dist/create-partner-user.js \
 		--username "$(USERNAME)" $(if $(NAME),--name "$(NAME)")
 
 backup: .env ## Dump the DB to BACKUP_DIR, keep the newest BACKUP_KEEP (STACK=dev|prod)

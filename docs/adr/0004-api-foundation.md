@@ -68,3 +68,8 @@ BUILD_PROMPTS 2.1 asks for zod validation, one error shape, request-id logging, 
 - [OWASP Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html) (cookie attributes)
 - [OAuth 2.0 Security Best Current Practice, RFC 9700 §4.14](https://www.rfc-editor.org/rfc/rfc9700#section-4.14) (refresh-token rotation and reuse detection)
 - [NestJS testing with Vitest and SWC](https://docs.nestjs.com/recipes/swc#vitest)
+
+## Roles (BUILD_PROMPTS 4.2, 2026-10-30)
+
+- The owner may do everything. A **partner** account (`make partner-user`) signs in and reads everything; the API refuses every request that is not a read (`GET`, `HEAD`, `OPTIONS`), except routes marked `@PartnerMayCall()` that change no shop data (registering the device for its code). The cashier role is not let in yet (BUILD_PROMPTS 5.3).
+- On the device, a partner's session makes the local store read-only: every write path checks it first (`assertWritable`), and an outbox hook refuses any op as a backstop, so nothing is saved that the server would refuse. The app shows a read-only notice; hiding each screen's edit buttons comes with the permissions slice (5.3).

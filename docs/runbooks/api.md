@@ -58,3 +58,35 @@ Access tokens signed with the old secret stop working at once. Clients get a new
 ## Logs
 
 `make logs SERVICE=api [STACK=prod]` shows JSON lines (pino). Every response has an `x-request-id` header. The same id is in that request's log lines, in its error body (`error.requestId`), and in the audit entries it wrote. Search the logs for it.
+
+## The partner's read-only account
+
+```sh
+make partner-user USERNAME=<name> [NAME="<display name>"]   # add STACK=prod on the server
+```
+
+Creates the partner's account, or sets a new password for it (signing it out everywhere). It reads everything, on any device, and changes nothing: the API refuses its writes and its devices do not save any (ADR 0004, Roles). The owner keeps the only account that changes the shop.
+
+## Settling a month, and unlocking it
+
+The owner settles from the Settlement screen (التسوية): pick the period's end, read the breakdown, approve. Approving needs a connection: the server settles on every device's records ([ADR 0005](../adr/0005-settlement-and-period-lock.md)). Sync the phone and every other device first.
+
+Once approved, nothing dated in the period can be added, changed or voided (docs/accounting-assumptions.md S11). When something must change in it:
+
+1. On the Settlement screen, unlock the latest period (فتح الفترة) and write why. Only the latest can be unlocked; for an older month, unlock the later ones first, newest first.
+2. Make the change.
+3. Settle the period again.
+
+A sale or payment made offline and dated in a period that was settled before the device synced is refused by the server (`period_locked`). It shows on that device under Settings → sync issues. Unlock the period, enter it again on a device, and settle again.
+
+The same operations over the API, for scripts: `GET /settlements/preview?end=YYYY-MM-DD`, `POST /settlements` with `{ periodEnd, expected }` (`expected` is the preview's `breakdown`; 409 if records arrived since), `POST /settlements/:id/unlock` with `{ reason }`. Every approve and unlock is in the audit log (`GET /audit?entity=settlement`).
+
+## The integrity check shows a difference
+
+The Integrity screen (فحص التطابق) compares what the shop holds with whose it is, to the cent, from that device's records (docs/accounting-assumptions.md I1–I8). `GET /integrity` gives the same check on the server's records.
+
+1. **Sync every device**, then look again. A difference on one device only means that device lacks records, or the server refused one of its changes: Settings → sync issues.
+2. If the server shows it too (`GET /integrity`), look at the latest changes listed on the screen and in the audit log (سجل التعديلات, or `GET /audit?from=YYYY-MM-DD&to=YYYY-MM-DD`), filtered by the day the figures last agreed.
+3. A record changed outside the app (SQL on the database) is the usual cause. The audit log shows every change the API made, so a change that is not in it was made outside.
+
+A cash count is not a fix for a difference: it records what was counted, and the check stays balanced either way. Count the till and the shop's bank account together (I5), after every device has synced.
