@@ -9,4 +9,5 @@ export const E2E = {
     return `http://127.0.0.1:${String(this.webPort)}`;
   },
   owner: { username: 'owner', password: 'end to end test password' },
+  cashier: { username: 'cashier', password: 'a cashier test password' },
 } as const;

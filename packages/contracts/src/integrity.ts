@@ -1,6 +1,7 @@
 import {
   cashBalanceCents,
   checkIntegrity,
+  effectiveAllocations,
   type IntegrityLineKey,
   type IntegrityState,
   partnerBalance,
@@ -13,6 +14,7 @@ import {
 import { z } from 'zod';
 import { cashFlowsOf } from './cash-counts.js';
 import { isoDateSchema } from './common.js';
+import { syncOrder } from './order.js';
 import type { Payment } from './customers.js';
 import type { CapitalMove, PartnerDraw } from './partners.js';
 import type { Purchase } from './purchasing.js';
@@ -22,6 +24,8 @@ import {
   type SettlementRecords,
   type SettlementShare,
 } from './settlements.js';
+import { supplierAccountOf, type SupplierPayment } from './supplier-payments.js';
+import { worthBySaleOf } from './receivables.js';
 
 /** Past any real date: the open period runs from the last settlement to the end of the records. */
 const OPEN_PERIOD_END = '9999-12-31';
@@ -33,6 +37,8 @@ export interface IntegrityRecords extends SettlementRecords {
   capitalMoves: readonly CapitalMove[];
   draws: readonly PartnerDraw[];
   settlementShares: readonly SettlementShare[];
+  /** What was paid to suppliers after their purchases (SP3). */
+  supplierPayments: readonly SupplierPayment[];
 }
 
 const live = <T extends { voidedAt: string | null }>(records: readonly T[]): T[] =>
@@ -52,14 +58,16 @@ export function integrityStateOf(records: IntegrityRecords): IntegrityState {
   const basis = periodBasisOf(records);
   const latest = latestSettlementOf(records.settlements);
   const receivables = receivablesPosition(
-    basis.sales.map(({ period }) => ({
-      totalCents: period.totalCents,
-      capitalCents: period.capitalCents,
+    basis.sales.map(({ period, now }) => ({
+      totalCents: now.totalCents,
+      capitalCents: now.capitalCents,
       paymentsCents: period.allocations.map((allocation) => allocation.amountCents),
       writtenOff: period.writtenOffOn !== null,
     })),
   );
-  // Per customer, so one customer's over-applied money never hides another's credit.
+  // Per customer, so one customer's over-applied money never hides another's credit. What a
+  // return left paid beyond its invoice is the customer's money again (RT3), so allocations are
+  // counted at most up to what their invoice is worth now.
   const liveSales = new Set(basis.sales.map(({ sale }) => sale.id));
   const paymentsById = new Map(records.payments.map((payment) => [payment.id, payment]));
   const creditByCustomer = new Map<string, number>();
@@ -73,13 +81,33 @@ export function integrityStateOf(records: IntegrityRecords): IntegrityState {
       payment.kind === 'payment' ? payment.amountCents : -payment.amountCents,
     );
   }
-  for (const allocation of records.allocations) {
+  const worth = worthBySaleOf(
+    basis.sales.map(({ sale }) => sale),
+    records.saleReturns,
+  );
+  for (const allocation of effectiveAllocations([...records.allocations].sort(syncOrder), worth)) {
     const payment = paymentsById.get(allocation.paymentId);
     if (payment && liveSales.has(allocation.saleId))
       add(payment.customerId, -allocation.amountCents);
   }
-  const unappliedCents = [...creditByCustomer.values()].reduce(
+  const customerCreditsCents = [...creditByCustomer.values()].reduce(
     (sum, cents) => sum + Math.max(0, cents),
+    0,
+  );
+
+  // What the shop owes its suppliers, supplier by supplier (a supplier paid in advance nets off).
+  const supplierIds = new Set(
+    live(records.purchases).flatMap((purchase) =>
+      purchase.supplierId === null ? [] : [purchase.supplierId],
+    ),
+  );
+  const supplierPayablesCents = [...supplierIds].reduce(
+    (sum, supplierId) =>
+      sum +
+      supplierAccountOf(supplierId, {
+        purchases: records.purchases,
+        payments: records.supplierPayments,
+      }).balanceCents,
     0,
   );
 
@@ -117,7 +145,8 @@ export function integrityStateOf(records: IntegrityRecords): IntegrityState {
         latest?.carryDeficitOutCents ?? 0,
       ),
     ).netProfitCents,
-    customerCreditsCents: receivables.customerCreditsCents + unappliedCents,
+    customerCreditsCents,
+    supplierPayablesCents,
   };
 }
 
@@ -130,6 +159,7 @@ export const INTEGRITY_LINE_KEYS = [
   'partner_balances',
   'unsettled_net_profit',
   'customer_credits',
+  'supplier_payables',
 ] as const satisfies readonly IntegrityLineKey[];
 
 /** GET /integrity, and the device's own check: the same function on the same records. */

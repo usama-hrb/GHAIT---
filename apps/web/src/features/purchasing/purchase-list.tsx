@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { messages } from '@/i18n';
 import { useLiveQuery, useRepositories } from '@/local-db';
 import { EmptyState, LoadingState, OfflineNotice } from '@/shared/brand';
-import { DateAr, Money } from '@/shared/format';
+import { DateText, Money } from '@/shared/format';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
@@ -54,7 +54,7 @@ export function PurchaseListScreen() {
                       href={`/purchases/view?id=${purchase.id}`}
                       className="underline-offset-4 hover:underline"
                     >
-                      <DateAr value={purchase.date} />
+                      <DateText value={purchase.date} />
                     </Link>
                   </TableCell>
                   <TableCell>

@@ -23,17 +23,17 @@ let variantId: string;
 
 /** Everything a settlement reads, from this device's tables. */
 async function recordsOf(): Promise<SettlementRecords> {
-  const [rolls, stockMoves, sales, saleLines, allocations, writeOffs, expenses] = await Promise.all(
-    [
+  const [rolls, stockMoves, sales, saleLines, saleReturns, allocations, writeOffs, expenses] =
+    await Promise.all([
       db.rolls.toArray(),
       db.stockMoves.toArray(),
       db.sales.toArray(),
       db.saleLines.toArray(),
+      db.saleReturns.toArray(),
       db.paymentAllocations.toArray(),
       db.writeOffs.toArray(),
       db.expenses.toArray(),
-    ],
-  );
+    ]);
   const [cashAdjustments, lockedCosts, settlements, splitRules, partners] = await Promise.all([
     db.cashAdjustments.toArray(),
     db.lockedCosts.toArray(),
@@ -46,6 +46,7 @@ async function recordsOf(): Promise<SettlementRecords> {
     stockMoves,
     sales,
     saleLines,
+    saleReturns,
     allocations,
     writeOffs,
     expenses,

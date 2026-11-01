@@ -13,7 +13,13 @@ import Link from 'next/link';
 import { useId, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { messages } from '@/i18n';
-import { DeviceNotRegisteredError, type Local, useLiveQuery, useRepositories } from '@/local-db';
+import {
+  DeviceNotRegisteredError,
+  type Local,
+  useLiveQuery,
+  useRepositories,
+  ValidationError,
+} from '@/local-db';
 import { EmptyState, LoadingState, OfflineNotice } from '@/shared/brand';
 import { MeterInput, Meters, Money, MoneyInput, WeightInput } from '@/shared/format';
 import { shopToday } from '@/shared/lib/dates';
@@ -176,6 +182,14 @@ function ReviewDialog({
                   <Money cents={preview.totalCostCents} />
                 </TableCell>
               </TableRow>
+              {input.paidCents != null && input.paidCents < preview.totalCostCents && (
+                <TableRow>
+                  <TableCell colSpan={3}>{t.owed}</TableCell>
+                  <TableCell className="text-end">
+                    <Money cents={preview.totalCostCents - input.paidCents} tone="debt" />
+                  </TableCell>
+                </TableRow>
+              )}
             </TableFooter>
           </Table>
         </div>
@@ -200,7 +214,9 @@ function ReviewDialog({
                   toast.error(
                     error instanceof DeviceNotRegisteredError
                       ? t.deviceNotRegistered
-                      : messages.forms.invalid,
+                      : (error instanceof ValidationError &&
+                          t.issues[error.issues[0]?.message ?? '']) ||
+                          messages.forms.invalid,
                   );
                 });
             }}
@@ -238,6 +254,8 @@ export function NewPurchaseScreen() {
   const [date, setDate] = useState(() => shopToday());
   const lockedThrough = useLockedThrough();
   const [notes, setNotes] = useState('');
+  // Paid now; empty: all of it. Less than the total leaves a debt to the supplier (SP1).
+  const [paidNow, setPaidNow] = useState<number | null>(null);
   const [pricePerMeter, setPricePerMeter] = useState<number | null>(null);
   const [rollLength, setRollLength] = useState<number | null>(DEFAULT_ROLL_CM);
   const [lengths, setLengths] = useState<Record<string, number | null>>({});
@@ -255,7 +273,7 @@ export function NewPurchaseScreen() {
   }, [variants]);
 
   const draft = useMemo(() => {
-    const common = { date, supplierId, notes };
+    const common = { date, supplierId, notes, paidCents: paidNow };
     const input: Record<PurchaseMethod, unknown> = {
       meter: {
         method: 'meter',
@@ -289,6 +307,7 @@ export function NewPurchaseScreen() {
     method,
     date,
     supplierId,
+    paidNow,
     notes,
     pricePerMeter,
     variants,
@@ -397,6 +416,35 @@ export function NewPurchaseScreen() {
               />
             </Field>
           </div>
+
+          <Field>
+            <FieldLabel htmlFor={`${id}-paid`}>
+              {t.fields.paidNow}{' '}
+              <span className="text-muted-foreground">({messages.forms.optional})</span>
+            </FieldLabel>
+            <MoneyInput
+              id={`${id}-paid`}
+              value={paidNow}
+              onValueChange={setPaidNow}
+              aria-describedby={`${id}-paid-hint`}
+            />
+            <p id={`${id}-paid-hint`} className="text-xs text-muted-foreground">
+              {t.fields.paidNowHint}
+            </p>
+            {draft && paidNow !== null && paidNow < draft.preview.totalCostCents && (
+              <p className="text-sm" aria-live="polite">
+                {t.owed}: <Money cents={draft.preview.totalCostCents - paidNow} tone="debt" />
+              </p>
+            )}
+            {paidNow !== null &&
+              supplierId === null &&
+              draft &&
+              paidNow < draft.preview.totalCostCents && (
+                <p role="alert" className="text-sm text-destructive">
+                  {t.issues.purchase_debt_needs_supplier}
+                </p>
+              )}
+          </Field>
 
           {fabricId && variants?.length === 0 && (
             <Alert>

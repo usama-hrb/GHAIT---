@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import { cashAdjustmentSchema } from './cash-counts.js';
+import { zakatReportSchema } from './zakat.js';
 import { fabricSchema, recordBaseSchema, supplierSchema, variantSchema } from './catalog.js';
 import { deviceIdSchema, idSchema, isoDateSchema, timestampSchema } from './common.js';
 import { expenseSchema, recurringExpenseSchema } from './expenses.js';
+import { photoSchema } from './photos.js';
 import { capitalMoveSchema, partnerDrawSchema, partnerSchema } from './partners.js';
 import {
   lockedCostSchema,
@@ -24,6 +26,7 @@ import {
   stockMoveSchema,
 } from './purchasing.js';
 import { creditApplicationSchema, paymentAggregateSchema } from './receivables.js';
+import { saleReturnAggregateSchema, saleReturnSchema } from './returns.js';
 import {
   saleAggregateSchema,
   saleLineSchema,
@@ -31,6 +34,7 @@ import {
   saleVoidAggregateSchema,
   saleVoidSchema,
 } from './sales.js';
+import { supplierPaymentSchema } from './supplier-payments.js';
 
 /**
  * Every entity the devices sync (ADR 0002). Each slice adds its entities here, with how the
@@ -58,6 +62,8 @@ export type SyncConflict = z.output<typeof syncConflictSchema>;
 export const SYNC_ENTITIES = {
   fabric: { merge: 'mutable', schema: fabricSchema },
   variant: { merge: 'mutable', schema: variantSchema },
+  /** A colour's picture, resized on the device and carried in the record (ADR 0009); never edited. */
+  photo: { merge: 'mutable', schema: photoSchema },
   supplier: { merge: 'mutable', schema: supplierSchema },
   /** A purchase op carries its rolls and moves (purchaseAggregateSchema), applied atomically. */
   purchase: { merge: 'append_only', schema: purchaseSchema, pushSchema: purchaseAggregateSchema },
@@ -82,6 +88,14 @@ export const SYNC_ENTITIES = {
   write_off: { merge: 'append_only', schema: writeOffSchema },
   /** A void op carries the reversals and the refund (checkSaleVoid); the sale gets voidedAt. */
   sale_void: { merge: 'append_only', schema: saleVoidSchema, pushSchema: saleVoidAggregateSchema },
+  /** Goods given back (RT1): the op carries the `return` moves and the refund (checkSaleReturn). */
+  sale_return: {
+    merge: 'append_only',
+    schema: saleReturnSchema,
+    pushSchema: saleReturnAggregateSchema,
+  },
+  /** Paid to a supplier for what a purchase left owing (SP3); created or voided, never edited. */
+  supplier_payment: { merge: 'mutable', schema: supplierPaymentSchema },
   /** SPEC §5: edited and voided like the catalog (last write wins). */
   expense: { merge: 'mutable', schema: expenseSchema },
   recurring_expense: { merge: 'mutable', schema: recurringExpenseSchema },
@@ -98,6 +112,8 @@ export const SYNC_ENTITIES = {
   locked_cost: { merge: 'pull_only', schema: lockedCostSchema },
   /** SPEC §9: a count of the shop's money; created or voided, never edited (checkCashAdjustment). */
   cash_adjustment: { merge: 'mutable', schema: cashAdjustmentSchema },
+  /** SPEC §10: saved once (checkZakatReport), voided while nothing is paid on it. */
+  zakat_report: { merge: 'mutable', schema: zakatReportSchema },
   sync_conflict: { merge: 'pull_only', schema: syncConflictSchema },
   setting: {
     merge: 'pull_only',
@@ -149,6 +165,20 @@ export const syncOpSchema = z.object({
 export type SyncOp = z.infer<typeof syncOpSchema>;
 
 export const voidPayloadSchema = z.object({ reason: z.string().trim().min(1).max(500) });
+
+/**
+ * A request is cut by size as well as by count: a photo is ~100 KB where every other record is a
+ * few hundred bytes (ADR 0009). The bytes a batch of pushed ops, or a page of pulled changes,
+ * may carry (a single record over it still goes alone).
+ */
+export const SYNC_BATCH_MAX_BYTES = 1_000_000;
+
+/** What `record` counts against SYNC_BATCH_MAX_BYTES: its image, if it has one; else nothing. */
+export function syncWeightOf(entity: SyncEntity, record: unknown): number {
+  if (entity !== 'photo') return 0;
+  const data = (record as { data?: unknown } | null)?.data;
+  return typeof data === 'string' ? data.length : 0;
+}
 
 export const SYNC_PUSH_MAX_OPS = 200;
 export const syncPushRequestSchema = z.object({

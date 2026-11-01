@@ -52,6 +52,8 @@ export const settlement = pgTable(
     periodStart: date({ mode: 'string' }).notNull(),
     periodEnd: date({ mode: 'string' }).notNull(),
     recognizedProfitCents: cents(),
+    /** What returns changed in the period (RT4): signed. */
+    returnsEffectCents: bigint({ mode: 'number' }).notNull().default(0),
     recoveredBadDebtCents: cents(),
     damageCents: cents(),
     badDebtCents: cents(),

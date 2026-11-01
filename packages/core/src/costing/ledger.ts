@@ -1,4 +1,5 @@
 import { assertInteger } from '../numeric/index.js';
+import { shareOfLineCents } from '../payments/returns.js';
 import { allocateLineCost, costPerMeterCents } from './allocation.js';
 import { costBasisLength, isConsumption, remainingLength, type StockMoveType } from './stock.js';
 
@@ -12,6 +13,8 @@ export interface RollLedgerMove {
   lockedCostCents?: number;
   /** For a `reversal`: the id of the move it cancels. */
   reverses?: string | null;
+  /** For a `return`: the id of the sale move it gives part of back (RT1). */
+  returns?: string | null;
 }
 
 /** Moves a reversal may cancel: what was taken off or counted, never a purchase or a measurement. */
@@ -46,8 +49,13 @@ export interface RollLedger {
   unallocatedCostCents: number;
   /** cm taken beyond what the roll had. */
   oversoldCm: number;
-  /** Each sale and loss with its cost, in history order. */
+  /**
+   * Each sale and loss with the cost it still carries, in history order: a sale's cost less the
+   * cost of what customers gave back (RT1).
+   */
   costs: { id: string; costCents: number }[];
+  /** Each return with the cost it put back on the roll: a share of its sale's cost (RT1). */
+  returns: { id: string; saleMoveId: string; costCents: number }[];
 }
 
 /**
@@ -68,6 +76,12 @@ export function rollLedger(
   let oversoldCm = 0;
   const costs: { id: string; costCents: number }[] = [];
   const allocated: number[] = [];
+  const returns: RollLedger['returns'] = [];
+  /** A sale move as costed: what a return of it gives back is a share of this gross cost. */
+  const sold = new Map<
+    string,
+    { index: number; takenCm: number; grossCents: number; returnedCm: number }
+  >();
 
   for (const move of moves) {
     if (
@@ -76,6 +90,25 @@ export function rollLedger(
       move.type === 'reversal' ||
       reversed.has(move.id)
     ) {
+      continue;
+    }
+    if (move.type === 'return') {
+      // The cost of what comes back is the same share of the sale's cost as its length (RT1):
+      // cumulative, so many returns add up to the sale exactly. A return of no known sale only
+      // puts the length back.
+      const target = move.returns ? sold.get(move.returns) : undefined;
+      if (target && move.returns && target.returnedCm + move.deltaCm <= target.takenCm) {
+        const returnedCm = target.returnedCm + move.deltaCm;
+        const back =
+          shareOfLineCents(target.grossCents, target.takenCm, returnedCm) -
+          shareOfLineCents(target.grossCents, target.takenCm, target.returnedCm);
+        target.returnedCm = returnedCm;
+        const entry = costs[target.index];
+        if (entry) entry.costCents -= back;
+        allocated[target.index] = (allocated[target.index] ?? 0) - back;
+        returns.push({ id: move.id, saleMoveId: move.returns, costCents: back });
+      }
+      remainingCm += move.deltaCm;
       continue;
     }
     if (isConsumption(move.type)) {
@@ -95,6 +128,14 @@ export function rollLedger(
       }
       allocated.push(costCents);
       costs.push({ id: move.id, costCents });
+      if (move.type === 'sale') {
+        sold.set(move.id, {
+          index: costs.length - 1,
+          takenCm,
+          grossCents: costCents,
+          returnedCm: 0,
+        });
+      }
     }
     remainingCm += move.deltaCm;
   }
@@ -112,6 +153,7 @@ export function rollLedger(
     unallocatedCostCents,
     oversoldCm,
     costs,
+    returns,
   };
 }
 

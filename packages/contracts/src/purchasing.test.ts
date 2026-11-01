@@ -5,6 +5,7 @@ import {
   type NewPurchase,
   newPurchaseSchema,
   PURCHASE_ISSUES,
+  purchasePaymentIssues,
   type PurchaseAggregate,
   purchaseAggregateSchema,
   rollCode,
@@ -147,13 +148,6 @@ describe('checkPurchaseAggregate: the server re-checks with core', () => {
       ['purchase', 'totalCostCents'],
     ],
     [
-      'an unpaid purchase (no supplier debts yet)',
-      (a: PurchaseAggregate) => {
-        a.purchase.paidCents = 0;
-      },
-      ['purchase', 'paidCents'],
-    ],
-    [
       'a move that adds extra length',
       (a: PurchaseAggregate) => {
         if (a.moves[1]) a.moves[1].deltaCm = 6000;
@@ -176,6 +170,30 @@ describe('checkPurchaseAggregate: the server re-checks with core', () => {
     ],
   ])('rejects %s', (_label, change, path) => {
     expect(tampered(change)).toEqual([{ path, message: PURCHASE_ISSUES.notCore, code: 'custom' }]);
+  });
+
+  it('SP1: a purchase may be part paid when a supplier is owed the rest', () => {
+    const owing = (paidCents: number, supplierId: string | null) =>
+      build({ ...t1, supplierId, paidCents });
+    const supplier = crypto.randomUUID();
+    const part = owing(40_000, supplier);
+    expect(part.purchase).toMatchObject({ totalCostCents: 800_000, paidCents: 40_000 });
+    expect(checkPurchaseAggregate(part)).toEqual([]);
+    expect(checkPurchaseAggregate(owing(0, supplier))).toEqual([]);
+  });
+
+  it('SP1: a debt needs a supplier, and nothing is paid beyond the total', () => {
+    const noSupplier = build({ ...t1, supplierId: null, paidCents: 100 });
+    expect(checkPurchaseAggregate(noSupplier)).toEqual([
+      { path: ['supplierId'], message: PURCHASE_ISSUES.debtNeedsSupplier, code: 'custom' },
+    ]);
+    const tooMuch = build({ ...t1, supplierId: crypto.randomUUID(), paidCents: 900_000 });
+    expect(checkPurchaseAggregate(tooMuch)).toEqual([
+      { path: ['paidCents'], message: PURCHASE_ISSUES.paidAboveTotal, code: 'custom' },
+    ]);
+    expect(
+      purchasePaymentIssues({ totalCostCents: 100, paidCents: 100, supplierId: null }),
+    ).toEqual([]);
   });
 
   it('rejects records that cannot be a purchase', () => {

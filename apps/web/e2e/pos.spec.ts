@@ -3,6 +3,8 @@ import {
   addFabric,
   choose,
   connectivity,
+  payInFull,
+  pickColor,
   reviewAndSave,
   serverGet,
   signIn,
@@ -31,23 +33,24 @@ test('a sale across two rolls at a negotiated price, finished offline, shared an
 
   // 51 m is more than either roll: the piece first (oldest), the rest from the 50 m roll.
   await page.goto('/pos');
-  await choose(page, 'القماش', 'شيفون');
-  await choose(page, 'اللون', 'أحمر');
-  await page.getByLabel('الطول', { exact: true }).fill('51');
-  await expect(page.getByText('يُقسَّم على رولين')).toBeVisible();
+  const dialog = await pickColor(page, 'شيفون', 'أحمر');
+  await dialog.getByLabel('الطول', { exact: true }).fill('51');
+  await expect(dialog.getByText('يُقسَّم على رولين')).toBeVisible();
   // Negotiated down from the 400 rial reference, above the 360 minimum: no warning.
-  const price = page.getByLabel('سعر المتر');
+  const price = dialog.getByLabel('سعر المتر', { exact: true });
   await expect(price).toHaveValue('400');
   await price.fill('380');
+  await expect(dialog.getByText('مجموع السطر')).toBeVisible();
+  await expect(dialog.getByText(/أقل من/)).toHaveCount(0);
 
   // The connection drops in the middle of the sale; it is finished and saved on the device.
   await page.context().setOffline(true);
-  await page.getByRole('button', { name: 'أضف إلى الفاتورة' }).click();
+  await dialog.getByRole('button', { name: 'أضف إلى الفاتورة' }).click();
   const cart = page.getByRole('region', { name: 'الفاتورة' });
   await expect(cart.getByText('شيفون · أحمر')).toBeVisible();
   await expect(cart.getByText(/أقل من/)).toHaveCount(0);
   await expect(page.getByText('19,380').first()).toBeVisible();
-  await page.getByRole('button', { name: 'حفظ البيع' }).click();
+  await payInFull(page);
   await expect(page).toHaveURL(/\/pos\/view\?id=/);
   const saleId = new URL(page.url()).searchParams.get('id') ?? '';
   await expect(connectivity(page)).toContainText(/معلّق/);

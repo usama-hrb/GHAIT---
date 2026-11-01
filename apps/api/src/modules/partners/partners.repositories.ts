@@ -215,11 +215,12 @@ function drawOf(row: DrawRow): SyncedRow<PartnerDraw> {
       amountCents: row.amountCents,
       date: row.date,
       reason: row.reason,
+      zakatReportId: row.zakatReportId,
     },
   };
 }
 
-const DRAW_FIELDS = ['partnerId', 'amountCents', 'date', 'reason'] as const;
+const DRAW_FIELDS = ['partnerId', 'amountCents', 'date', 'reason', 'zakatReportId'] as const;
 
 /** Partner draws (SPEC §8.4): created once, then only voided (PA3). */
 @Injectable()
@@ -252,6 +253,7 @@ export class PartnerDrawRepository implements SyncHandler<'partner_draw'> {
         amountCents: record.amountCents,
         date: record.date,
         reason: record.reason,
+        zakatReportId: record.zakatReportId,
       })
       .returning();
     if (!row) throw new Error('insert returned no row');

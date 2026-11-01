@@ -16,6 +16,7 @@ import {
   type PaymentAggregate,
   type PaymentAllocation,
   type Sale,
+  type SaleReturn,
   voidPayloadSchema,
   type WriteOff,
 } from '@fabric/contracts';
@@ -35,6 +36,8 @@ export interface CustomerAccountView {
   payments: Local<Payment>[];
   allocations: Local<PaymentAllocation>[];
   writeOffs: Local<WriteOff>[];
+  /** The goods they gave back (RT1), newest first. */
+  returns: Local<SaleReturn>[];
 }
 
 export interface CustomerSummary {
@@ -53,12 +56,13 @@ async function recordsOf(
   payments: Local<Payment>[];
   allocations: Local<PaymentAllocation>[];
   writeOffs: Local<WriteOff>[];
+  returns: Local<SaleReturn>[];
 }> {
   const [sales, payments] = await Promise.all([
     db.sales.where('customerId').equals(customerId).toArray(),
     db.payments.where('customerId').equals(customerId).toArray(),
   ]);
-  const [allocations, writeOffs] = await Promise.all([
+  const [allocations, writeOffs, returns] = await Promise.all([
     db.paymentAllocations
       .where('paymentId')
       .anyOf(payments.map((payment) => payment.id))
@@ -67,8 +71,12 @@ async function recordsOf(
       .where('saleId')
       .anyOf(sales.map((sale) => sale.id))
       .toArray(),
+    db.saleReturns
+      .where('saleId')
+      .anyOf(sales.map((sale) => sale.id))
+      .toArray(),
   ]);
-  return { sales, payments, allocations, writeOffs };
+  return { sales, payments, allocations, writeOffs, returns };
 }
 
 /**
@@ -91,6 +99,7 @@ export class AccountsRepository {
       payments: records.payments.sort(newestFirst),
       allocations: records.allocations,
       writeOffs: records.writeOffs,
+      returns: records.returns.sort(newestFirst),
     };
   }
 
@@ -98,12 +107,13 @@ export class AccountsRepository {
   async list(search = ''): Promise<CustomerSummary[]> {
     const { db } = this.store;
     const today = shopToday(this.store.now());
-    const [customers, sales, payments, allocations, writeOffs] = await Promise.all([
+    const [customers, sales, payments, allocations, writeOffs, returns] = await Promise.all([
       db.customers.filter((customer) => customer.voidedAt === null).toArray(),
       db.sales.toArray(),
       db.payments.toArray(),
       db.paymentAllocations.toArray(),
       db.writeOffs.toArray(),
+      db.saleReturns.toArray(),
     ]);
     return customers
       .filter((customer) => matchesSearch(search, [customer.name, customer.phone, customer.notes]))
@@ -121,6 +131,7 @@ export class AccountsRepository {
               payments: paid,
               allocations: allocations.filter((allocation) => paymentIds.has(allocation.paymentId)),
               writeOffs: writeOffs.filter((writeOff) => saleIds.has(writeOff.saleId)),
+              returns: returns.filter((given) => saleIds.has(given.saleId)),
             },
             today,
           ),
@@ -216,7 +227,7 @@ export class AccountsRepository {
     const now = this.store.now().toISOString();
     await db.transaction(
       'rw',
-      [db.sales, db.payments, db.paymentAllocations, db.writeOffs, db.outbox],
+      [db.sales, db.payments, db.paymentAllocations, db.writeOffs, db.saleReturns, db.outbox],
       async () => {
         const records = await recordsOf(db, customerId);
         const built = buildCreditApplication(
@@ -256,7 +267,7 @@ export class AccountsRepository {
     const now = this.store.now().toISOString();
     await db.transaction(
       'rw',
-      [db.sales, db.payments, db.paymentAllocations, db.writeOffs, db.outbox],
+      [db.sales, db.payments, db.paymentAllocations, db.writeOffs, db.saleReturns, db.outbox],
       async () => {
         const sale = await db.sales.get(saleId);
         const records = sale?.customerId ? await recordsOf(db, sale.customerId) : undefined;
@@ -296,7 +307,7 @@ export class AccountsRepository {
     const now = this.store.now().toISOString();
     await db.transaction(
       'rw',
-      [db.sales, db.payments, db.paymentAllocations, db.writeOffs, db.outbox],
+      [db.sales, db.payments, db.paymentAllocations, db.writeOffs, db.saleReturns, db.outbox],
       async () => {
         const records = await recordsOf(db, customerId);
         const aggregate = build(records, { deviceId, now });

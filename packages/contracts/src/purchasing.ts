@@ -48,7 +48,10 @@ export const purchaseSchema = recordBaseSchema.extend({
   estCmPerKg: z.int().min(1).nullable(),
   /** Σ of the rolls' costs. */
   totalCostCents: amountCentsSchema,
-  /** Phase 1: purchases are paid in full (no supplier debts, SPEC §9 / I4). */
+  /**
+   * Paid when the purchase was made: all of it, or less, the rest being a debt to the supplier
+   * (SP1). Later payments are supplier_payment records.
+   */
   paidCents: amountCentsSchema,
   notes: optionalTextSchema(1000),
 });
@@ -91,6 +94,8 @@ export type PurchaseAggregate = z.output<typeof purchaseAggregateSchema>;
 const purchaseCommon = {
   date: isoDateSchema,
   supplierId: idSchema.nullable().default(null),
+  /** Paid now; null: all of it. Less than the total leaves a debt to the supplier (SP1). */
+  paidCents: amountCentsSchema.nullable().optional(),
   notes: optionalTextSchema(1000).default(null),
 };
 
@@ -200,7 +205,7 @@ export function buildPurchaseAggregate(
     weightG: input.method === 'kg' ? input.weightG : null,
     estCmPerKg: input.method === 'kg' ? input.estCmPerKg : null,
     totalCostCents: built.totalCostCents,
-    paidCents: built.totalCostCents,
+    paidCents: input.paidCents ?? built.totalCostCents,
     notes: input.notes,
   };
   const rolls: Roll[] = built.rolls.map((roll, index) => ({
@@ -229,7 +234,12 @@ export function buildPurchaseAggregate(
 
 /** The purchase as typed, read back from its records (null when they are inconsistent). */
 function inputOf({ purchase, rolls }: PurchaseAggregate): NewPurchase | null {
-  const common = { date: purchase.date, supplierId: purchase.supplierId, notes: purchase.notes };
+  const common = {
+    date: purchase.date,
+    supplierId: purchase.supplierId,
+    paidCents: purchase.paidCents,
+    notes: purchase.notes,
+  };
   const [first] = rolls;
   if (!first) return null;
   if (purchase.method === 'meter') {
@@ -265,7 +275,27 @@ function inputOf({ purchase, rolls }: PurchaseAggregate): NewPurchase | null {
 export const PURCHASE_ISSUES = {
   inconsistent: 'purchase_records_inconsistent',
   notCore: 'purchase_does_not_match_core',
+  paidAboveTotal: 'purchase_paid_above_total',
+  debtNeedsSupplier: 'purchase_debt_needs_supplier',
 } as const;
+
+/**
+ * The rules of paying for a purchase (SP1): not more than its total, and a debt needs a supplier
+ * to owe it to. The form shows these before saving; the server applies them again.
+ */
+export function purchasePaymentIssues(purchase: {
+  totalCostCents: number;
+  paidCents: number;
+  supplierId: string | null;
+}): ValidationIssue[] {
+  if (purchase.paidCents > purchase.totalCostCents) {
+    return [{ path: ['paidCents'], message: PURCHASE_ISSUES.paidAboveTotal, code: 'custom' }];
+  }
+  if (purchase.paidCents < purchase.totalCostCents && purchase.supplierId === null) {
+    return [{ path: ['supplierId'], message: PURCHASE_ISSUES.debtNeedsSupplier, code: 'custom' }];
+  }
+  return [];
+}
 
 /**
  * Re-checks a pushed purchase (BUILD_PROMPTS 3.2: the server re-validates with the same core
@@ -293,6 +323,8 @@ export function checkPurchaseAggregate(aggregate: PurchaseAggregate): Validation
   }
   const path = firstDifference(expected, aggregate);
   if (path) return [{ path, message: PURCHASE_ISSUES.notCore, code: 'custom' }];
+  const payment = purchasePaymentIssues(aggregate.purchase);
+  if (payment.length > 0) return payment;
   const codes = new Set(aggregate.rolls.map((roll) => roll.shortCode));
   if (codes.size !== aggregate.rolls.length) {
     return [{ path: ['rolls'], message: PURCHASE_ISSUES.inconsistent, code: 'custom' }];

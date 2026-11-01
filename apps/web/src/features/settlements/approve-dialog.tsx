@@ -4,7 +4,7 @@ import type { SettlementPreview } from '@fabric/contracts';
 import { toast } from 'sonner';
 import { messages } from '@/i18n';
 import { ApiError, ReadOnlyError, useRepositories } from '@/local-db';
-import { DateAr } from '@/shared/format';
+import { DateText } from '@/shared/format';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
 import {
@@ -78,8 +78,8 @@ export function ApproveDialog({
         {preview && (
           <div className="grid gap-3">
             <p>
-              {t.period}: <DateAr value={preview.periodStart} /> –{' '}
-              <DateAr value={preview.periodEnd} />
+              {t.period}: <DateText value={preview.periodStart} /> –{' '}
+              <DateText value={preview.periodEnd} />
             </p>
             <Breakdown lines={preview.breakdown} />
             {differs && (

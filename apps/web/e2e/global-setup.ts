@@ -115,6 +115,12 @@ async function startApps(databaseUrl: string, children: ChildProcess[]): Promise
     },
   );
 
+  await run(
+    'node',
+    ['dist/create-cashier-user.js', '--username', E2E.cashier.username, '--name', 'عاملة'],
+    { cwd: API_DIR, env: apiEnv, input: E2E.cashier.password },
+  );
+
   const webEnv: NodeJS.ProcessEnv = {
     ...process.env,
     API_PROXY_TARGET: E2E.apiUrl,

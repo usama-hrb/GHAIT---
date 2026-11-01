@@ -5,7 +5,7 @@ import { useId, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { messages } from '@/i18n';
 import { useLiveQuery, useRepositories, ValidationError } from '@/local-db';
-import { formatDateAr, Money, MoneyInput } from '@/shared/format';
+import { formatDate, Money, MoneyInput } from '@/shared/format';
 import { shopToday } from '@/shared/lib/dates';
 import { Button } from '@/shared/ui/button';
 import {
@@ -137,8 +137,7 @@ export function PaymentDialog({
                   <SelectItem value={OLDEST}>{t.targetOldest}</SelectItem>
                   {invoices.map((invoice) => (
                     <SelectItem key={invoice.saleId} value={invoice.saleId}>
-                      {t.invoiceOf} {formatDateAr(invoice.date)} ·{' '}
-                      <Money cents={invoice.dueCents} />
+                      {t.invoiceOf} {formatDate(invoice.date)} · <Money cents={invoice.dueCents} />
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -196,7 +195,7 @@ export function PaymentDialog({
               {preview.allocations.map((allocation) => (
                 <li key={allocation.saleId} className="flex justify-between gap-2">
                   <span className="text-muted-foreground">
-                    {t.invoiceOf} {formatDateAr(dateOf.get(allocation.saleId) ?? date)}
+                    {t.invoiceOf} {formatDate(dateOf.get(allocation.saleId) ?? date)}
                   </span>
                   <Money cents={allocation.amountCents} />
                 </li>

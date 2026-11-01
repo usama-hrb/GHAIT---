@@ -5,6 +5,7 @@ import { requestContext } from '../../common/index.js';
 
 export const IS_PUBLIC = Symbol('is-public');
 export const PARTNER_MAY_WRITE = Symbol('partner-may-write');
+export const CASHIER_MAY_CALL = Symbol('cashier-may-call');
 
 /** Opens a route to anyone: the global AuthGuard requires a valid access token everywhere else. */
 export const Public = (): MethodDecorator & ClassDecorator => SetMetadata(IS_PUBLIC, true);
@@ -14,6 +15,13 @@ export const Public = (): MethodDecorator & ClassDecorator => SetMetadata(IS_PUB
  * registering the device for its code). Everything else that writes needs the owner.
  */
 export const PartnerMayCall = (): MethodDecorator => SetMetadata(PARTNER_MAY_WRITE, true);
+
+/**
+ * A route a cashier account may call (SPEC §11, RL2): the sync hub, where what a cashier sees and
+ * pushes is filtered by role, and the device registration. Every other route refuses a cashier,
+ * so nothing that carries a cost or a profit is reachable by mistake.
+ */
+export const CashierMayCall = (): MethodDecorator => SetMetadata(CASHIER_MAY_CALL, true);
 
 export interface AuthenticatedUser {
   id: string;
@@ -32,8 +40,11 @@ export const CurrentUser = createParamDecorator(
   },
 );
 
-/** Makes `userId` the actor of the audit entries written for this request. */
-export function actAs(userId: string): void {
+/** Makes `userId` the actor of the audit entries written for this request, in this role. */
+export function actAs(userId: string, role: Role | null = null): void {
   const context = requestContext();
-  if (context) context.actorId = userId;
+  if (context) {
+    context.actorId = userId;
+    context.actorRole = role;
+  }
 }

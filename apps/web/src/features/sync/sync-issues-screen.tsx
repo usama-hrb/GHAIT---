@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { messages } from '@/i18n';
 import { useLiveQuery, useRepositories } from '@/local-db';
 import { LoadingState, OfflineNotice } from '@/shared/brand';
-import { DateAr, Meters } from '@/shared/format';
+import { DateText, Meters } from '@/shared/format';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
@@ -115,7 +115,7 @@ export function SyncIssuesScreen() {
                 {rejected.map((entry) => (
                   <TableRow key={entry.opId}>
                     <TableCell>
-                      <DateAr value={entry.clientTs} format="dateTime" />
+                      <DateText value={entry.clientTs} format="dateTime" />
                     </TableCell>
                     <TableCell>{entityName(entry.entity)}</TableCell>
                     <TableCell>
@@ -149,7 +149,7 @@ export function SyncIssuesScreen() {
                 {conflicts.map((conflict) => (
                   <TableRow key={conflict.id}>
                     <TableCell>
-                      <DateAr value={conflict.createdAt} format="dateTime" />
+                      <DateText value={conflict.createdAt} format="dateTime" />
                     </TableCell>
                     <TableCell>{entityName(conflict.entity)}</TableCell>
                     <TableCell>

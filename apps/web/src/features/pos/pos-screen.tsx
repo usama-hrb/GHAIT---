@@ -1,165 +1,125 @@
 'use client';
 
-import type { Fabric, NewSaleInput, Variant } from '@fabric/contracts';
-import type { PriceWarning } from '@fabric/core';
-import { PackageIcon, Trash2Icon, TriangleAlertIcon, UserPlusIcon } from 'lucide-react';
+import type { NewSaleInput } from '@fabric/contracts';
+import { PackageIcon, ShoppingBagIcon } from 'lucide-react';
 import Link from 'next/link';
-import { useId, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { CustomerDialog } from '@/features/customers';
 import { messages } from '@/i18n';
-import {
-  type Local,
-  type RollChoice,
-  useLiveQuery,
-  useRepositories,
-  useSession,
-  ValidationError,
-} from '@/local-db';
+import { useCanSeeCosts, useLiveQuery, useRepositories, ValidationError } from '@/local-db';
 import { EmptyState, LoadingState, OfflineNotice } from '@/shared/brand';
-import { MeterInput, Meters, Money, MoneyInput } from '@/shared/format';
+import { Money } from '@/shared/format';
+import { useMediaQuery } from '@/shared/hooks/use-media-query';
 import { shopToday } from '@/shared/lib/dates';
 import { useAppNavigation } from '@/shared/lib/navigation';
-import { Alert, AlertDescription, AlertTitle } from '@/shared/ui/alert';
-import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
-import { Checkbox } from '@/shared/ui/checkbox';
-import { Combobox } from '@/shared/ui/combobox';
-import { Field, FieldError, FieldGroup, FieldLabel } from '@/shared/ui/field';
-import { Input } from '@/shared/ui/input';
-import { RadioGroup, RadioGroupItem } from '@/shared/ui/radio-group';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
-import { Switch } from '@/shared/ui/switch';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
+import {
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerHeader,
+  DrawerTitle,
+} from '@/shared/ui/drawer';
+import { useSidebar } from '@/shared/ui/sidebar';
+import { BillPanel } from './bill-panel';
+import { type CartItem, pricedItemsOf, saleInputOf } from './cart';
+import { CatalogPanel } from './catalog-panel';
+import { CheckoutDialog } from './checkout-dialog';
+import { DiscountDialog } from './discount-dialog';
+import { LineDialog } from './line-dialog';
 
 const t = messages.pos;
-const AUTO = 'auto';
-
-type SaleLineInput = NewSaleInput['lines'][number];
-
-/** One thing the customer buys: a colour and a length, cut from one roll or more. */
-interface CartItem {
-  key: string;
-  fabric: Local<Fabric>;
-  variant: Local<Variant>;
-  lines: (SaleLineInput & { rollCode: string })[];
-}
-
-const withoutCode = ({
-  rollId,
-  soldCm,
-  price,
-  refPricePerMeterCents,
-  minPricePerMeterCents,
-}: CartItem['lines'][number]): SaleLineInput => ({
-  rollId,
-  soldCm,
-  price,
-  refPricePerMeterCents,
-  minPricePerMeterCents,
-});
 
 const issueText = (message: string | undefined) =>
   (message && t.issues[message]) ?? messages.forms.invalid;
 
+/** The bill sits beside the catalog from here up (a tablet on its side, a desktop). */
+const WIDE = '(min-width: 1024px)';
+
 /**
- * The POS (SPEC §4, §14.5, BUILD_PROMPTS 3.4): colour → length → proposed roll(s) → price →
- * cart → customer → paid or credit → save → share. Every figure comes from @fabric/core through
- * the sales repository; everything is saved on the device first.
+ * On a tablet the main menu folds to its icons while selling, so the catalog and the bill have
+ * the room; it opens again when the screen is left.
+ */
+function useFoldedMenu() {
+  const { open, setOpen, isMobile } = useSidebar();
+  useEffect(() => {
+    if (isMobile || window.innerWidth >= 1280) return;
+    const fold = open;
+    if (fold) setOpen(false);
+    return () => {
+      if (fold) setOpen(true);
+    };
+    // Once, on entering the screen: after that the menu is the user's to open and close.
+    // eslint-disable-next-line react-hooks/exhaustive-deps, @eslint-react/exhaustive-deps -- see above
+  }, []);
+}
+
+/**
+ * The POS (SPEC §4, §14.5, BUILD_PROMPTS 3.4), laid out for a touch till: the colours that can be
+ * sold as tiles, the bill at the side, and number keypads (inside the length, price, payment and
+ * discount dialogs) so nothing needs the system keyboard. Every figure comes from @fabric/core
+ * through the sales repository; everything is saved on the device first.
  */
 export function PosScreen() {
-  const id = useId();
   const repositories = useRepositories();
   const navigation = useAppNavigation();
-  const session = useSession();
-  const isOwner = session.user?.role === 'owner';
+  // A cashier sees no cost or profit (SPEC §11); the owner and the partner do.
+  const seesCosts = useCanSeeCosts();
+  const wide = useMediaQuery(WIDE);
+  useFoldedMenu();
 
   const stock = useLiveQuery(() => repositories.inventory.overview(), [repositories]);
   const customers = useLiveQuery(() => repositories.customers.list(), [repositories]);
+  const photos = useLiveQuery(() => repositories.photos.sources(), [repositories]);
 
-  // The line being entered.
-  const [fabricId, setFabricId] = useState<string | null>(null);
-  const [variantId, setVariantId] = useState<string | null>(null);
-  const [lengthCm, setLengthCm] = useState<number | null>(null);
-  const [pricePerMeter, setPricePerMeter] = useState<number | null>(null);
-  const [rollChoice, setRollChoice] = useState<string>(AUTO);
-  const [wholePiece, setWholePiece] = useState(false);
-  const [piecePrice, setPiecePrice] = useState<number | null>(null);
-  const [lineAttempted, setLineAttempted] = useState(false);
-
-  // The invoice.
   const [cart, setCart] = useState<CartItem[]>([]);
   const [discount, setDiscount] = useState<number | null>(null);
   const [customerId, setCustomerId] = useState<string | null>(null);
-  const [mode, setMode] = useState<'full' | 'credit'>('full');
-  const [paid, setPaid] = useState<number | null>(null);
-  const [dueDate, setDueDate] = useState('');
-  const [confirmed, setConfirmed] = useState(false);
-  const [note, setNote] = useState('');
-  const [attempted, setAttempted] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [picking, setPicking] = useState<{
+    fabricId: string;
+    variantId: string;
+    editing: CartItem | null;
+  } | null>(null);
+  const [discounting, setDiscounting] = useState(false);
+  const [paying, setPaying] = useState(false);
+  const [completedSaleId, setCompletedSaleId] = useState<string | null>(null);
+  const [checkoutMode, setCheckoutMode] = useState<'full' | 'credit'>('full');
   const [addingCustomer, setAddingCustomer] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [billOpen, setBillOpen] = useState(false);
 
-  const fabricStock = stock?.fabrics.find((entry) => entry.fabric.id === fabricId);
-  const fabric = fabricStock?.fabric;
-  const variant = fabricStock?.colors.find((color) => color.variant.id === variantId)?.variant;
-
-  /** cm of each roll already in the cart, so a second line is proposed what is left. */
-  const taken = useMemo(() => {
+  const base = useMemo(
+    () => saleInputOf(cart, { date: shopToday(), customerId, discountCents: discount ?? 0 }),
+    [cart, customerId, discount],
+  );
+  // Priced as if nothing were paid yet: the total and the warnings do not depend on the payment.
+  const priced = useLiveQuery(async () => {
+    if (!base) return null;
+    try {
+      return await repositories.sales.preview(base);
+    } catch {
+      return null;
+    }
+  }, [repositories, base]);
+  const items = useMemo(() => pricedItemsOf(cart, priced), [cart, priced]);
+  const inBill = useMemo(() => {
     const map = new Map<string, number>();
-    for (const line of cart.flatMap((item) => item.lines)) {
-      map.set(line.rollId, (map.get(line.rollId) ?? 0) + line.soldCm);
+    for (const item of cart) {
+      const cm = item.lines.reduce((sum, line) => sum + line.soldCm, 0);
+      map.set(item.variant.id, (map.get(item.variant.id) ?? 0) + cm);
     }
     return map;
   }, [cart]);
-
-  const rolls = useLiveQuery(
-    async () => (variantId ? repositories.sales.rollsOfColor(variantId) : []),
-    [repositories, variantId],
-  );
-  const chosen = rolls?.find((choice) => choice.roll.id === rollChoice);
-  const canSellWhole =
-    fabric?.sellableAsPiece === true &&
-    chosen !== undefined &&
-    chosen.untouched &&
-    !taken.has(chosen.roll.id);
-  const selling = wholePiece && canSellWhole ? chosen.ledger.remainingCm : lengthCm;
-
-  const proposal = useLiveQuery(async () => {
-    if (!variantId || selling === null || selling <= 0) return null;
-    if (chosen) {
-      const left = chosen.ledger.remainingCm - (taken.get(chosen.roll.id) ?? 0);
-      return left >= selling
-        ? { takes: [{ rollId: chosen.roll.id, cm: selling, choice: chosen }], shortCm: 0 }
-        : { takes: [], shortCm: selling, tooShort: true };
-    }
-    return repositories.sales.propose(variantId, selling, taken);
-  }, [repositories, variantId, selling, chosen, taken]);
-
-  const input = useMemo((): NewSaleInput | null => {
-    const lines = cart.flatMap((item) => item.lines.map(withoutCode));
-    if (lines.length === 0) return null;
-    return {
-      date: shopToday(),
-      customerId,
-      lines,
-      discountCents: discount ?? 0,
-      paidCents: 0,
-      dueDate: mode === 'credit' && dueDate !== '' ? dueDate : null,
-      confirmedBelowCost: confirmed,
-      note: note.trim() === '' ? null : note,
-    };
-  }, [cart, customerId, discount, mode, dueDate, confirmed, note]);
-
-  // Priced as if nothing were paid yet: the total and warnings do not depend on the payment.
-  const priced = useLiveQuery(
-    async () => (input ? repositories.sales.preview(input) : null),
-    [repositories, input],
+  const others = useMemo(
+    () => cart.filter((item) => item.key !== picking?.editing?.key),
+    [cart, picking],
   );
 
-  if (stock === undefined || customers === undefined) return <LoadingState />;
-  const inStock = stock.fabrics.filter((entry) => entry.remainingCm > 0);
-  if (inStock.length === 0 && cart.length === 0) {
+  if (stock === undefined || customers === undefined || photos === undefined) {
+    return <LoadingState />;
+  }
+  if (cart.length === 0 && !stock.fabrics.some((entry) => entry.remainingCm > 0)) {
     return (
       <EmptyState
         icon={PackageIcon}
@@ -174,69 +134,30 @@ export function PosScreen() {
   }
 
   const total = priced?.split?.totalCents ?? null;
-  const paidCents = mode === 'full' ? total : paid;
-  const invoiceIssue = priced?.issues.find(
-    (issue) => issue.message !== 'sale_credit_needs_customer',
+  const issue = priced?.issues.find(
+    (found) => found.message !== 'sale_credit_needs_customer',
   )?.message;
-  const creditWithoutCustomer = mode === 'credit' && customerId === null;
+  const pickedStock = picking
+    ? stock.fabrics.find((entry) => entry.fabric.id === picking.fabricId)
+    : undefined;
 
-  const resetLine = () => {
-    setVariantId(null);
-    setLengthCm(null);
-    setRollChoice(AUTO);
-    setWholePiece(false);
-    setPiecePrice(null);
-    setLineAttempted(false);
-  };
-
-  const chooseFabric = (next: string | null) => {
-    const picked = stock.fabrics.find((entry) => entry.fabric.id === next)?.fabric;
-    setFabricId(next);
-    setPricePerMeter(picked?.refPricePerMeterCents ?? null);
-    resetLine();
-  };
-
-  const addLine = () => {
-    setLineAttempted(true);
-    if (!fabric || !variant || !proposal || proposal.shortCm > 0 || proposal.takes.length === 0)
-      return;
-    const whole = wholePiece && canSellWhole;
-    const price = whole
-      ? { wholePieceCents: piecePrice ?? fabric.piecePriceCents ?? 0 }
-      : pricePerMeter === null
-        ? null
-        : { perMeterCents: pricePerMeter };
-    if (!price) return;
-    setCart((current) => [
-      ...current,
-      {
-        key: crypto.randomUUID(),
-        fabric,
-        variant,
-        lines: proposal.takes.map((take) => ({
-          rollId: take.rollId,
-          rollCode: take.choice.roll.shortCode,
-          soldCm: take.cm,
-          price,
-          refPricePerMeterCents: fabric.refPricePerMeterCents,
-          minPricePerMeterCents: fabric.minPricePerMeterCents,
-        })),
-      },
-    ]);
-    setConfirmed(false);
-    resetLine();
-  };
-
-  const save = () => {
-    setAttempted(true);
-    if (!input || paidCents === null || creditWithoutCustomer) return;
-    if (priced?.requiresConfirmation && !confirmed) return;
+  const complete = (input: NewSaleInput) => {
     setSaving(true);
     repositories.sales
-      .create({ ...input, paidCents })
-      .then((saleId) => {
-        toast.success(t.saved, { description: messages.forms.saved });
-        navigation.push(`/pos/view?id=${saleId}`);
+      .create(input)
+      .then(() => {
+        setSaving(false);
+        setPaying(false);
+
+        // Start a fresh sale
+        setCart([]);
+        setDiscount(null);
+        setCustomerId(null);
+
+        toast.success(t.saved, {
+          description: messages.forms.saved,
+          duration: 450,
+        });
       })
       .catch((error: unknown) => {
         setSaving(false);
@@ -248,24 +169,72 @@ export function PosScreen() {
       });
   };
 
-  // Per cart item, the priced lines it became (priced.lines follows the input's line order).
-  const starts = cart.map((_, index) =>
-    cart.slice(0, index).reduce((sum, item) => sum + item.lines.length, 0),
+  const startPartialPayment = () => {
+    setCheckoutMode('credit');
+    setPaying(true);
+  };
+
+  const payFull = () => {
+    if (!base || total === null) return;
+
+    // Below-cost sales still require explicit confirmation.
+    if (priced?.requiresConfirmation) {
+      setPaying(true);
+      return;
+    }
+
+    complete({
+      ...base,
+      customerId,
+      paidCents: total,
+      dueDate: null,
+      confirmedBelowCost: false,
+      note: null,
+    });
+  };
+
+  /** Something is opened from the bill: on a small screen the bill drawer gives way to it. */
+  const fromBill = (action: () => void) => () => {
+    setBillOpen(false);
+    action();
+  };
+
+  const bill = (
+    <BillPanel
+      items={items}
+      priced={priced}
+      seesCosts={seesCosts}
+      photos={photos}
+      customers={customers}
+      customerId={customerId}
+      onCustomer={setCustomerId}
+      onAddCustomer={fromBill(() => {
+        setAddingCustomer(true);
+      })}
+      discount={discount}
+      onDiscount={fromBill(() => {
+        setDiscounting(true);
+      })}
+      onEdit={(item) => {
+        setBillOpen(false);
+        setPicking({ fabricId: item.fabric.id, variantId: item.variant.id, editing: item });
+      }}
+      onRemove={(item) => {
+        setCart((current) => current.filter((entry) => entry.key !== item.key));
+      }}
+      onClear={() => {
+        setCart([]);
+        setDiscount(null);
+        setCustomerId(null);
+      }}
+      onPay={fromBill(payFull)}
+      issue={issue ? issueText(issue) : undefined}
+      onPartialPay={fromBill(startPartialPayment)}
+    />
   );
-  const pricedItems = cart.map((item, index) => {
-    const start = starts[index] ?? 0;
-    const lines = priced?.lines.slice(start, start + item.lines.length) ?? [];
-    return {
-      item,
-      totalCents: lines.reduce((sum, line) => sum + line.lineTotalCents, 0),
-      profitCents: lines.reduce((sum, line) => sum + line.profitCents, 0),
-      warnings: [...new Set(lines.flatMap((line) => line.warnings))] as PriceWarning[],
-      provisional: lines.some((line) => line.costing.provisional),
-    };
-  });
 
   return (
-    <div className="mx-auto grid w-full max-w-6xl gap-4">
+    <div className="flex flex-col gap-3 lg:h-[calc(100svh-6.5rem)]">
       <OfflineNotice />
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="font-heading text-xl font-semibold">{t.title}</h2>
@@ -274,461 +243,109 @@ export function PosScreen() {
         </Button>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <div className="grid content-start gap-4">
-          <form
-            noValidate
-            aria-label={t.addLine}
-            className="grid gap-4 rounded-xl border bg-card p-4"
-            onSubmit={(event) => {
-              event.preventDefault();
-              addLine();
-            }}
-          >
-            <FieldGroup>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <Field>
-                  <FieldLabel htmlFor={`${id}-fabric`}>{t.fields.fabric}</FieldLabel>
-                  <Combobox
-                    id={`${id}-fabric`}
-                    options={inStock.map((entry) => ({
-                      value: entry.fabric.id,
-                      label: entry.fabric.name,
-                    }))}
-                    value={fabricId}
-                    onValueChange={chooseFabric}
-                    placeholder={t.fields.fabricPlaceholder}
-                  />
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor={`${id}-color`}>{t.fields.color}</FieldLabel>
-                  <Combobox
-                    id={`${id}-color`}
-                    options={(fabricStock?.colors ?? [])
-                      .filter((color) => color.remainingCm > 0)
-                      .map((color) => ({
-                        value: color.variant.id,
-                        label: color.variant.colorName,
-                      }))}
-                    value={variantId}
-                    onValueChange={(next) => {
-                      resetLine();
-                      setVariantId(next);
-                    }}
-                    placeholder={t.fields.colorPlaceholder}
-                  />
-                </Field>
-              </div>
-
-              {variantId && rolls && (
-                <Field>
-                  <FieldLabel htmlFor={`${id}-roll`}>{t.fields.roll}</FieldLabel>
-                  <Select
-                    value={rollChoice}
-                    onValueChange={(next) => {
-                      setRollChoice(next);
-                      setWholePiece(false);
-                    }}
-                  >
-                    <SelectTrigger id={`${id}-roll`}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value={AUTO}>{t.fields.rollAuto}</SelectItem>
-                      {rolls.map((choice) => (
-                        <SelectItem key={choice.roll.id} value={choice.roll.id}>
-                          <RollLabel choice={choice} taken={taken.get(choice.roll.id) ?? 0} />
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </Field>
-              )}
-
-              {canSellWhole && (
-                <Field orientation="horizontal">
-                  <Switch
-                    id={`${id}-whole`}
-                    checked={wholePiece}
-                    onCheckedChange={(checked) => {
-                      setWholePiece(checked);
-                      setPiecePrice(fabric.piecePriceCents);
-                    }}
-                  />
-                  <FieldLabel htmlFor={`${id}-whole`}>{t.fields.wholePiece}</FieldLabel>
-                </Field>
-              )}
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                {wholePiece && canSellWhole ? (
-                  <Field>
-                    <FieldLabel htmlFor={`${id}-piece-price`}>{t.fields.piecePrice}</FieldLabel>
-                    <MoneyInput
-                      id={`${id}-piece-price`}
-                      required
-                      showError={lineAttempted}
-                      value={piecePrice}
-                      onValueChange={setPiecePrice}
-                    />
-                  </Field>
-                ) : (
-                  <>
-                    <Field>
-                      <FieldLabel htmlFor={`${id}-length`}>{t.fields.length}</FieldLabel>
-                      <MeterInput
-                        id={`${id}-length`}
-                        required
-                        showError={lineAttempted}
-                        value={lengthCm}
-                        onValueChange={setLengthCm}
-                      />
-                    </Field>
-                    <Field>
-                      <FieldLabel htmlFor={`${id}-price`}>{t.fields.pricePerMeter}</FieldLabel>
-                      <MoneyInput
-                        id={`${id}-price`}
-                        required
-                        showError={lineAttempted}
-                        value={pricePerMeter}
-                        onValueChange={setPricePerMeter}
-                      />
-                      {fabric && (
-                        <p className="text-sm text-muted-foreground">
-                          {t.reference}: <Money cents={fabric.refPricePerMeterCents} />
-                        </p>
-                      )}
-                    </Field>
-                  </>
-                )}
-              </div>
-
-              {proposal && proposal.takes.length > 0 && (
-                <div className="grid gap-1 text-sm" role="status">
-                  <span className="text-muted-foreground">
-                    {t.splitAcross(proposal.takes.length)}
-                  </span>
-                  <ul className="flex flex-wrap gap-2">
-                    {proposal.takes.map((take) => (
-                      <li key={take.rollId}>
-                        <Badge variant="secondary">
-                          <bdi dir="ltr" data-num>
-                            {take.choice.roll.shortCode}
-                          </bdi>
-                          · <Meters cm={take.cm} />
-                        </Badge>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {proposal && proposal.shortCm > 0 && (
-                <Alert variant="destructive">
-                  <TriangleAlertIcon aria-hidden />
-                  <AlertDescription>
-                    {'tooShort' in proposal ? (
-                      t.rollTooShort
-                    ) : (
-                      <>
-                        {t.notEnough}{' '}
-                        <Meters cm={proposal.takes.reduce((sum, take) => sum + take.cm, 0)} />
-                      </>
-                    )}
-                  </AlertDescription>
-                </Alert>
-              )}
-            </FieldGroup>
-            <Button type="submit" variant="outline" className="justify-self-start">
-              {t.addLine}
-            </Button>
-          </form>
-
-          <section aria-label={t.cart} className="rounded-xl border bg-card">
-            {cart.length === 0 ? (
-              <p className="p-4 text-muted-foreground">{t.cartEmpty}</p>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t.columns.item}</TableHead>
-                    <TableHead>{t.columns.roll}</TableHead>
-                    <TableHead className="text-end">{t.columns.length}</TableHead>
-                    <TableHead className="text-end">{t.columns.total}</TableHead>
-                    {isOwner && (
-                      <TableHead className="text-end max-sm:hidden">{t.columns.profit}</TableHead>
-                    )}
-                    <TableHead>
-                      <span className="sr-only">{t.remove}</span>
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {pricedItems.map(({ item, totalCents, profitCents, warnings, provisional }) => (
-                    <TableRow key={item.key}>
-                      <TableCell>
-                        <div className="font-medium">
-                          {item.fabric.name} · {item.variant.colorName}
-                        </div>
-                        <div className="flex flex-wrap gap-1">
-                          {warnings.map((warning) => (
-                            <Badge
-                              key={warning}
-                              variant={warning === 'below_cost' ? 'destructive' : 'warning'}
-                            >
-                              {t.warnings[warning]}
-                            </Badge>
-                          ))}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {item.lines.map((line) => (
-                          <bdi key={line.rollId} dir="ltr" data-num className="block">
-                            {line.rollCode}
-                          </bdi>
-                        ))}
-                      </TableCell>
-                      <TableCell className="text-end">
-                        <Meters cm={item.lines.reduce((sum, line) => sum + line.soldCm, 0)} />
-                      </TableCell>
-                      <TableCell className="text-end">
-                        <Money cents={totalCents} />
-                      </TableCell>
-                      {isOwner && (
-                        <TableCell className="text-end max-sm:hidden">
-                          <Money cents={profitCents} tone={profitCents < 0 ? 'loss' : 'profit'} />
-                          {provisional && (
-                            <span className="block text-xs text-muted-foreground">
-                              {t.provisional}
-                            </span>
-                          )}
-                        </TableCell>
-                      )}
-                      <TableCell className="text-end">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          aria-label={t.remove}
-                          onClick={() => {
-                            setCart((current) => current.filter((entry) => entry.key !== item.key));
-                            setConfirmed(false);
-                          }}
-                        >
-                          <Trash2Icon aria-hidden />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </section>
-        </div>
-
-        <form
-          noValidate
-          aria-label={t.cart}
-          className="grid content-start gap-4 rounded-xl border bg-card p-4"
-          onSubmit={(event) => {
-            event.preventDefault();
-            save();
+      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
+        <CatalogPanel
+          fabrics={stock.fabrics}
+          photos={photos}
+          inBill={inBill}
+          onPick={(fabricId, variantId) => {
+            setPicking({ fabricId, variantId, editing: null });
           }}
-        >
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor={`${id}-discount`}>
-                {t.fields.discount}{' '}
-                <span className="text-muted-foreground">({messages.forms.optional})</span>
-              </FieldLabel>
-              <MoneyInput id={`${id}-discount`} value={discount} onValueChange={setDiscount} />
-            </Field>
-
-            <dl className="grid gap-1">
-              {priced?.split && priced.split.discountCents > 0 && (
-                <div className="flex justify-between gap-2">
-                  <dt className="text-muted-foreground">{t.linesTotal}</dt>
-                  <dd>
-                    <Money cents={priced.split.linesTotalCents} />
-                  </dd>
-                </div>
-              )}
-              <div className="flex justify-between gap-2 text-lg font-semibold">
-                <dt>{t.total}</dt>
-                <dd>{total === null ? '—' : <Money cents={total} />}</dd>
-              </div>
-              {isOwner && priced?.split && (
-                <div className="flex justify-between gap-2 text-sm">
-                  <dt className="text-muted-foreground">{t.profit}</dt>
-                  <dd>
-                    <Money
-                      cents={priced.split.profitCents}
-                      tone={priced.split.profitCents < 0 ? 'loss' : 'profit'}
-                    />
-                  </dd>
-                </div>
-              )}
-            </dl>
-            {invoiceIssue && (
-              <p role="alert" className="text-sm text-destructive">
-                {issueText(invoiceIssue)}
-              </p>
-            )}
-
-            <Field data-invalid={(attempted && creditWithoutCustomer) || undefined}>
-              <FieldLabel htmlFor={`${id}-customer`}>{t.fields.customer}</FieldLabel>
-              <div className="flex gap-2">
-                <Combobox
-                  id={`${id}-customer`}
-                  options={customers.map((customer) => ({
-                    value: customer.id,
-                    label: customer.phone ? `${customer.name} · ${customer.phone}` : customer.name,
-                  }))}
-                  value={customerId}
-                  onValueChange={setCustomerId}
-                  placeholder={t.fields.customerPlaceholder}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  aria-label={messages.customers.add}
-                  onClick={() => {
-                    setAddingCustomer(true);
-                  }}
-                >
-                  <UserPlusIcon aria-hidden />
-                </Button>
-              </div>
-              {attempted && creditWithoutCustomer && (
-                <FieldError>{t.issues.sale_credit_needs_customer}</FieldError>
-              )}
-            </Field>
-
-            <RadioGroup
-              value={mode}
-              onValueChange={(next) => {
-                setMode(next as 'full' | 'credit');
-              }}
-              className="grid gap-2"
-            >
-              {(['full', 'credit'] as const).map((option) => (
-                <Field key={option} orientation="horizontal">
-                  <RadioGroupItem id={`${id}-${option}`} value={option} />
-                  <FieldLabel htmlFor={`${id}-${option}`}>{t.payment[option]}</FieldLabel>
-                </Field>
-              ))}
-            </RadioGroup>
-
-            {mode === 'credit' && (
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
-                <Field>
-                  <FieldLabel htmlFor={`${id}-paid`}>{t.fields.paid}</FieldLabel>
-                  <MoneyInput
-                    id={`${id}-paid`}
-                    required
-                    showError={attempted}
-                    value={paid}
-                    onValueChange={setPaid}
-                  />
-                  {total !== null && paid !== null && paid <= total && (
-                    <p className="text-sm text-muted-foreground">
-                      {t.remaining}: <Money cents={total - paid} tone="debt" />
-                    </p>
-                  )}
-                </Field>
-                <Field>
-                  <FieldLabel htmlFor={`${id}-due`}>
-                    {t.fields.dueDate}{' '}
-                    <span className="text-muted-foreground">({messages.forms.optional})</span>
-                  </FieldLabel>
-                  <Input
-                    id={`${id}-due`}
-                    type="date"
-                    value={dueDate}
-                    onChange={(event) => {
-                      setDueDate(event.target.value);
-                    }}
-                  />
-                </Field>
-              </div>
-            )}
-
-            <Field>
-              <FieldLabel htmlFor={`${id}-note`}>
-                {t.fields.note}{' '}
-                <span className="text-muted-foreground">({messages.forms.optional})</span>
-              </FieldLabel>
-              <Input
-                id={`${id}-note`}
-                value={note}
-                onChange={(event) => {
-                  setNote(event.target.value);
-                }}
-              />
-            </Field>
-
-            {priced?.requiresConfirmation && (
-              <Alert variant="destructive">
-                <TriangleAlertIcon aria-hidden />
-                <AlertTitle>{t.belowCostTitle}</AlertTitle>
-                <AlertDescription className="grid gap-2">
-                  <span>{t.belowCostDescription}</span>
-                  <span className="flex items-center gap-2">
-                    <Checkbox
-                      id={`${id}-confirm`}
-                      checked={confirmed}
-                      onCheckedChange={(checked) => {
-                        setConfirmed(checked === true);
-                      }}
-                    />
-                    <label htmlFor={`${id}-confirm`} className="font-medium text-foreground">
-                      {t.confirmBelowCost}
-                    </label>
-                  </span>
-                </AlertDescription>
-              </Alert>
-            )}
-          </FieldGroup>
-          <Button
-            type="submit"
-            variant="accent"
-            size="lg"
-            disabled={
-              saving ||
-              cart.length === 0 ||
-              invoiceIssue !== undefined ||
-              (priced?.requiresConfirmation === true && !confirmed)
-            }
-          >
-            {saving ? messages.forms.saving : t.save}
-          </Button>
-        </form>
+        />
+        {wide && <div className="min-h-0">{bill}</div>}
       </div>
 
+      {!wide && (
+        <>
+          {/* Room under the last tile for the bar below. */}
+          <div className="h-16" aria-hidden />
+          <div className="fixed inset-x-4 bottom-20 z-20 md:bottom-4">
+            <Button
+              type="button"
+              variant="accent"
+              size="lg"
+              className="h-14 w-full touch-manipulation justify-between text-base font-semibold pointer-coarse:h-14"
+              onClick={() => {
+                setBillOpen(true);
+              }}
+            >
+              <span className="flex items-center gap-2">
+                <ShoppingBagIcon aria-hidden />
+                {t.bill.open} · {t.bill.items(cart.length)}
+              </span>
+              {total !== null && <Money cents={total} />}
+            </Button>
+          </div>
+          <Drawer open={billOpen} onOpenChange={setBillOpen}>
+            <DrawerContent className="h-[88svh] max-h-[88svh]">
+              <DrawerHeader className="sr-only">
+                <DrawerTitle>{t.cart}</DrawerTitle>
+                <DrawerDescription>{t.bill.items(cart.length)}</DrawerDescription>
+              </DrawerHeader>
+              <div className="min-h-0 flex-1 p-3">{bill}</div>
+            </DrawerContent>
+          </Drawer>
+        </>
+      )}
+
+      {picking && pickedStock && (
+        <LineDialog
+          key={picking.editing?.key ?? `${picking.variantId}:${String(cart.length)}`}
+          fabricStock={pickedStock}
+          variantId={picking.variantId}
+          photo={photos.get(picking.variantId)}
+          others={others}
+          editing={picking.editing}
+          seesCosts={seesCosts}
+          onSubmit={(item) => {
+            setCart((current) =>
+              current.some((entry) => entry.key === item.key)
+                ? current.map((entry) => (entry.key === item.key ? item : entry))
+                : [...current, item],
+            );
+            setPicking(null);
+          }}
+          onClose={() => {
+            setPicking(null);
+          }}
+        />
+      )}
+      {discounting && (
+        <DiscountDialog
+          initial={discount}
+          onSubmit={(cents) => {
+            setDiscount(cents);
+            setDiscounting(false);
+          }}
+          onClose={() => {
+            setDiscounting(false);
+          }}
+        />
+      )}
+      {paying && base && total !== null && (
+        <CheckoutDialog
+          base={base}
+          total={total}
+          customers={customers}
+          customerId={customerId}
+          onCustomer={setCustomerId}
+          onAddCustomer={() => {
+            setAddingCustomer(true);
+          }}
+          requiresConfirmation={priced?.requiresConfirmation === true}
+          saving={saving}
+          onComplete={complete}
+          onClose={() => {
+            setPaying(false);
+          }}
+          initialMode={checkoutMode}
+        />
+      )}
       <CustomerDialog
         open={addingCustomer}
         onOpenChange={setAddingCustomer}
         onSaved={setCustomerId}
       />
     </div>
-  );
-}
-
-/** "R-A0001 · 49.7 م" (what is left after the cart's lines). */
-function RollLabel({ choice, taken }: { choice: RollChoice; taken: number }) {
-  return (
-    <span className="flex gap-2">
-      <bdi dir="ltr" data-num>
-        {choice.roll.shortCode}
-      </bdi>
-      <span className="text-muted-foreground">
-        <Meters cm={choice.ledger.remainingCm - taken} />
-      </span>
-      {choice.state === 'remnant' && (
-        <Badge variant="secondary">{messages.inventory.states.remnant}</Badge>
-      )}
-      {choice.ledger.lengthEstimated && (
-        <Badge variant="warning">{messages.purchasing.estimated}</Badge>
-      )}
-    </span>
   );
 }

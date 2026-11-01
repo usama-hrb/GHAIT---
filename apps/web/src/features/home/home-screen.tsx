@@ -3,8 +3,10 @@
 import { PlusIcon, ShoppingCartIcon, TruckIcon } from 'lucide-react';
 import Link from 'next/link';
 import { ExpenseReminders } from '@/features/expenses';
+import { PayablesSummary } from '@/features/payables';
+import { ZakatReminder } from '@/features/zakat';
 import { messages } from '@/i18n';
-import { useLiveQuery, useRepositories } from '@/local-db';
+import { useCanSeeCosts, useLiveQuery, useRepositories } from '@/local-db';
 import { LoadingState, OfflineNotice } from '@/shared/brand';
 import { Meters, Money } from '@/shared/format';
 import { shopToday } from '@/shared/lib/dates';
@@ -18,19 +20,23 @@ const t = messages.home;
  */
 export function HomeScreen() {
   const repositories = useRepositories();
+  // A cashier's home is the till: no buying, bills, zakat or what the shop owes.
+  const seesCosts = useCanSeeCosts();
   const data = useLiveQuery(async () => {
     const today = shopToday();
-    const [sales, stock, debts] = await Promise.all([
+    const [sales, stock, debts, returnedToday] = await Promise.all([
       repositories.sales.list(),
       repositories.inventory.overview(),
       repositories.accounts.debts('oldest'),
+      repositories.sales.returnedOn(today),
     ]);
     const todays = sales.filter(
       (summary) => summary.sale.date === today && summary.sale.voidedAt === null,
     );
     return {
       salesCount: todays.length,
-      salesCents: todays.reduce((sum, summary) => sum + summary.sale.totalCents, 0),
+      // Goods given back today lower today's sales (RT4).
+      salesCents: todays.reduce((sum, summary) => sum + summary.sale.totalCents, 0) - returnedToday,
       low: stock.fabrics.flatMap((fabric) =>
         fabric.colors
           .filter((color) => color.state === 'low')
@@ -53,18 +59,22 @@ export function HomeScreen() {
             {t.sell}
           </Link>
         </Button>
-        <Button asChild variant="outline" size="lg">
-          <Link href="/purchases/new">
-            <TruckIcon aria-hidden />
-            {t.buy}
-          </Link>
-        </Button>
-        <Button asChild variant="outline" size="lg">
-          <Link href="/expenses">
-            <PlusIcon aria-hidden />
-            {t.expense}
-          </Link>
-        </Button>
+        {seesCosts && (
+          <>
+            <Button asChild variant="outline" size="lg">
+              <Link href="/purchases/new">
+                <TruckIcon aria-hidden />
+                {t.buy}
+              </Link>
+            </Button>
+            <Button asChild variant="outline" size="lg">
+              <Link href="/expenses">
+                <PlusIcon aria-hidden />
+                {t.expense}
+              </Link>
+            </Button>
+          </>
+        )}
       </section>
 
       <section aria-label={t.todaySales} className="grid gap-1 rounded-xl border bg-card p-4">
@@ -75,7 +85,12 @@ export function HomeScreen() {
         <p className="text-sm text-muted-foreground">{t.salesCount(data.salesCount)}</p>
       </section>
 
-      <ExpenseReminders />
+      {seesCosts && (
+        <>
+          <ExpenseReminders />
+          <ZakatReminder />
+        </>
+      )}
 
       <div className="grid gap-4 md:grid-cols-2">
         <section
@@ -131,6 +146,7 @@ export function HomeScreen() {
             <Link href="/customers/debts">{t.seeAll}</Link>
           </Button>
         </section>
+        {seesCosts && <PayablesSummary />}
       </div>
     </div>
   );

@@ -1,8 +1,10 @@
 import { type BrowserContext, expect, type Page, test } from '@playwright/test';
 import {
   addFabric,
+  addToBill,
   choose,
   connectivity,
+  payInFull,
   reviewAndSave,
   serverGet,
   signIn,
@@ -13,11 +15,8 @@ import {
 /** 1.5 m of the red organza at the POS, paid in cash. */
 async function sellOneAndAHalf(page: Page) {
   await page.goto('/pos');
-  await choose(page, 'القماش', 'أورجانزا');
-  await choose(page, 'اللون', 'أحمر');
-  await page.getByLabel('الطول', { exact: true }).fill('1.5');
-  await page.getByRole('button', { name: 'أضف إلى الفاتورة' }).click();
-  await page.getByRole('button', { name: 'حفظ البيع' }).click();
+  await addToBill(page, 'أورجانزا', 'أحمر', '1.5');
+  await payInFull(page);
   await expect(page).toHaveURL(/\/pos\/view\?id=/);
 }
 

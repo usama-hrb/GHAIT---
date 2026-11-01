@@ -6,9 +6,13 @@ import { SignOutButton, SyncStatus, UpdateNotice } from '@/features/sync';
 import { messages } from '@/i18n';
 import { useSession } from '@/local-db';
 import { AppShell, LoadingState } from '@/shared/brand';
+import { LanguageToggle } from '@/shared/language';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { ThemeToggle } from '@/shared/theme';
-import { shopNavigation } from '../navigation';
+import Link from 'next/link';
+import { EmptyState } from '@/shared/brand';
+import { Button } from '@/shared/ui/button';
+import { mayOpen, navigationFor, shopNavigation } from '../navigation';
 
 /**
  * The shop's screens. A device opens on its local data, offline too, once someone has signed
@@ -27,28 +31,44 @@ export default function ShopLayout({ children }: { children: ReactNode }) {
 
   if (session.status !== 'signed_in') return <LoadingState variant="spinner" />;
 
-  const current = shopNavigation.find(
+  const role = session.user?.role;
+  const current = shopNavigation().find(
     (item) => pathname === item.href || pathname.startsWith(`${item.href}/`),
   );
   return (
     <AppShell
-      nav={shopNavigation}
+      nav={navigationFor(role)}
+      account={{
+        name: session.user?.displayName ?? messages.app.name,
+        detail: role ? messages.shell.roles[role] : undefined,
+      }}
       title={current?.label ?? messages.app.name}
       status={<SyncStatus />}
       actions={
         <>
+          <LanguageToggle />
           <ThemeToggle />
-          <SignOutButton />
         </>
       }
     >
       <UpdateNotice />
-      {session.user?.role !== 'owner' && (
+      {role === 'partner' && (
         <Alert className="mb-4" role="status">
           <AlertDescription>{messages.auth.readOnly}</AlertDescription>
         </Alert>
       )}
-      {children}
+      {mayOpen(role, pathname) ? (
+        children
+      ) : (
+        <EmptyState
+          title={messages.auth.notForCashier}
+          action={
+            <Button asChild variant="outline">
+              <Link href="/pos">{messages.auth.cashierBack}</Link>
+            </Button>
+          }
+        />
+      )}
     </AppShell>
   );
 }

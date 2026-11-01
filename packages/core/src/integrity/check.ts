@@ -12,7 +12,10 @@ export interface CashFlows {
   contributionsCents: number;
   /** capital_move withdrawals, as a positive amount. */
   capitalWithdrawalsCents: number;
+  /** Paid when the purchases were made (purchase.paid_cents). */
   purchasesPaidCents: number;
+  /** Paid to suppliers afterwards, for what was left owing (SP3). */
+  supplierPaymentsCents: number;
   expensesPaidCents: number;
   drawsCents: number;
   /** Σ cash_adjustment differences (counted − expected), signed: the till now matches the count. */
@@ -21,7 +24,7 @@ export interface CashFlows {
 
 /**
  * Cash the records say the till holds (SPEC §9): payments in − refunds + contributions −
- * withdrawals − purchases − expenses − draws ± cash adjustments. A physical count is compared with it, and
+ * withdrawals − purchases and supplier payments − expenses − draws ± cash adjustments. A physical count is compared with it, and
  * the difference is recorded as a cash_adjustment (cash over/short of its period, I2).
  */
 export function cashBalanceCents(flows: CashFlows): number {
@@ -31,6 +34,7 @@ export function cashBalanceCents(flows: CashFlows): number {
     'contributionsCents',
     'capitalWithdrawalsCents',
     'purchasesPaidCents',
+    'supplierPaymentsCents',
     'expensesPaidCents',
     'drawsCents',
   ];
@@ -42,6 +46,7 @@ export function cashBalanceCents(flows: CashFlows): number {
     flows.contributionsCents -
     flows.capitalWithdrawalsCents -
     flows.purchasesPaidCents -
+    flows.supplierPaymentsCents -
     flows.expensesPaidCents -
     flows.drawsCents +
     flows.cashAdjustmentsCents
@@ -66,6 +71,8 @@ export interface ReceivableInvoice extends SaleAmounts {
   paymentsCents: readonly number[];
   /** Written off as a bad debt: its unrecovered capital was booked as a loss (S5). */
   writtenOff?: boolean;
+  /** Cash handed back against what the invoice was overpaid by (a return's refund, RT3). */
+  refundedCents?: number;
 }
 
 /**
@@ -81,7 +88,10 @@ export function receivablesPosition(invoices: readonly ReceivableInvoice[]): {
   for (const invoice of invoices) {
     // A written-off invoice's capital was booked as a loss; money paid beyond it is still credit.
     if (!invoice.writtenOff) unrecovered += unrecoveredCapitalCents(invoice, invoice.paymentsCents);
-    credits += Math.max(0, -amountDueCents(invoice.totalCents, invoice.paymentsCents));
+    credits += Math.max(
+      0,
+      -amountDueCents(invoice.totalCents, invoice.paymentsCents) - (invoice.refundedCents ?? 0),
+    );
   }
   return { unrecoveredCapitalCents: unrecovered, customerCreditsCents: credits };
 }
@@ -102,6 +112,11 @@ export interface IntegrityState {
   unsettledNetProfitCents: number;
   /** receivablesPosition: money held for customers who overpaid (I1). */
   customerCreditsCents: number;
+  /**
+   * What the shop owes its suppliers (SP1): purchases not paid in full less later payments. Signed:
+   * a supplier paid beyond what was owed holds an advance, which nets against the debts.
+   */
+  supplierPayablesCents: number;
 }
 
 export type IntegrityLineKey =
@@ -111,7 +126,8 @@ export type IntegrityLineKey =
   | 'capital'
   | 'partner_balances'
   | 'unsettled_net_profit'
-  | 'customer_credits';
+  | 'customer_credits'
+  | 'supplier_payables';
 
 export interface IntegrityLine {
   /** holdings: what the shop has; claims: whose it is. */
@@ -133,7 +149,7 @@ export interface IntegrityResult {
 /**
  * The integrity check (SPEC §9, T13): cash + stock at cost + capital still in customers' debts
  * must equal capital (retained profit included) + undrawn partner balances + the unsettled net
- * profit + customer credits, to the cent. It holds while there are no supplier debts.
+ * profit + customer credits + what is owed to suppliers, to the cent (SPEC §9, SP1).
  *
  * It catches records that disagree with each other, such as a roll whose cost no longer matches
  * its purchase, or a record changed inside a settled period. A consistent omission (a sale
@@ -147,6 +163,7 @@ export function checkIntegrity(state: IntegrityState): IntegrityResult {
   assertInteger(state.partnerBalancesCents, 'partnerBalancesCents');
   assertInteger(state.unsettledNetProfitCents, 'unsettledNetProfitCents');
   assertInteger(state.customerCreditsCents, 'customerCreditsCents', 0);
+  assertInteger(state.supplierPayablesCents, 'supplierPayablesCents');
 
   const breakdown: IntegrityLine[] = [
     { side: 'holdings', key: 'cash', cents: state.cashCents },
@@ -156,6 +173,7 @@ export function checkIntegrity(state: IntegrityState): IntegrityResult {
     { side: 'claims', key: 'partner_balances', cents: state.partnerBalancesCents },
     { side: 'claims', key: 'unsettled_net_profit', cents: state.unsettledNetProfitCents },
     { side: 'claims', key: 'customer_credits', cents: state.customerCreditsCents },
+    { side: 'claims', key: 'supplier_payables', cents: state.supplierPayablesCents },
   ];
   const total = (side: IntegrityLine['side']) =>
     breakdown.filter((line) => line.side === side).reduce((sum, line) => sum + line.cents, 0);

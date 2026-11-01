@@ -61,7 +61,10 @@ export class SyncedTable<R extends Base> {
       | 'capitalMoves'
       | 'partnerDraws'
       | 'profitSplitRules'
-      | 'cashAdjustments',
+      | 'cashAdjustments'
+      | 'supplierPayments'
+      | 'zakatReports'
+      | 'photos',
     private readonly entity: SyncEntity,
     private readonly recordSchema: z.ZodType<R>,
   ) {

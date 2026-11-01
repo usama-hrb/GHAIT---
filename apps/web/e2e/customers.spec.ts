@@ -1,6 +1,7 @@
 import { expect, type Page, test } from '@playwright/test';
 import {
   addFabric,
+  addToBill,
   choose,
   connectivity,
   reviewAndSave,
@@ -17,10 +18,9 @@ async function creditSale(
   newCustomer?: { name: string; phone: string },
 ) {
   await page.goto('/pos');
-  await choose(page, 'القماش', 'كتان');
-  await choose(page, 'اللون', 'أحمر');
-  await page.getByLabel('الطول', { exact: true }).fill(meters);
-  await page.getByRole('button', { name: 'أضف إلى الفاتورة' }).click();
+  await addToBill(page, 'كتان', 'أحمر', meters);
+  await page.getByRole('button', { name: /^ادفع/ }).click();
+  await page.getByRole('tab', { name: 'دين أو دفعة جزئية' }).click();
   if (newCustomer) {
     await page.getByRole('button', { name: 'زبون جديد' }).click();
     const dialog = page.getByRole('dialog');
@@ -31,9 +31,8 @@ async function creditSale(
   } else {
     await choose(page, 'الزبون', 'خديجة · 0611223344');
   }
-  await page.getByLabel('دين أو دفعة جزئية').check();
   await page.getByLabel('المدفوع الآن').fill('0');
-  await page.getByRole('button', { name: 'حفظ البيع' }).click();
+  await page.getByRole('button', { name: 'إتمام البيع' }).click();
   await expect(page).toHaveURL(/\/pos\/view\?id=/);
   return new URL(page.url()).searchParams.get('id') ?? '';
 }

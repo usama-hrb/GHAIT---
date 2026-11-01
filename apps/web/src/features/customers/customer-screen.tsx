@@ -6,9 +6,9 @@ import { useSearchParams } from 'next/navigation';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { messages } from '@/i18n';
-import { useLiveQuery, useRepositories, ValidationError } from '@/local-db';
+import { useCanSeeCosts, useLiveQuery, useRepositories, ValidationError } from '@/local-db';
 import { EmptyState, LoadingState, OfflineNotice, VoidDialog } from '@/shared/brand';
-import { DateAr, Money, useMoneyUnit } from '@/shared/format';
+import { DateText, Money, useMoneyUnit } from '@/shared/format';
 import { shopToday } from '@/shared/lib/dates';
 import { whatsAppLink } from '@/shared/lib/whatsapp';
 import { Badge } from '@/shared/ui/badge';
@@ -25,6 +25,8 @@ export function CustomerScreen() {
   const id = useSearchParams().get('id') ?? '';
   const repositories = useRepositories();
   const { unit } = useMoneyUnit();
+  // A cashier takes payments; refunds, applying credit and write-offs are the owner's (RL3).
+  const isCashier = !useCanSeeCosts();
   const [paying, setPaying] = useState(false);
   const [refunding, setRefunding] = useState(false);
   const [writingOff, setWritingOff] = useState<string | null>(null);
@@ -52,6 +54,11 @@ export function CustomerScreen() {
   const today = shopToday();
   const open = new Map(account.openInvoices.map((invoice) => [invoice.saleId, invoice]));
   const collectible = account.openInvoices.filter((invoice) => !invoice.writtenOff);
+  // What goods given back took off each invoice (RT2).
+  const returnedCents = (saleId: string) =>
+    view.returns
+      .filter((given) => given.saleId === saleId && given.voidedAt === null)
+      .reduce((sum, given) => sum + given.creditCents, 0);
   const statement = whatsAppLink(statementText(view, shopName, unit, today), customer.phone);
 
   const applyCredit = () => {
@@ -138,12 +145,12 @@ export function CustomerScreen() {
             {t.shareStatement}
           </a>
         </Button>
-        {account.creditCents > 0 && collectible.length > 0 && (
+        {!isCashier && account.creditCents > 0 && collectible.length > 0 && (
           <Button variant="outline" size="lg" onClick={applyCredit}>
             {t.applyCredit}
           </Button>
         )}
-        {account.creditCents > 0 && (
+        {!isCashier && account.creditCents > 0 && (
           <Button
             variant="outline"
             size="lg"
@@ -184,11 +191,11 @@ export function CustomerScreen() {
                           href={`/pos/view?id=${sale.id}`}
                           className="underline-offset-4 hover:underline"
                         >
-                          <DateAr value={sale.date} />
+                          <DateText value={sale.date} />
                         </Link>
                       </TableCell>
                       <TableCell className="text-end">
-                        <Money cents={sale.totalCents} />
+                        <Money cents={sale.totalCents - returnedCents(sale.id)} />
                       </TableCell>
                       <TableCell className="text-end">
                         {invoice ? <Money cents={invoice.dueCents} tone="debt" /> : '—'}
@@ -197,7 +204,7 @@ export function CustomerScreen() {
                         <InvoiceStatus voided={sale.voidedAt !== null} invoice={invoice} />
                       </TableCell>
                       <TableCell className="text-end">
-                        {invoice && !invoice.writtenOff && (
+                        {!isCashier && invoice && !invoice.writtenOff && (
                           <Button
                             variant="ghost"
                             size="sm"
@@ -237,7 +244,7 @@ export function CustomerScreen() {
                 {view.payments.map((payment) => (
                   <TableRow key={payment.id} className="h-12">
                     <TableCell>
-                      <DateAr value={payment.date} />
+                      <DateText value={payment.date} />
                     </TableCell>
                     <TableCell>{t.kinds[payment.kind]}</TableCell>
                     <TableCell className="max-sm:hidden">{t.methods[payment.method]}</TableCell>

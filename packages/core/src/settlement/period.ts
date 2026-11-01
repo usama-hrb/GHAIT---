@@ -1,5 +1,5 @@
 import { assertInteger } from '../numeric/index.js';
-import { allocatePayment } from '../payments/index.js';
+import { allocatePayment, type SaleAmounts } from '../payments/index.js';
 import type { PeriodResult } from './compute.js';
 import { assertIsoDate } from './split-rule.js';
 
@@ -14,6 +14,20 @@ export interface PeriodSale {
   allocations: readonly { date: string; amountCents: number }[];
   /** The date it was written off as a bad debt (S5), or null. */
   writtenOffOn: string | null;
+  /**
+   * Goods customers gave back (RT1–RT4), in the order they were recorded among the payments:
+   * `after` payments of `allocations` came first. `creditCents` lowers the invoice, `costCents` is
+   * the cost that went back on the roll.
+   */
+  returns?: readonly PeriodReturn[];
+}
+
+export interface PeriodReturn {
+  date: string;
+  creditCents: number;
+  costCents: number;
+  /** How many of the sale's allocations were recorded before this return. */
+  after: number;
 }
 
 /** The records one settlement gathers its amounts from, live ones only. */
@@ -36,6 +50,16 @@ export interface PeriodBounds {
   end: string;
 }
 
+/** The capital payments can recover: min(capital, total) (SPEC §8.2). */
+const collectibleCapital = (sale: SaleAmounts) => Math.min(sale.capitalCents, sale.totalCents);
+
+/** The profit `paidCents` recognises on an invoice, capital first (allocatePayment, summed). */
+const recognizedProfit = (sale: SaleAmounts, paidCents: number) =>
+  Math.min(paidCents, sale.totalCents) - Math.min(paidCents, collectibleCapital(sale));
+
+/** The loss of a below-cost invoice (P3). */
+const belowCostOf = (sale: SaleAmounts) => Math.max(0, sale.capitalCents - sale.totalCents);
+
 /** A YYYY-MM-DD date falls inside the period. */
 export function inPeriod(date: string, bounds: PeriodBounds): boolean {
   return (bounds.after === null || date > bounds.after) && date <= bounds.end;
@@ -57,6 +81,8 @@ function assertBounds(bounds: PeriodBounds): void {
  * - a written-off invoice (S5) loses its unrecovered capital in the write-off's period: its
  *   collectible capital less what payments dated up to the write-off recovered. Capital that
  *   later payments recover is a gain of their period; their profit part is profit as usual;
+ * - returns (RT4): a return changes the invoice's total and capital, so what its payments
+ *   recognise and its below-cost loss change; the difference is booked on the day of the return;
  * - losses: damage at cost, and the negative part of below-cost invoices sold in it (P2, P3);
  * - expenses paid in it (S6), cash over and short of the counts in it (I2).
  * Splitting time into more periods moves amounts between them, never changes their total.
@@ -69,6 +95,7 @@ export function periodResultOf(
   assertBounds(bounds);
   assertInteger(carriedDeficitInCents, 'carriedDeficitInCents', 0);
   let recognizedProfitCents = 0;
+  let returnsEffectCents = 0;
   let recoveredBadDebtCents = 0;
   let badDebtCents = 0;
   let belowCostCents = 0;
@@ -78,22 +105,65 @@ export function periodResultOf(
       belowCostCents += Math.max(0, sale.capitalCents - sale.totalCents);
     }
     const writtenOffOn = sale.writtenOffOn;
+    const returns = sale.returns ?? [];
+    // The invoice as it stands at each step: returns lower its total and its capital (RT4).
+    let current: SaleAmounts = { totalCents: sale.totalCents, capitalCents: sale.capitalCents };
+    let paidCents = 0;
+    let paidByWriteOffCents = 0;
     let recoveredByWriteOff = 0;
     const paidBefore: number[] = [];
-    for (const allocation of sale.allocations) {
+    let nextReturn = 0;
+    const applyReturns = (applied: number) => {
+      for (; nextReturn < returns.length; nextReturn++) {
+        const given = returns[nextReturn];
+        if (!given || given.after > applied) break;
+        assertIsoDate(given.date, 'return date');
+        assertInteger(given.creditCents, 'return creditCents', 0);
+        assertInteger(given.costCents, 'return costCents', 0);
+        const before = current;
+        current = {
+          totalCents: before.totalCents - given.creditCents,
+          capitalCents: before.capitalCents - given.costCents,
+        };
+        assertInteger(current.totalCents, 'total after a return', 0);
+        assertInteger(current.capitalCents, 'capital after a return', 0);
+        // What the payments made so far recognise changes with the invoice, and the below-cost
+        // loss with it: the difference belongs to the day of the return, never to a settled day.
+        if (inPeriod(given.date, bounds)) {
+          returnsEffectCents +=
+            recognizedProfit(current, paidCents) -
+            recognizedProfit(before, paidCents) -
+            (belowCostOf(current) - belowCostOf(before));
+        }
+      }
+    };
+    applyReturns(0);
+    sale.allocations.forEach((allocation, index) => {
       assertIsoDate(allocation.date, 'allocation date');
-      const part = allocatePayment(sale, paidBefore, allocation.amountCents);
+      const part = allocatePayment(current, paidBefore, allocation.amountCents);
       paidBefore.push(allocation.amountCents);
+      paidCents += allocation.amountCents;
       const afterWriteOff = writtenOffOn !== null && allocation.date > writtenOffOn;
-      if (!afterWriteOff) recoveredByWriteOff += part.capitalRecoveredCents;
-      if (!inPeriod(allocation.date, bounds)) continue;
-      recognizedProfitCents += part.profitRecognizedCents;
-      if (afterWriteOff) recoveredBadDebtCents += part.capitalRecoveredCents;
-    }
+      if (!afterWriteOff) {
+        recoveredByWriteOff += part.capitalRecoveredCents;
+        paidByWriteOffCents += allocation.amountCents;
+      }
+      if (inPeriod(allocation.date, bounds)) {
+        recognizedProfitCents += part.profitRecognizedCents;
+        if (afterWriteOff) recoveredBadDebtCents += part.capitalRecoveredCents;
+      }
+      applyReturns(index + 1);
+    });
+    applyReturns(Number.POSITIVE_INFINITY);
     if (writtenOffOn !== null) {
       assertIsoDate(writtenOffOn, 'write-off date');
       if (inPeriod(writtenOffOn, bounds)) {
-        badDebtCents += Math.min(sale.capitalCents, sale.totalCents) - recoveredByWriteOff;
+        // A return before the write-off changed what the earlier payments recovered.
+        const recovered =
+          returns.length > 0
+            ? Math.min(paidByWriteOffCents, collectibleCapital(current))
+            : recoveredByWriteOff;
+        badDebtCents += collectibleCapital(current) - recovered;
       }
     }
   }
@@ -120,6 +190,7 @@ export function periodResultOf(
 
   return {
     recognizedProfitCents,
+    returnsEffectCents,
     recoveredBadDebtCents,
     losses: { damageCents, badDebtCents, belowCostCents },
     expensesCents,

@@ -48,6 +48,7 @@ Equal thirds apply from `2000-01-01` (`DEFAULT_SPLIT_RULE`). Entered rules start
 ## Consequences
 
 - Approving needs a connection; everything else on the screen works offline (preview, history, split rules, which sync as a mutable entity).
+- A zakat report (BUILD_PROMPTS 5.1) is the one dated entity left out on purpose: a snapshot, not a record of the books (accounting-assumptions Z10); its payments are draws, which are locked.
 - A new dated entity must be listed in `periodDatesOf`, or give its handler a `periodDates`; otherwise nothing locks it. Tests cover a pushed sale, a sale void, expenses and retained profit on the server, and sales, voids, expenses and stock moves on the device.
 - The lock is enforced in the application, not by database triggers: the dates of a sale void or an expense need lookups and rules (an unpaid expense is in no period) that would duplicate contracts code in SQL.
 - An offline record refused by a lock must be entered again after unlocking: the sync issues screen shows it, but cannot retry it yet.

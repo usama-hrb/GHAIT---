@@ -285,6 +285,7 @@ describe('session and sync engine', () => {
     await otherDb.delete();
   });
 
+  // 450 records through two databases: about a second alone, longer on a busy machine.
   it('a large backlog goes in batches of 200, and pulls page by page (BUILD_PROMPTS 3.6)', async () => {
     const server = fakeServer();
     const session = new Session(store, new ApiClient(store, server.fetchFn));
@@ -306,7 +307,7 @@ describe('session and sync engine', () => {
       server.calls.filter((call) => call === 'GET /api/sync/pull').length,
     ).toBeGreaterThanOrEqual(4);
     await otherDb.delete();
-  });
+  }, 20_000);
 
   it('after the server is restored (a new epoch), pulls everything again from 0', async () => {
     const server = fakeServer();

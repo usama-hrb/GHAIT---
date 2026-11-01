@@ -36,8 +36,11 @@ export const purchase = pgTable(
   },
   (table) => [
     index('purchase_date_idx').on(table.date),
-    // Phase 1: no supplier debts (SPEC §9); 5.3 lifts this with supplier payables.
-    check('purchase_paid_in_full', sql`${table.paidCents} = ${table.totalCostCents}`),
+    // Paid in full, or part paid with the rest owed to the supplier (SP1).
+    check(
+      'purchase_paid_valid',
+      sql`${table.paidCents} >= 0 AND ${table.paidCents} <= ${table.totalCostCents}`,
+    ),
   ],
 );
 

@@ -35,6 +35,7 @@ describe('the integrity check from the records (SPEC §9, BUILD_PROMPTS 4.4)', (
       partnerBalancesCents: -2000,
       unsettledNetProfitCents: 2520,
       customerCreditsCents: 0,
+      supplierPayablesCents: 0,
     });
     expect(integrityReportOf(shop.records)).toMatchObject({ ok: true, diffCents: 0 });
 
@@ -54,6 +55,7 @@ describe('the integrity check from the records (SPEC §9, BUILD_PROMPTS 4.4)', (
       { side: 'claims', key: 'partner_balances', cents: -320 },
       { side: 'claims', key: 'unsettled_net_profit', cents: 0 },
       { side: 'claims', key: 'customer_credits', cents: 0 },
+      { side: 'claims', key: 'supplier_payables', cents: 0 },
     ]);
   });
 

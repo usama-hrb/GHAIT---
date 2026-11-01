@@ -205,6 +205,7 @@ describe('the integrity check, cash counts and the audit log (BUILD_PROMPTS 4.4)
       { side: 'claims', key: 'partner_balances', cents: -320 },
       { side: 'claims', key: 'unsettled_net_profit', cents: 0 },
       { side: 'claims', key: 'customer_credits', cents: 0 },
+      { side: 'claims', key: 'supplier_payables', cents: 0 },
     ]);
   });
 

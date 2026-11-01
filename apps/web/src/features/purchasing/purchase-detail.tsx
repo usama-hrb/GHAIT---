@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { messages } from '@/i18n';
 import { useLiveQuery, useRepositories } from '@/local-db';
 import { EmptyState, LoadingState, OfflineNotice } from '@/shared/brand';
-import { DateAr, Kilograms, Meters, Money } from '@/shared/format';
+import { DateText, Kilograms, Meters, Money } from '@/shared/format';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
@@ -60,7 +60,7 @@ export function PurchaseDetailScreen() {
         <div className="flex justify-between gap-2">
           <dt className="text-muted-foreground">{t.fields.date}</dt>
           <dd>
-            <DateAr value={purchase.date} format="long" />
+            <DateText value={purchase.date} format="long" />
           </dd>
         </div>
         <div className="flex justify-between gap-2">
@@ -95,6 +95,22 @@ export function PurchaseDetailScreen() {
             <Money cents={purchase.paidCents} />
           </dd>
         </div>
+        {purchase.paidCents < purchase.totalCostCents && (
+          <div className="flex justify-between gap-2">
+            <dt className="text-muted-foreground">{t.owed}</dt>
+            <dd>
+              <Money cents={purchase.totalCostCents - purchase.paidCents} tone="debt" />
+              {purchase.supplierId && (
+                <Link
+                  href={`/payables/view?id=${purchase.supplierId}`}
+                  className="ms-2 text-sm underline-offset-4 hover:underline"
+                >
+                  {messages.payables.title}
+                </Link>
+              )}
+            </dd>
+          </div>
+        )}
       </dl>
       {purchase.notes && <p className="text-muted-foreground">{purchase.notes}</p>}
 

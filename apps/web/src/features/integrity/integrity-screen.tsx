@@ -8,7 +8,7 @@ import { toast } from 'sonner';
 import { messages } from '@/i18n';
 import { useLiveQuery, useRepositories } from '@/local-db';
 import { LoadingState, OfflineNotice, VoidDialog } from '@/shared/brand';
-import { DateAr, Money } from '@/shared/format';
+import { DateText, Money } from '@/shared/format';
 import { Alert, AlertDescription, AlertTitle } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
@@ -148,7 +148,7 @@ export function IntegrityScreen() {
                     className={count.voidedAt ? 'text-muted-foreground line-through' : undefined}
                   >
                     <TableCell>
-                      <DateAr value={count.date} />
+                      <DateText value={count.date} />
                     </TableCell>
                     <TableCell className="text-end">
                       <Money cents={count.countedCents} />
@@ -211,7 +211,7 @@ export function IntegrityScreen() {
                 {data.recent.map((event) => (
                   <TableRow key={`${event.entity}-${event.id}`}>
                     <TableCell>
-                      <DateAr value={event.at} format="dateTime" />
+                      <DateText value={event.at} format="dateTime" />
                     </TableCell>
                     <TableCell>
                       {event.href ? (
@@ -231,7 +231,7 @@ export function IntegrityScreen() {
                       )}
                     </TableCell>
                     <TableCell className="max-sm:hidden">
-                      <DateAr value={event.date} />
+                      <DateText value={event.date} />
                     </TableCell>
                     <TableCell className="text-end">
                       {event.amountCents === null ? '—' : <Money cents={event.amountCents} />}

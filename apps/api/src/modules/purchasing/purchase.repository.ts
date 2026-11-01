@@ -70,6 +70,16 @@ export class PurchaseRepository {
     return rows.map(purchaseOf);
   }
 
+  /** Every purchase of a supplier, oldest first (their account, SP1). */
+  async listBySupplier(supplierId: string): Promise<SyncedRow<Purchase>[]> {
+    const rows = await this.tx.db
+      .select()
+      .from(schema.purchase)
+      .where(eq(schema.purchase.supplierId, supplierId))
+      .orderBy(asc(schema.purchase.date), asc(schema.purchase.serverSeq));
+    return rows.map(purchaseOf);
+  }
+
   /** Newest first. */
   async list(limit: number): Promise<SyncedRow<Purchase>[]> {
     const rows = await this.tx.db

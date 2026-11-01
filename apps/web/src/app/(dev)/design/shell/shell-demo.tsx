@@ -7,6 +7,7 @@ import { designMessages as t } from '@/i18n/ar.design';
 import { shopNavigation } from '@/app/navigation';
 import { AppShell, ConnectivityStatus, EmptyState } from '@/shared/brand';
 import { Money } from '@/shared/format';
+import { LanguageToggle } from '@/shared/language';
 import { ThemeToggle } from '@/shared/theme';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card';
@@ -24,14 +25,19 @@ export function ShellDemo() {
 
   return (
     <AppShell
-      nav={shopNavigation}
+      nav={shopNavigation()}
       activeHref="/pos"
       title={t.shellDemo.title}
       onSearch={() => {
         setSearchOpen(true);
       }}
       status={<ConnectivityStatus pendingCount={3} />}
-      actions={<ThemeToggle />}
+      actions={
+        <>
+          <LanguageToggle />
+          <ThemeToggle />
+        </>
+      }
     >
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
@@ -56,7 +62,7 @@ export function ShellDemo() {
         <CommandList>
           <CommandEmpty>{messages.shell.searchEmpty}</CommandEmpty>
           <CommandGroup heading={t.overlays.commandPages}>
-            {shopNavigation.map((item) => (
+            {shopNavigation().map((item) => (
               <CommandItem
                 key={item.href}
                 onSelect={() => {

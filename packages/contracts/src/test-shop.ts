@@ -2,6 +2,7 @@ import { cashBalanceCents } from '@fabric/core';
 import { cashCountFieldsOf, cashFlowsOf } from './cash-counts.js';
 import type { IntegrityRecords } from './integrity.js';
 import type { Roll, StockMove } from './purchasing.js';
+import { buildSaleReturn, type SaleReturn, type SaleReturnRecords } from './returns.js';
 import type { Sale, SaleLine } from './sales.js';
 import { buildSettlement, previewSettlement } from './settlements.js';
 
@@ -47,22 +48,33 @@ export class Shop {
     capitalMoves: [],
     draws: [],
     settlementShares: [],
+    saleReturns: [],
+    supplierPayments: [],
   };
 
-  /** One roll bought (and paid) on `date`. */
-  roll(costCents: number, lengthCm: number, lengthEstimated = false, date = '2026-09-01'): Roll {
+  /**
+   * One roll bought on `date`, paid in full unless `credit` says how much of it is left owing
+   * to `credit.supplierId` (SP1).
+   */
+  roll(
+    costCents: number,
+    lengthCm: number,
+    lengthEstimated = false,
+    date = '2026-09-01',
+    credit?: { supplierId: string; owedCents: number },
+  ): Roll {
     const purchaseId = crypto.randomUUID();
     this.records.purchases.push({
       ...base(date),
       id: purchaseId,
-      supplierId: null,
+      supplierId: credit?.supplierId ?? null,
       date,
       method: lengthEstimated ? 'kg' : 'meter',
       pricePerMeterCents: null,
       weightG: lengthEstimated ? 1000 : null,
       estCmPerKg: lengthEstimated ? lengthCm : null,
       totalCostCents: costCents,
-      paidCents: costCents,
+      paidCents: costCents - (credit?.owedCents ?? 0),
       notes: null,
     });
     const roll: Roll = {
@@ -161,6 +173,79 @@ export class Shop {
     return allocation;
   }
 
+  /** Pays a supplier `amountCents` of what is owed (SP3). */
+  paySupplier(
+    supplierId: string,
+    date: string,
+    amountCents: number,
+    purchaseId: string | null = null,
+  ) {
+    this.records.supplierPayments.push({
+      ...base(date),
+      id: crypto.randomUUID(),
+      supplierId,
+      purchaseId,
+      amountCents,
+      date,
+      method: 'cash',
+      note: null,
+    });
+  }
+
+  /** What a return of this sale is priced and checked against, from the records so far. */
+  returnRecordsOf(sale: Sale): SaleReturnRecords {
+    const lines = this.records.saleLines.filter((line) => line.saleId === sale.id);
+    const earlier = this.records.saleReturns.filter((given) => given.saleId === sale.id);
+    const refundIds = new Set(earlier.map((given) => given.refundId));
+    return {
+      sale,
+      lines,
+      moves: this.records.stockMoves.filter(
+        (move) => move.type === 'sale' && lines.some((line) => line.id === move.refId),
+      ),
+      returns: earlier,
+      allocations: this.records.allocations.filter((allocation) => allocation.saleId === sale.id),
+      refunds: this.records.payments.filter((payment) => refundIds.has(payment.id)),
+      writtenOff: this.records.writeOffs.some((writeOff) => writeOff.saleId === sale.id),
+    };
+  }
+
+  /**
+   * The customer gives back `returnedCm` of the sale's first line (RT1); `refundCents` of what
+   * they had paid is handed back in cash. Built with the same function the app uses.
+   */
+  giveBack(sale: Sale, date: string, returnedCm: number, refundCents = 0): SaleReturn {
+    const records = this.returnRecordsOf(sale);
+    const first = records.lines[0];
+    if (!first) throw new Error('a sale with no line');
+    const built = buildSaleReturn(
+      {
+        saleId: sale.id,
+        date,
+        reason: 'مرتجع',
+        lines: [{ lineId: first.id, returnedCm }],
+        refundCents,
+      },
+      records,
+      {
+        returnId: crypto.randomUUID(),
+        moveIds: [crypto.randomUUID()],
+        refundId: refundCents > 0 ? crypto.randomUUID() : null,
+      },
+      { deviceId: 'desk', now: at(date) },
+    );
+    if (!built.ok) throw new Error(JSON.stringify(built.issues));
+    const { saleReturn, moves, refund } = built.aggregate;
+    const storedReturn = { ...saleReturn, serverSeq: ++seq };
+    this.records.saleReturns.push(storedReturn);
+    for (const move of moves) this.records.stockMoves.push({ ...move, serverSeq: ++seq });
+    if (refund) {
+      const stored = { ...refund, serverSeq: ++seq };
+      this.records.payments.push(stored);
+    }
+    return saleReturn;
+  }
+
   expense(paidDate: string | null, amountCents: number) {
     this.records.expenses.push({
       ...base(paidDate ?? '2026-10-01'),
@@ -195,6 +280,7 @@ export class Shop {
       amountCents,
       date,
       reason: 'مصروف شخصي',
+      zakatReportId: null,
     });
   }
 

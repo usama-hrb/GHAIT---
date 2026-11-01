@@ -4,13 +4,24 @@ import { InventoryModule } from '../inventory/index.js';
 import { ReceivablesModule } from '../receivables/index.js';
 import { SyncModule } from '../sync/index.js';
 import { SalesController } from './sales.controller.js';
-import { SaleLineRepository, SaleRepository, SaleVoidRepository } from './sales.repositories.js';
+import {
+  SaleLineRepository,
+  SaleRepository,
+  SaleReturnRepository,
+  SaleVoidRepository,
+} from './sales.repositories.js';
 import { SalesService } from './sales.service.js';
 
 @Module({
   imports: [SyncModule, AuditModule, InventoryModule, ReceivablesModule],
   controllers: [SalesController],
-  providers: [SalesService, SaleRepository, SaleLineRepository, SaleVoidRepository],
+  providers: [
+    SalesService,
+    SaleRepository,
+    SaleLineRepository,
+    SaleVoidRepository,
+    SaleReturnRepository,
+  ],
   exports: [SalesService],
 })
 export class SalesModule {}

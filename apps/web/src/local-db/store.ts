@@ -1,6 +1,12 @@
-import { lockedThroughOf, periodLockIssues } from '@fabric/contracts';
-import type { ShopDatabase } from './db';
-import { ReadOnlyError, ValidationError } from './errors';
+import {
+  cashierPushIssues,
+  lockedThroughOf,
+  mayPush,
+  periodLockIssues,
+  type Role,
+} from '@fabric/contracts';
+import type { OutboxEntry, ShopDatabase } from './db';
+import { NotAllowedError, ReadOnlyError, ValidationError } from './errors';
 
 const DEVICE_ID = 'deviceId';
 
@@ -12,6 +18,7 @@ export class LocalStore {
   private deviceIdPromise: Promise<string> | undefined;
   private readonly listeners = new Set<() => void>();
   private readOnly = false;
+  private role: Role | null = null;
 
   constructor(
     readonly db: ShopDatabase,
@@ -19,14 +26,35 @@ export class LocalStore {
   ) {
     // Every change goes with an outbox op in the same transaction: refusing the op refuses the
     // change, whichever repository makes it (a partner's account is read-only, BUILD_PROMPTS 4.2).
-    db.outbox.hook('creating', () => {
+    db.outbox.hook('creating', (_key, entry: OutboxEntry) => {
       this.assertWritable();
+      this.assertMayPush(entry);
     });
   }
 
   /** Set by the session from the signed-in user's role. */
   setReadOnly(readOnly: boolean): void {
     this.readOnly = readOnly;
+  }
+
+  /**
+   * The signed-in account's role (SPEC §11, RL3): a partner only reads; a cashier changes only
+   * what a till does (the server refuses the rest anyway, but not after a sale was already made).
+   */
+  setRole(role: Role | null): void {
+    this.role = role;
+    this.readOnly = role === 'partner';
+  }
+
+  /** A change the role may not push is refused before it is saved. */
+  assertMayPush(entry: Pick<OutboxEntry, 'entity' | 'kind' | 'payload'>): void {
+    if (this.role !== 'cashier') return;
+    if (
+      !mayPush('cashier', entry.entity, entry.kind) ||
+      cashierPushIssues(entry.entity, entry.payload).length > 0
+    ) {
+      throw new NotAllowedError();
+    }
   }
 
   /** Every write starts here: a read-only account gets a ReadOnlyError before anything is saved. */

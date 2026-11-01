@@ -48,6 +48,7 @@ const draw = (
   amountCents,
   date: '2026-10-05',
   reason: 'مصروف شخصي',
+  zakatReportId: null,
 });
 
 describe('partners (SPEC §6, §8.4)', () => {
@@ -193,6 +194,7 @@ describe('partners (SPEC §6, §8.4)', () => {
       contributionsCents: 10_000_000,
       capitalWithdrawalsCents: 100_000,
       purchasesPaidCents: 0,
+      supplierPaymentsCents: 0,
       expensesPaidCents: 300_000,
       drawsCents: 20_000,
       cashAdjustmentsCents: 0,

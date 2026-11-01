@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { setLanguage } from '@/i18n';
 import type { SaleView } from '@/local-db';
 import { invoiceText } from './invoice-text';
 
@@ -46,6 +47,8 @@ function view(
       linesTotalCents: 5000,
       discountCents: 0,
       totalCents: 5000,
+      returnedCents: 0,
+      netTotalCents: 5000,
       capitalCents: 4000,
       profitCents: 1000,
       paidCents: 1000,
@@ -55,6 +58,7 @@ function view(
     },
     saleVoid: undefined,
     writeOff: undefined,
+    returns: [],
   };
 }
 
@@ -93,5 +97,33 @@ describe('invoiceText (SPEC §4)', () => {
     expect(text).toContain('الخصم: 5 د');
     expect(text).toContain('الباقي: 0 د');
     expect(text).not.toContain('يُستحق');
+  });
+});
+
+describe('invoiceText in English', () => {
+  it('writes the invoice, its units and its dates in English', () => {
+    setLanguage('en', { persist: false });
+    const text = invoiceText(view({}, '2026-11-30'), 'Ghaith', 'rial');
+    expect(text.split('\n')).toEqual([
+      'Ghaith',
+      'Invoice · 30 October 2026',
+      'Customer: فاطمة',
+      '',
+      '• أحمر: 2.5\u00A0m × 400\u00A0rial = 1,000\u00A0rial',
+      '',
+      'Total: 1,000\u00A0rial',
+      'Paid: 200\u00A0rial',
+      'Remaining: 800\u00A0rial',
+      'Due on 30 November 2026',
+      '',
+      'Thank you for your business',
+    ]);
+  });
+
+  it('shows the amounts in dirham on request', () => {
+    setLanguage('en', { persist: false });
+    const text = invoiceText(view({}), 'Ghaith', 'dirham');
+    expect(text).toContain('Total: 50\u00A0dh');
+    expect(text).toContain('Remaining: 40\u00A0dh');
   });
 });

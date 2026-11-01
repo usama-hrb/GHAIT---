@@ -60,56 +60,54 @@
 :root {
   --radius: 0.5rem;
 
-  --background: #fbf5ec;
-  --foreground: #2b1a17;
+  --background: #f8f7f4;
+  --foreground: #292524;
 
-  --card: #fffdf9;
-  --card-foreground: #2b1a17;
-  --popover: #fffdf9;
-  --popover-foreground: #2b1a17;
+  --card: #ffffff;
+  --card-foreground: #292524;
+  --popover: #ffffff;
+  --popover-foreground: #292524;
 
-  --primary: #491017; /* burgundy */
-  --primary-foreground: #fbf5ec; /* 14.1:1 */
+  --primary: #491017;
+  --primary-foreground: #ffffff;
 
-  --secondary: #f0dbc6; /* cream */
-  --secondary-foreground: #491017; /* 11.4:1 */
+  --secondary: #f0eeea;
+  --secondary-foreground: #491017;
 
-  --muted: #f3e8d8;
-  --muted-foreground: #6e5a50; /* 5.4:1 on muted */
+  --muted: #f3f1ed;
+  --muted-foreground: #78716c;
 
-  --accent: #d8a123; /* gold: fills, highlights, primary CTA of a flow */
-  --accent-foreground: #17140f; /* 7.9:1 */
+  --accent: #f5ead0;
+  --accent-foreground: #684b0c;
 
-  --destructive: #c62828;
-  --destructive-foreground: #ffffff; /* 5.6:1 */
+  --destructive: #b93838;
+  --destructive-foreground: #ffffff;
 
-  --border: #e6d3bd; /* decorative dividers */
-  --input: #9c856d; /* input outlines (>= 3:1) */
-  --ring: #b5800f; /* focus ring: always 2px + 2px offset */
+  --border: #e9e5de;
+  --input: #d6d0c7;
+  --ring: #9a6f10;
 
-  /* Status */
-  --success: #2e7d4f;
+  --success: #347653;
   --success-foreground: #ffffff;
-  --warning: #b45309;
+
+  --warning: #a66b19;
   --warning-foreground: #ffffff;
-  --info: #2b5f8e;
+
+  --info: #52718c;
   --info-foreground: #ffffff;
 
-  /* Business semantics (use these names in feature code, not raw colors) */
   --profit: var(--success);
   --loss: var(--destructive);
   --debt: var(--warning);
   --capital: var(--info);
-  --estimated: var(--gold-800); /* "estimated"/provisional values */
+  --estimated: var(--gold-800);
 
-  /* Charts */
-  --chart-1: #7a222f;
+  --chart-1: #491017;
   --chart-2: #d8a123;
-  --chart-3: #2b5f8e;
-  --chart-4: #2e7d4f;
-  --chart-5: #8c6d5b;
+  --chart-3: #9a7b70;
+  --chart-4: #66836f;
+  --chart-5: #a8a29e;
 
-  /* App shell: sidebar is brand burgundy in both themes */
   --sidebar: #491017;
   --sidebar-foreground: #f0dbc6;
   --sidebar-primary: #d8a123;
@@ -119,63 +117,70 @@
   --sidebar-border: #5f1823;
   --sidebar-ring: #d8a123;
 
-  /* Elevation (warm) */
-  --shadow-sm: 0 1px 2px rgba(73, 16, 23, 0.06);
-  --shadow-md: 0 4px 12px rgba(73, 16, 23, 0.08);
-  --shadow-lg: 0 12px 32px rgba(73, 16, 23, 0.12);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.05);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.08);
+
+
+  --scrollbar-thumb: #c9bfc0;
+  --scrollbar-thumb-hover: #491017;
 }
 
 /* ---------- 3. DARK ---------- */
 .dark {
-  --background: #2a0a0f;
-  --foreground: #f5e6d3;
+  --background: #191718;
+  --foreground: #f5f2ed;
 
-  --card: #3a1119;
-  --card-foreground: #f5e6d3;
-  --popover: #3a1119;
-  --popover-foreground: #f5e6d3;
+  --card: #242021;
+  --card-foreground: #f5f2ed;
+  --popover: #242021;
+  --popover-foreground: #f5f2ed;
 
   --primary: #d8a123;
-  --primary-foreground: #17140f;
+  --primary-foreground: #241b0b;
 
-  --secondary: #4a1b24;
-  --secondary-foreground: #f0dbc6;
+  --secondary: #30292a;
+  --secondary-foreground: #f0e5d5;
 
-  --muted: #3a1119;
-  --muted-foreground: #c9b3a0; /* 8.2:1 */
+  --muted: #2a2526;
+  --muted-foreground: #aaa19a;
 
-  --accent: #d8a123;
-  --accent-foreground: #17140f;
+  --accent: #3b3030;
+  --accent-foreground: #f0d89e;
 
-  --destructive: #ff7b7b;
-  --destructive-foreground: #2a0a0f;
-
-  --border: #5a2a33;
-  --input: #8a5f66;
+  --border: #393233;
+  --input: #504748;
   --ring: #d8a123;
 
-  --success: #5fbf86;
-  --success-foreground: #0f2a1a;
-  --warning: #f0a04b;
-  --warning-foreground: #2a1604;
-  --info: #7fb2e5;
-  --info-foreground: #0b2236;
+  --success: #72ad83;
+  --success-foreground: #15251a;
 
-  --estimated: var(--gold-300);
+  --warning: #e0ad61;
+  --warning-foreground: #291b09;
 
-  --chart-1: #e8b9bf;
-  --chart-2: #d8a123;
-  --chart-3: #7fb2e5;
-  --chart-4: #5fbf86;
-  --chart-5: #c9b3a0;
+  --destructive: #e27676;
+  --destructive-foreground: #2a1111;
 
-  --sidebar: #22070a;
-  --sidebar-border: #3a1119;
+  --info: #86a9c8;
+  --info-foreground: #142536;
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.5);
+  --chart-1: #d8a123;
+  --chart-2: #c58a91;
+  --chart-3: #9a7b70;
+  --chart-4: #72ad83;
+  --chart-5: #aaa19a;
+
+
+  --scrollbar-thumb: #57494a;
+  --scrollbar-thumb-hover: #987078;
 }
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+
 
 /* ---------- 4. Tailwind v4 theme mapping ---------- */
 @theme inline {
@@ -334,3 +339,48 @@
 @utility font-heading {
   font-family: var(--font-heading), var(--font-body), ui-sans-serif, sans-serif;
 }
+
+/* English is set in a Latin family (layout.tsx); Arabic keeps the Arabic ones. */
+html[lang='en'] {
+  --font-body: var(--font-body-en);
+  --font-heading: var(--font-body-en);
+}
+
+/* A device that chose a non-default language: the boot script in the root layout sets lang and dir
+   before the first paint and marks the page pending. It stays hidden until the LanguageProvider
+   has switched the texts (a few blank milliseconds beat a flash of the wrong language). The
+   animation shows the page after 2 s whatever happens, so a failed script never leaves it blank. */
+html[data-lang-pending] body {
+  visibility: hidden;
+  animation: language-reveal 0s linear 2s forwards;
+}
+@keyframes language-reveal {
+  to {
+    visibility: visible;
+  }
+}
+
+/* The shop's sidebar is a light panel with a burgundy active pill and soft hovers (the owner's
+   reference). The panel reads the page's own tokens; the pill keeps the brand's sidebar-accent
+   pair (burgundy and cream), lighter in the dark theme so it stands out from the panel. The brand
+   file's tokens above stay as they are. Put on the SidebarProvider: its root and panel read them. */
+.shop-sidebar {
+  --sidebar: var(--card);
+  --sidebar-foreground: var(--foreground);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
+}
+.dark .shop-sidebar {
+  --sidebar-accent: var(--burgundy-600);
+}
+
+/* A grid that does not name its columns (`grid gap-4`, used to stack blocks) gets one column that may
+   shrink below its content, so a wide table or chart scrolls inside its own box instead of widening
+   the page (longer English texts on a phone did). Any grid-cols-* utility overrides it. */
+@layer base {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+

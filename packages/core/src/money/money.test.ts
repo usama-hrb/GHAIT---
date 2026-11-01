@@ -140,6 +140,10 @@ describe('formatMoney (plain text with unit)', () => {
   ] as const)('%i cents in %s → %j', (cents, unit, text) => {
     expect(formatMoney(cents, unit)).toBe(text);
     expect(formatMoney(cents, unit, 'ar')).toBe(text);
+    // English labels: "rial" and "dh" in place of "ريال" and "د".
+    expect(formatMoney(cents, unit, 'en')).toBe(
+      text.replace('\u00A0ريال', '\u00A0rial').replace('\u00A0د', '\u00A0dh'),
+    );
   });
 
   it('passes format options through', () => {

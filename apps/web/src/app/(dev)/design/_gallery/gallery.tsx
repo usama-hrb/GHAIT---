@@ -3,6 +3,7 @@
 import { designMessages as t } from '@/i18n/ar.design';
 import { DiamondBullet, Logo } from '@/shared/brand';
 import { MoneyUnitProvider, MoneyUnitToggle } from '@/shared/format';
+import { LanguageToggle } from '@/shared/language';
 import { ThemeToggle } from '@/shared/theme';
 import { BrandSection } from './brand-section';
 import { ButtonsSection } from './buttons-section';
@@ -43,6 +44,7 @@ export function Gallery() {
             <p className="font-heading text-lg font-semibold">{t.title}</p>
             <div className="ms-auto flex items-center gap-2">
               <MoneyUnitToggle />
+              <LanguageToggle />
               <ThemeToggle />
             </div>
           </div>

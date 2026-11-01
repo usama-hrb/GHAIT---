@@ -8,11 +8,12 @@ import { toast } from 'sonner';
 import { messages } from '@/i18n';
 import { type Local, useLiveQuery, useRepositories } from '@/local-db';
 import { EmptyState, LoadingState, OfflineNotice, VoidDialog } from '@/shared/brand';
-import { DateAr, Money } from '@/shared/format';
+import { DateText, Money } from '@/shared/format';
 import { shopToday } from '@/shared/lib/dates';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
+import { categoryName } from './category-name';
 import { ExpenseDialog, RecurringDialog } from './expense-dialogs';
 import { ExpenseReminders } from './reminders';
 import { isLockedOn, LockedBadge, useLockedThrough } from '@/features/settlements';
@@ -43,7 +44,10 @@ export function ExpensesScreen() {
 
   if (data === undefined) return <LoadingState />;
   const { view, categories, templates } = data;
-  const label = (key: string) => categories.find((category) => category.key === key)?.label ?? key;
+  const label = (key: string) => {
+    const category = categories.find((found) => found.key === key);
+    return category ? categoryName(category) : key;
+  };
 
   return (
     <div className="mx-auto grid w-full max-w-4xl gap-4">
@@ -72,9 +76,13 @@ export function ExpensesScreen() {
             setMonth(previousMonth(month));
           }}
         >
-          <ChevronRightIcon aria-hidden />
+          <ChevronLeftIcon className="rtl:rotate-180" aria-hidden />
         </Button>
-        <DateAr value={`${month}-01`} format="month" className="min-w-32 text-center font-medium" />
+        <DateText
+          value={`${month}-01`}
+          format="month"
+          className="min-w-32 text-center font-medium"
+        />
         <Button
           size="icon"
           variant="outline"
@@ -83,7 +91,7 @@ export function ExpensesScreen() {
             setMonth(nextMonth(month));
           }}
         >
-          <ChevronLeftIcon aria-hidden />
+          <ChevronRightIcon className="rtl:rotate-180" aria-hidden />
         </Button>
       </div>
 
@@ -138,7 +146,7 @@ export function ExpensesScreen() {
               {view.expenses.map((expense) => (
                 <TableRow key={expense.id} className="h-12">
                   <TableCell>
-                    <DateAr value={expense.date} />
+                    <DateText value={expense.date} />
                   </TableCell>
                   <TableCell>{label(expense.category)}</TableCell>
                   <TableCell className="max-sm:hidden text-muted-foreground">
@@ -150,7 +158,7 @@ export function ExpensesScreen() {
                   <TableCell>
                     {expense.paidDate ? (
                       <Badge variant="success">
-                        {t.paidOn} <DateAr value={expense.paidDate} format="short" />
+                        {t.paidOn} <DateText value={expense.paidDate} format="short" />
                       </Badge>
                     ) : (
                       <Badge variant="warning">{t.notPaid}</Badge>

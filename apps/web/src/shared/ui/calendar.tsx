@@ -6,8 +6,9 @@ import { DayPicker, getDefaultClassNames, type DayButton, type Locale } from 're
 
 import { Button, buttonVariants } from '@/shared/ui/button';
 import { ChevronLeftIcon, ChevronRightIcon, ChevronDownIcon } from 'lucide-react';
-import { arMA } from 'react-day-picker/locale';
-import { dir } from '@/i18n';
+import { arMA, enGB } from 'react-day-picker/locale';
+import { useDirection } from '@/shared/ui/direction';
+import { useLanguage } from '@/shared/language';
 
 function Calendar({
   className,
@@ -23,6 +24,9 @@ function Calendar({
   buttonVariant?: React.ComponentProps<typeof Button>['variant'];
 }) {
   const defaultClassNames = getDefaultClassNames();
+  const { language } = useLanguage();
+  const dir = useDirection();
+  const dayLocale = locale ?? (language === 'ar' ? arMA : enGB);
 
   return (
     <DayPicker
@@ -34,10 +38,10 @@ function Calendar({
         className,
       )}
       captionLayout={captionLayout}
-      locale={locale ?? arMA}
+      locale={dayLocale}
       dir={props.dir ?? dir}
       formatters={{
-        formatMonthDropdown: (date) => date.toLocaleString(locale?.code, { month: 'short' }),
+        formatMonthDropdown: (date) => date.toLocaleString(dayLocale.code, { month: 'short' }),
         ...formatters,
       }}
       classNames={{

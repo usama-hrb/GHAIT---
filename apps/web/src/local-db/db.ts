@@ -8,24 +8,28 @@ import type {
   Partner,
   PartnerDraw,
   Payment,
+  Photo,
   PaymentAllocation,
   Purchase,
   RecurringExpense,
   Roll,
   Sale,
   SaleLine,
+  SaleReturn,
   SaleVoid,
   SettlementRecord,
   SettlementShare,
   SplitRule,
   StockMove,
   Supplier,
+  SupplierPayment,
   SyncConflict,
   SyncedSetting,
   SyncOp,
   SyncOpResult,
   Variant,
   WriteOff,
+  ZakatReport,
 } from '@fabric/contracts';
 import { Dexie, type EntityTable } from 'dexie';
 
@@ -67,6 +71,8 @@ export class ShopDatabase extends Dexie {
   payments!: EntityTable<Local<Payment>, 'id'>;
   paymentAllocations!: EntityTable<Local<PaymentAllocation>, 'id'>;
   saleVoids!: EntityTable<Local<SaleVoid>, 'id'>;
+  saleReturns!: EntityTable<Local<SaleReturn>, 'id'>;
+  supplierPayments!: EntityTable<Local<SupplierPayment>, 'id'>;
   writeOffs!: EntityTable<Local<WriteOff>, 'id'>;
   syncConflicts!: EntityTable<Local<SyncConflict>, 'id'>;
   expenses!: EntityTable<Local<Expense>, 'id'>;
@@ -79,6 +85,8 @@ export class ShopDatabase extends Dexie {
   settlementShares!: EntityTable<Local<SettlementShare>, 'id'>;
   lockedCosts!: EntityTable<Local<LockedCost>, 'id'>;
   cashAdjustments!: EntityTable<Local<CashAdjustment>, 'id'>;
+  zakatReports!: EntityTable<Local<ZakatReport>, 'id'>;
+  photos!: EntityTable<Local<Photo>, 'id'>;
   outbox!: EntityTable<OutboxEntry, 'seq'>;
   meta!: EntityTable<MetaEntry, 'key'>;
 
@@ -137,5 +145,14 @@ export class ShopDatabase extends Dexie {
     });
     // v9, BUILD_PROMPTS 4.4: cash counts.
     this.version(9).stores({ cashAdjustments: 'id, date' });
+    // v10, BUILD_PROMPTS 5.1: zakat reports.
+    this.version(10).stores({ zakatReports: 'id, hawlDate' });
+    // v11, BUILD_PROMPTS 5.3: goods given back, and payments to suppliers.
+    this.version(11).stores({
+      saleReturns: 'id, saleId',
+      supplierPayments: 'id, supplierId',
+    });
+    // v12, ADR 0009: the pictures of colours.
+    this.version(12).stores({ photos: 'id, variantId' });
   }
 }

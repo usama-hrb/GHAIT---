@@ -39,7 +39,7 @@ function valuesOf(fabric: Local<Fabric> | undefined): FabricFormValues {
     piecePriceCents: fabric?.piecePriceCents ?? null,
     estCmPerKg: fabric?.estCmPerKg ?? null,
     defaultSupplierId: fabric?.defaultSupplierId ?? null,
-    tags: fabric?.tags.join('، ') ?? '',
+    tags: fabric?.tags.join(messages.forms.listSeparator) ?? '',
     notes: fabric?.notes ?? '',
   };
 }

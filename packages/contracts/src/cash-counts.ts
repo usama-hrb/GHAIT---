@@ -7,6 +7,7 @@ import type { ValidationIssue } from './errors.js';
 import type { Expense } from './expenses.js';
 import type { CapitalMove, PartnerDraw } from './partners.js';
 import type { Purchase } from './purchasing.js';
+import type { SupplierPayment } from './supplier-payments.js';
 
 const cashCountFields = z.object({
   date: isoDateSchema,
@@ -83,6 +84,8 @@ export function cashFlowsOf(records: {
   capitalMoves: readonly CapitalMove[];
   draws: readonly PartnerDraw[];
   cashAdjustments?: readonly CashAdjustment[];
+  /** What was paid to suppliers after the purchases (SP3); none before supplier debts. */
+  supplierPayments?: readonly SupplierPayment[];
 }): CashFlows {
   const live = <T extends { voidedAt: string | null }>(list: readonly T[]) =>
     list.filter((record) => record.voidedAt === null);
@@ -103,6 +106,9 @@ export function cashFlowsOf(records: {
       moves.filter((m) => m.type === 'withdrawal').map((m) => m.amountCents),
     ),
     purchasesPaidCents: sum(live(records.purchases).map((purchase) => purchase.paidCents)),
+    supplierPaymentsCents: sum(
+      live(records.supplierPayments ?? []).map((payment) => payment.amountCents),
+    ),
     expensesPaidCents: sum(
       live(records.expenses)
         .filter((expense) => expense.paidDate !== null)

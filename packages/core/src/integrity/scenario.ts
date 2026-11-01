@@ -1,5 +1,11 @@
 import { allocateLineCost } from '../costing/index.js';
-import { amountDueCents, splitSaleCapitalProfit } from '../payments/index.js';
+import {
+  amountDueCents,
+  overpaymentCents,
+  returnCreditCents,
+  shareOfLineCents,
+  splitSaleCapitalProfit,
+} from '../payments/index.js';
 import { computeSaleLine } from '../pricing/index.js';
 import {
   computeSettlement,
@@ -35,8 +41,18 @@ export type PartnerRole = 'owner' | 'partner';
 
 export type ScenarioEvent =
   | { type: 'contribution'; partner: PartnerRole; amountCents: number }
-  /** One roll, paid in cash (no supplier debts in phase 1). */
-  | { type: 'purchase'; lengthCm: number; costCents: number }
+  /**
+   * One roll. Paid in cash in full, unless `paidCents` is given: then that much (at most the cost
+   * and the cash in the till) is paid and the rest is owed to the supplier (SP1).
+   */
+  | { type: 'purchase'; lengthCm: number; costCents: number; paidCents?: number }
+  /** Pays the suppliers down (SP3), at most what is owed and what the till holds. */
+  | { type: 'supplier_payment'; amountCents: number }
+  /**
+   * A customer gives back part of the sale's cloth (RT1–RT4); `refundCents` of the overpayment it
+   * creates is handed back in cash, the rest stays as the customer's credit.
+   */
+  | { type: 'return'; sale: number; returnedCm: number; refundCents: number }
   /** One line on one roll; paidCents 0 is a credit sale, any amount over the total an overpayment. */
   | { type: 'sale'; roll: number; soldCm: number; pricePerMeterCents: number; paidCents: number }
   | { type: 'payment'; sale: number; amountCents: number }
@@ -62,7 +78,19 @@ export interface Ledger {
     type: 'contribution' | 'retained_profit' | 'withdrawal';
     amountCents: number;
   }[];
-  purchases: { paidCents: number }[];
+  purchases: { totalCents: number; paidCents: number }[];
+  supplierPayments: { amountCents: number; period: number }[];
+  /** Goods given back, in the order recorded (RT1). */
+  returns: {
+    sale: number;
+    returnedCm: number;
+    creditCents: number;
+    costCents: number;
+    refundCents: number;
+    /** How many of the sale's payments were recorded before it. */
+    afterPayments: number;
+    period: number;
+  }[];
   rolls: { purchase: number; costTotalCents: number; lengthCm: number }[];
   sales: { period: number; writtenOff: boolean }[];
   saleLines: {
@@ -99,9 +127,23 @@ function pick<T>(items: readonly T[], index: number): T | undefined {
   return items.length === 0 ? undefined : items[Math.abs(index) % items.length];
 }
 
+/** What a sale's returns put back so far, in length and cost. */
+function returnedOf(ledger: Ledger, sale: number) {
+  const given = ledger.returns.filter((entry) => entry.sale === sale);
+  return {
+    returnedCm: sum(given.map((entry) => entry.returnedCm)),
+    creditCents: sum(given.map((entry) => entry.creditCents)),
+    costCents: sum(given.map((entry) => entry.costCents)),
+    refundCents: sum(given.map((entry) => entry.refundCents)),
+  };
+}
+
+/** The costs a roll still carries: its sales' costs less what customers gave back, and its losses. */
 function rollCosts(ledger: Ledger, roll: number): number[] {
   return [
-    ...ledger.saleLines.filter((line) => line.roll === roll).map((line) => line.lineCostCents),
+    ...ledger.saleLines
+      .filter((line) => line.roll === roll)
+      .map((line) => line.lineCostCents - returnedOf(ledger, line.sale).costCents),
     ...ledger.lossMoves.filter((move) => move.roll === roll).map((move) => move.costCents),
   ];
 }
@@ -109,13 +151,28 @@ function rollCosts(ledger: Ledger, roll: number): number[] {
 function rollRemainingCm(ledger: Ledger, roll: number, lengthCm: number): number {
   return (
     lengthCm -
-    sum(ledger.saleLines.filter((line) => line.roll === roll).map((line) => line.soldCm)) -
+    sum(
+      ledger.saleLines
+        .filter((line) => line.roll === roll)
+        .map((line) => line.soldCm - returnedOf(ledger, line.sale).returnedCm),
+    ) -
     sum(ledger.lossMoves.filter((move) => move.roll === roll).map((move) => move.lengthCm))
   );
 }
 
 function saleSplit(ledger: Ledger, sale: number) {
   return splitSaleCapitalProfit({ lines: ledger.saleLines.filter((line) => line.sale === sale) });
+}
+
+/** The invoice as it stands once its returns are taken off (RT4). */
+function saleNow(ledger: Ledger, sale: number) {
+  const { totalCents, capitalCents } = saleSplit(ledger, sale);
+  const given = returnedOf(ledger, sale);
+  return {
+    totalCents: totalCents - given.creditCents,
+    capitalCents: capitalCents - given.costCents,
+    refundedCents: given.refundCents,
+  };
 }
 
 function salePayments(ledger: Ledger, sale: number) {
@@ -127,10 +184,11 @@ function cashCents(ledger: Ledger): number {
     sum(ledger.capitalMoves.filter((move) => move.type === type).map((move) => move.amountCents));
   return cashBalanceCents({
     customerPaymentsCents: sum(ledger.payments.map((payment) => payment.amountCents)),
-    customerRefundsCents: 0,
+    customerRefundsCents: sum(ledger.returns.map((entry) => entry.refundCents)),
     contributionsCents: moves('contribution'),
     capitalWithdrawalsCents: -moves('withdrawal'),
     purchasesPaidCents: sum(ledger.purchases.map((purchase) => purchase.paidCents)),
+    supplierPaymentsCents: sum(ledger.supplierPayments.map((payment) => payment.amountCents)),
     expensesPaidCents: sum(ledger.expenses.map((expense) => expense.amountCents)),
     drawsCents: sum(ledger.draws.map((draw) => draw.amountCents)),
     cashAdjustmentsCents: sum(ledger.cashAdjustments.map((adjustment) => adjustment.diffCents)),
@@ -158,6 +216,14 @@ export function periodResult(ledger: Ledger, period: number): PeriodResult {
             amountCents: payment.amountCents,
           })),
           writtenOffOn: writtenOffOn.get(index) ?? null,
+          returns: ledger.returns
+            .filter((entry) => entry.sale === index)
+            .map((entry) => ({
+              date: dateOf(entry.period),
+              creditCents: entry.creditCents,
+              costCents: entry.costCents,
+              after: entry.afterPayments,
+            })),
         };
       }),
       losses: ledger.lossMoves.map((move) => ({
@@ -185,7 +251,7 @@ export function periodResult(ledger: Ledger, period: number): PeriodResult {
 export function integrityStateOf(ledger: Ledger): IntegrityState {
   const receivables = receivablesPosition(
     ledger.sales.map((sale, index) => ({
-      ...saleSplit(ledger, index),
+      ...saleNow(ledger, index),
       paymentsCents: salePayments(ledger, index).map((payment) => payment.amountCents),
       writtenOff: sale.writtenOff,
     })),
@@ -213,6 +279,9 @@ export function integrityStateOf(ledger: Ledger): IntegrityState {
     ),
     unsettledNetProfitCents: periodNetProfit(periodResult(ledger, ledger.period)).netProfitCents,
     customerCreditsCents: receivables.customerCreditsCents,
+    supplierPayablesCents:
+      sum(ledger.purchases.map((purchase) => purchase.totalCents - purchase.paidCents)) -
+      sum(ledger.supplierPayments.map((payment) => payment.amountCents)),
   };
 }
 
@@ -225,6 +294,8 @@ export function emptyLedger(ownerBp = 5000): Ledger {
     period: 0,
     capitalMoves: [],
     purchases: [],
+    supplierPayments: [],
+    returns: [],
     rolls: [],
     sales: [],
     saleLines: [],
@@ -262,9 +333,18 @@ export function applyEvent(ledger: Ledger, event: ScenarioEvent): void {
       return;
     }
     case 'purchase': {
-      if (cash < 1) return;
-      const costCents = inRange(event.costCents, cash);
-      ledger.purchases.push({ paidCents: costCents });
+      let costCents: number;
+      let paidCents: number;
+      if (event.paidCents === undefined) {
+        if (cash < 1) return;
+        costCents = inRange(event.costCents, cash);
+        paidCents = costCents;
+      } else {
+        // Bought on credit: only what the till holds can be paid now.
+        costCents = Math.max(1, Math.abs(event.costCents));
+        paidCents = Math.min(Math.abs(event.paidCents), costCents, Math.max(0, cash));
+      }
+      ledger.purchases.push({ totalCents: costCents, paidCents });
       ledger.rolls.push({
         purchase: ledger.purchases.length - 1,
         costTotalCents: costCents,
@@ -307,6 +387,54 @@ export function applyEvent(ledger: Ledger, event: ScenarioEvent): void {
       ledger.payments.push({ sale: chosen[0], amountCents, period });
       return;
     }
+    case 'supplier_payment': {
+      const owed =
+        sum(ledger.purchases.map((purchase) => purchase.totalCents - purchase.paidCents)) -
+        sum(ledger.supplierPayments.map((payment) => payment.amountCents));
+      const room = Math.min(owed, cash);
+      if (room < 1) return;
+      ledger.supplierPayments.push({ amountCents: inRange(event.amountCents, room), period });
+      return;
+    }
+    case 'return': {
+      const open = ledger.saleLines.filter(
+        (line) =>
+          !ledger.sales[line.sale]?.writtenOff &&
+          line.soldCm - returnedOf(ledger, line.sale).returnedCm > 0,
+      );
+      const line = pick(open, event.sale);
+      if (!line) return;
+      const given = returnedOf(ledger, line.sale);
+      const returnedCm = inRange(event.returnedCm, line.soldCm - given.returnedCm);
+      const creditCents = returnCreditCents({
+        lines: [
+          {
+            soldCm: line.soldCm,
+            lineTotalCents: line.lineTotalCents,
+            returnedCm: given.returnedCm,
+            returningCm: returnedCm,
+          },
+        ],
+        discountCents: 0,
+      });
+      const costCents =
+        shareOfLineCents(line.lineCostCents, line.soldCm, given.returnedCm + returnedCm) -
+        shareOfLineCents(line.lineCostCents, line.soldCm, given.returnedCm);
+      // Cash handed back never exceeds the overpayment the return creates, nor what the till holds.
+      const paid = sum(salePayments(ledger, line.sale).map((payment) => payment.amountCents));
+      const total = saleNow(ledger, line.sale).totalCents - creditCents;
+      const room = Math.min(overpaymentCents(total, paid, given.refundCents), Math.max(0, cash));
+      ledger.returns.push({
+        sale: line.sale,
+        returnedCm,
+        creditCents,
+        costCents,
+        refundCents: Math.min(Math.abs(event.refundCents), room),
+        afterPayments: salePayments(ledger, line.sale).length,
+        period,
+      });
+      return;
+    }
     case 'expense': {
       if (cash < 1) return;
       ledger.expenses.push({ amountCents: inRange(event.amountCents, cash), period });
@@ -328,7 +456,7 @@ export function applyEvent(ledger: Ledger, event: ScenarioEvent): void {
     case 'write_off': {
       const owing = [...ledger.sales.entries()].filter(([index, sale]) => {
         const paid = salePayments(ledger, index).map((payment) => payment.amountCents);
-        return !sale.writtenOff && amountDueCents(saleSplit(ledger, index).totalCents, paid) > 0;
+        return !sale.writtenOff && amountDueCents(saleNow(ledger, index).totalCents, paid) > 0;
       });
       const chosen = pick(owing, event.sale);
       if (!chosen) return;

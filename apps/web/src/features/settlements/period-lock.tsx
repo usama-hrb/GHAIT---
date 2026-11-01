@@ -5,7 +5,7 @@ import { LockIcon } from 'lucide-react';
 import Link from 'next/link';
 import { messages } from '@/i18n';
 import { useLiveQuery, useRepositories } from '@/local-db';
-import { DateAr } from '@/shared/format';
+import { DateText } from '@/shared/format';
 import { Badge } from '@/shared/ui/badge';
 
 const t = messages.periodLock;
@@ -43,7 +43,7 @@ export function PeriodLockHint({
   return (
     <p className="flex flex-wrap items-center gap-1 text-sm text-muted-foreground" role="note">
       <LockIcon aria-hidden className="size-3.5" />
-      {t.settledThrough} <DateAr value={lockedThrough} />.{' '}
+      {t.settledThrough} <DateText value={lockedThrough} />.{' '}
       <Link href="/settlements" className="text-primary underline-offset-4 hover:underline">
         {t.unlockThere}
       </Link>

@@ -15,6 +15,12 @@ export interface SettlementInput {
   /** Σ profitRecognizedCents of the payments dated in the period (allocatePayment, SPEC §8.2). */
   recognizedProfitCents: number;
   /**
+   * What returns changed in the period (RT4): the profit their invoices' payments recognise, less
+   * the below-cost loss, after the goods came back. Signed: reversing profit lowers the result, a
+   * kept-goods invoice that is now fully paid can raise it.
+   */
+  returnsEffectCents: number;
+  /**
    * Capital recovered in the period by payments on written-off invoices (S5): written off as a
    * loss before, so a gain now.
    */
@@ -45,6 +51,7 @@ export interface SettlementInput {
 /** One line of the settlement's breakdown; the UI labels each key through i18n. */
 export type SettlementLineKey =
   | 'recognized_profit'
+  | 'returns_effect'
   | 'bad_debt_recovered'
   | 'loss_damage'
   | 'loss_bad_debt'
@@ -72,6 +79,7 @@ export interface Settlement {
   periodStart: string;
   periodEnd: string;
   recognizedProfitCents: number;
+  returnsEffectCents: number;
   recoveredBadDebtCents: number;
   /** damage + bad debts + below cost. */
   lossesCents: number;
@@ -98,6 +106,7 @@ export interface Settlement {
 export type PeriodResult = Pick<
   SettlementInput,
   | 'recognizedProfitCents'
+  | 'returnsEffectCents'
   | 'recoveredBadDebtCents'
   | 'losses'
   | 'expensesCents'
@@ -106,7 +115,7 @@ export type PeriodResult = Pick<
 >;
 
 /**
- * SPEC §8.1: net = recognized profit + recovered bad debts − losses − paid expenses ± cash
+ * SPEC §8.1: net = recognized profit ± returns + recovered bad debts − losses − paid expenses ± cash
  * over/short − carried deficit (may be negative). For the open period so far, this is the
  * integrity check's unsettled net profit (§9).
  */
@@ -116,6 +125,7 @@ export function periodNetProfit(result: PeriodResult): {
 } {
   const { losses } = result;
   assertInteger(result.recognizedProfitCents, 'recognizedProfitCents', 0);
+  assertInteger(result.returnsEffectCents, 'returnsEffectCents');
   assertInteger(result.recoveredBadDebtCents, 'recoveredBadDebtCents', 0);
   assertInteger(losses.damageCents, 'damageCents', 0);
   assertInteger(losses.badDebtCents, 'badDebtCents', 0);
@@ -126,6 +136,7 @@ export function periodNetProfit(result: PeriodResult): {
   const lossesCents = losses.damageCents + losses.badDebtCents + losses.belowCostCents;
   const netProfitCents =
     result.recognizedProfitCents +
+    result.returnsEffectCents +
     result.recoveredBadDebtCents -
     lossesCents -
     result.expensesCents +
@@ -178,6 +189,7 @@ export function computeSettlement(input: SettlementInput): Settlement {
   // `0 - x` rather than `-x`: a zero deduction stays +0.
   const breakdown: SettlementLine[] = [
     { key: 'recognized_profit', cents: input.recognizedProfitCents },
+    { key: 'returns_effect', cents: input.returnsEffectCents },
     { key: 'bad_debt_recovered', cents: input.recoveredBadDebtCents },
     { key: 'loss_damage', cents: 0 - losses.damageCents },
     { key: 'loss_bad_debt', cents: 0 - losses.badDebtCents },
@@ -199,6 +211,7 @@ export function computeSettlement(input: SettlementInput): Settlement {
     periodStart,
     periodEnd,
     recognizedProfitCents: input.recognizedProfitCents,
+    returnsEffectCents: input.returnsEffectCents,
     recoveredBadDebtCents: input.recoveredBadDebtCents,
     lossesCents,
     expensesCents: input.expensesCents,

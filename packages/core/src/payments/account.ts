@@ -6,6 +6,8 @@ export interface AccountSale {
   date: string;
   dueDate: string | null;
   totalCents: number;
+  /** What the invoice was lowered by since: the credits of its returns (RT1–RT3). */
+  returnedCents?: number;
   voided: boolean;
   /** Written off as a bad debt (SPEC §4.1, S5): still owed, no longer expected. */
   writtenOff: boolean;
@@ -30,17 +32,39 @@ export interface AccountInvoice {
   dueDate: string | null;
   totalCents: number;
   paidCents: number;
-  /** total − paid; negative when more was applied than the total. */
+  /** total − paid, the total being the invoice's worth after returns; never negative (RT3). */
   dueCents: number;
   writtenOff: boolean;
   /** Its due date has passed and something is still due. */
   overdue: boolean;
 }
 
+/**
+ * Allocations once returns are taken off (RT3): an invoice never holds more than it is worth now
+ * (`worthBySale`: its total less its returns' credits), so what a return leaves paid beyond that
+ * goes back to being the customer's money, and can be refunded or applied elsewhere. The latest
+ * allocations give way first. Allocations to a sale not in the map are left as they are. `allocations`
+ * must be in the order they were applied.
+ */
+export function effectiveAllocations<A extends { saleId: string; amountCents: number }>(
+  allocations: readonly A[],
+  worthBySale: ReadonlyMap<string, number>,
+): A[] {
+  const used = new Map<string, number>();
+  return allocations.map((allocation) => {
+    const worth = worthBySale.get(allocation.saleId);
+    if (worth === undefined) return allocation;
+    const before = used.get(allocation.saleId) ?? 0;
+    const kept = Math.max(0, Math.min(allocation.amountCents, worth - before));
+    used.set(allocation.saleId, before + kept);
+    return kept === allocation.amountCents ? allocation : { ...allocation, amountCents: kept };
+  });
+}
+
 export interface CustomerAccount {
   /**
-   * Σ sales − Σ payments + Σ refunds, voided sales left out (SPEC §13). Positive: the customer
-   * owes the shop; negative: the shop holds money for them. Equals Σ due − credit.
+   * Σ sales (after returns) − Σ payments + Σ refunds, voided sales left out (SPEC §13). Positive:
+   * the customer owes the shop; negative: the shop holds money for them. Equals Σ due − credit.
    */
   balanceCents: number;
   /** What can still be collected: what is due on invoices not written off. */
@@ -72,7 +96,14 @@ export function customerAccount(input: {
   const payments = new Map(input.payments.map((payment) => [payment.paymentId, payment]));
   const appliedBySale = new Map<string, number>();
   const appliedByPayment = new Map<string, number>();
-  for (const allocation of input.allocations) {
+  const worth = new Map<string, number>();
+  for (const sale of input.sales) {
+    assertInteger(sale.totalCents, 'totalCents', 0);
+    assertInteger(sale.returnedCents ?? 0, 'returnedCents', 0);
+    worth.set(sale.saleId, sale.totalCents - (sale.returnedCents ?? 0));
+  }
+  for (const allocation of effectiveAllocations(input.allocations, worth)) {
+    if (allocation.amountCents === 0) continue;
     assertInteger(allocation.amountCents, 'allocation amountCents', 1);
     const payment = payments.get(allocation.paymentId);
     if (payment?.kind !== 'payment') {
@@ -107,17 +138,17 @@ export function customerAccount(input: {
 
   const invoices: AccountInvoice[] = [];
   for (const sale of input.sales) {
-    assertInteger(sale.totalCents, 'totalCents', 0);
     if (sale.voided) continue;
     const paidCents = appliedBySale.get(sale.saleId) ?? 0;
-    balanceCents += sale.totalCents;
+    const totalCents = sale.totalCents - (sale.returnedCents ?? 0);
+    balanceCents += totalCents;
     creditCents -= paidCents;
-    const dueCents = sale.totalCents - paidCents;
+    const dueCents = totalCents - paidCents;
     invoices.push({
       saleId: sale.saleId,
       date: sale.date,
       dueDate: sale.dueDate,
-      totalCents: sale.totalCents,
+      totalCents,
       paidCents,
       dueCents,
       writtenOff: sale.writtenOff,

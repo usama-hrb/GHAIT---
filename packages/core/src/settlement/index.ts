@@ -30,6 +30,7 @@ export {
   inPeriod,
   type PeriodBounds,
   type PeriodRecords,
+  type PeriodReturn,
   periodResultOf,
   type PeriodSale,
 } from './period.js';

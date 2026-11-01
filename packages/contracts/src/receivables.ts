@@ -3,6 +3,7 @@ import {
   applyCredit,
   type CustomerAccount,
   customerAccount,
+  effectiveAllocations,
   type OpenInvoice,
 } from '@fabric/core';
 import { z } from 'zod';
@@ -19,6 +20,7 @@ import {
 } from './customers.js';
 import type { ValidationIssue } from './errors.js';
 import { syncOrder } from './order.js';
+import { returnedCreditCents, type SaleReturn } from './returns.js';
 import type { Sale } from './sales.js';
 
 /** One payment op: the payment (or refund) and how it is applied, in one transaction. */
@@ -72,8 +74,40 @@ export interface CustomerRecords {
   /** Their payments and refunds (with server_seq where known: the order credit is used in). */
   payments: readonly (Payment & { serverSeq?: number | null })[];
   /** How their payments were applied. */
-  allocations: readonly PaymentAllocation[];
+  allocations: readonly (PaymentAllocation & { serverSeq?: number | null })[];
   writeOffs: readonly WriteOff[];
+  /** The goods they gave back (RT1), voided returns included. */
+  returns: readonly SaleReturn[];
+}
+
+/** What each sale is worth now: its total less the credits of its live returns (RT3). */
+export function worthBySaleOf(
+  sales: readonly Sale[],
+  returns: readonly SaleReturn[],
+): Map<string, number> {
+  return new Map(
+    sales.map((sale) => [
+      sale.id,
+      sale.totalCents - returnedCreditCents(returns.filter((given) => given.saleId === sale.id)),
+    ]),
+  );
+}
+
+/**
+ * The allocations in the order they were applied, each capped at what its invoice is worth after
+ * returns: the rest is the customer's money again (@fabric/core effectiveAllocations, RT3).
+ */
+export function effectiveAllocationsOf<
+  A extends PaymentAllocation & { serverSeq?: number | null },
+>(records: {
+  sales: readonly Sale[];
+  returns: readonly SaleReturn[];
+  allocations: readonly A[];
+}): A[] {
+  return effectiveAllocations(
+    [...records.allocations].sort(syncOrder),
+    worthBySaleOf(records.sales, records.returns),
+  );
 }
 
 const issue = (path: (string | number)[], message: string): ValidationIssue => ({
@@ -91,6 +125,9 @@ export function customerAccountOf(records: CustomerRecords, today: string): Cust
       date: sale.date,
       dueDate: sale.dueDate,
       totalCents: sale.totalCents,
+      returnedCents: returnedCreditCents(
+        records.returns.filter((given) => given.saleId === sale.id),
+      ),
       voided: sale.voidedAt !== null,
       writtenOff: writtenOff.has(sale.id),
     })),
@@ -99,7 +136,7 @@ export function customerAccountOf(records: CustomerRecords, today: string): Cust
       kind: payment.kind,
       amountCents: payment.amountCents,
     })),
-    allocations: records.allocations,
+    allocations: [...records.allocations].sort(syncOrder),
     today,
   });
 }
@@ -109,16 +146,19 @@ export function customerAccountOf(records: CustomerRecords, today: string): Cust
  * not depend on an invoice's capital, so it is left at 0 (the parts are derived later, P10).
  */
 function invoicesOf(records: CustomerRecords, include: (sale: Sale) => boolean): OpenInvoice[] {
+  const worth = worthBySaleOf(records.sales, records.returns);
+  const allocations = effectiveAllocationsOf(records);
   return records.sales
     .filter((sale) => sale.voidedAt === null && include(sale))
     .map((sale) => ({
       saleId: sale.id,
       date: sale.date,
-      totalCents: sale.totalCents,
+      totalCents: worth.get(sale.id) ?? sale.totalCents,
       capitalCents: 0,
-      paymentsCents: records.allocations
+      paymentsCents: allocations
         .filter((allocation) => allocation.saleId === sale.id)
-        .map((allocation) => allocation.amountCents),
+        .map((allocation) => allocation.amountCents)
+        .filter((amount) => amount > 0),
     }));
 }
 
@@ -225,6 +265,7 @@ export function buildCreditApplication(
   const live = new Set(
     records.sales.filter((sale) => sale.voidedAt === null).map((sale) => sale.id),
   );
+  const allocations = effectiveAllocationsOf(records);
   const sources = records.payments
     .filter((payment) => payment.kind === 'payment')
     .sort(syncOrder)
@@ -234,7 +275,7 @@ export function buildCreditApplication(
       date: String(index).padStart(6, '0'),
       unappliedCents:
         payment.amountCents -
-        records.allocations
+        allocations
           .filter(
             (allocation) => allocation.paymentId === payment.id && live.has(allocation.saleId),
           )

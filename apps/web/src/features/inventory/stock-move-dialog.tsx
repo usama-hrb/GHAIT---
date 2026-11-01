@@ -25,10 +25,15 @@ const t = messages.inventory;
 
 export type StockAction = 'loss' | 'adjustment' | 'length_correction';
 
-const TITLES: Record<StockAction, { title: string; description: string }> = {
-  loss: { title: t.dialogs.lossTitle, description: t.dialogs.lossDescription },
-  adjustment: { title: t.dialogs.adjustmentTitle, description: t.dialogs.adjustmentDescription },
-  length_correction: { title: t.dialogs.measureTitle, description: t.dialogs.measureDescription },
+const titleOf = (action: StockAction): { title: string; description: string } => {
+  switch (action) {
+    case 'loss':
+      return { title: t.dialogs.lossTitle, description: t.dialogs.lossDescription };
+    case 'adjustment':
+      return { title: t.dialogs.adjustmentTitle, description: t.dialogs.adjustmentDescription };
+    case 'length_correction':
+      return { title: t.dialogs.measureTitle, description: t.dialogs.measureDescription };
+  }
 };
 
 /**
@@ -122,8 +127,8 @@ export function StockMoveDialog({
           }}
         >
           <DialogHeader>
-            <DialogTitle>{TITLES[action].title}</DialogTitle>
-            <DialogDescription>{TITLES[action].description}</DialogDescription>
+            <DialogTitle>{titleOf(action).title}</DialogTitle>
+            <DialogDescription>{titleOf(action).description}</DialogDescription>
           </DialogHeader>
           <FieldGroup>
             <Field data-invalid={errors[lengthField] || tooLong ? true : undefined}>

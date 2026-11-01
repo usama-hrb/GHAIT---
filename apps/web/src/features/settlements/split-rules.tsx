@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { messages } from '@/i18n';
 import { type SplitRuleRow, useLiveQuery, useRepositories, ValidationError } from '@/local-db';
 import { VoidDialog } from '@/shared/brand';
-import { DateAr } from '@/shared/format';
+import { DateText } from '@/shared/format';
 import { shopToday } from '@/shared/lib/dates';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
@@ -177,7 +177,7 @@ export function SplitRules() {
             {(rows ?? []).map((row) => (
               <TableRow key={row.rule?.id ?? 'default'}>
                 <TableCell>
-                  {row.rule ? <DateAr value={row.effectiveFrom} /> : t.defaultRule}
+                  {row.rule ? <DateText value={row.effectiveFrom} /> : t.defaultRule}
                 </TableCell>
                 {(
                   [

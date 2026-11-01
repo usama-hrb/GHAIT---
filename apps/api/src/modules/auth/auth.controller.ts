@@ -14,7 +14,7 @@ import type { CookieOptions, Request, Response } from 'express';
 import { ZodBody, ZodResponse } from '../../common/index.js';
 import { APP_CONFIG, type AppConfig } from '../../config/index.js';
 import { AuditExempt } from '../audit/index.js';
-import { type AuthenticatedUser, CurrentUser, Public } from './auth.decorators.js';
+import { type AuthenticatedUser, CurrentUser, Public, CashierMayCall } from './auth.decorators.js';
 import { AuthService, type IssuedTokens } from './auth.service.js';
 
 /**
@@ -83,6 +83,7 @@ export class AuthController {
   }
 
   @ApiBearerAuth()
+  @CashierMayCall()
   @Get('me')
   @ZodResponse(authUserSchema)
   me(@CurrentUser() user: AuthenticatedUser): Promise<AuthUser> {

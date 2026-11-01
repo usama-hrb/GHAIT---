@@ -5,21 +5,20 @@ import { messages } from '@/i18n';
 import { cn } from '@/shared/lib/utils';
 import { useMoneyUnit } from './money-unit';
 
-const OPTIONS: { unit: MoneyUnit; label: string }[] = [
-  { unit: 'rial', label: messages.units.rial },
-  { unit: 'dirham', label: messages.units.dirhamFull },
-];
-
 /** Quick rial ⇄ dirham switch for every amount on screen (SPEC §0.2). */
 export function MoneyUnitToggle({ className }: { className?: string }) {
   const { unit, setUnit } = useMoneyUnit();
+  const options: { unit: MoneyUnit; label: string }[] = [
+    { unit: 'rial', label: messages.units.rial },
+    { unit: 'dirham', label: messages.units.dirhamFull },
+  ];
   return (
     <div
       role="radiogroup"
       aria-label={messages.money.unitLabel}
       className={cn('inline-flex rounded-lg border border-input p-0.5', className)}
     >
-      {OPTIONS.map((option) => (
+      {options.map((option) => (
         <button
           key={option.unit}
           type="button"

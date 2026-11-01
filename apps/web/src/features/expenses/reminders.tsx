@@ -4,7 +4,7 @@ import { BellIcon } from 'lucide-react';
 import { useState } from 'react';
 import { messages } from '@/i18n';
 import { type ReminderView, useLiveQuery, useRepositories } from '@/local-db';
-import { DateAr, Money } from '@/shared/format';
+import { DateText, Money } from '@/shared/format';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { FromTemplateDialog } from './expense-dialogs';
@@ -43,7 +43,7 @@ export function ExpenseReminders({ showEmpty = false }: { showEmpty?: boolean })
               className="flex flex-wrap items-center gap-2"
             >
               <span className="font-medium">{reminder.template.name}</span>
-              <DateAr value={reminder.dueDate} className="text-sm text-muted-foreground" />
+              <DateText value={reminder.dueDate} className="text-sm text-muted-foreground" />
               {reminder.template.amountCents !== null && (
                 <Money cents={reminder.template.amountCents} />
               )}

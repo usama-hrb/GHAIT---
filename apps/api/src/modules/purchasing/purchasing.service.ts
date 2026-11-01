@@ -1,12 +1,20 @@
 import {
   checkPurchaseAggregate,
+  type NewSupplierPayment,
   type Purchase,
   type PurchaseAggregate,
   type PurchaseDetail,
   type StoredPurchase,
+  type StoredSupplierPayment,
+  SERVER_DEVICE_ID,
+  type SupplierPayable,
+  type SupplierPayment,
+  type SupplierStatementDetail,
+  supplierAccountOf,
+  supplierStatementOf,
 } from '@fabric/contracts';
 import { HttpStatus, Injectable, type OnModuleInit } from '@nestjs/common';
-import { AppHttpException } from '../../common/index.js';
+import { AppHttpException, requestContext } from '../../common/index.js';
 import { InventoryService } from '../inventory/index.js';
 import {
   type SyncedRow,
@@ -16,6 +24,7 @@ import {
   SyncService,
 } from '../sync/index.js';
 import { PurchaseRepository } from './purchase.repository.js';
+import { SupplierPaymentRepository } from './supplier-payment.repository.js';
 
 const stored = <R>(row: SyncedRow<R>) => ({ ...row.record, serverSeq: row.serverSeq });
 
@@ -30,6 +39,7 @@ export class PurchasingService implements OnModuleInit {
     private readonly registry: SyncRegistry,
     private readonly sync: SyncService,
     private readonly purchases: PurchaseRepository,
+    private readonly supplierPayments: SupplierPaymentRepository,
     private readonly inventory: InventoryService,
   ) {}
 
@@ -41,6 +51,73 @@ export class PurchasingService implements OnModuleInit {
       append: (aggregate, context) => this.receive(aggregate, context),
     };
     this.registry.register(handler);
+    this.registry.register(this.supplierPayments);
+  }
+
+  /** Who the shop owes, the largest debt first (SP1). */
+  async payables(): Promise<SupplierPayable[]> {
+    const [suppliers, purchases, payments] = await Promise.all([
+      this.sync.readAll('supplier'),
+      this.sync.readAll('purchase'),
+      this.sync.readAll('supplier_payment'),
+    ]);
+    const records = {
+      purchases: purchases.map((row) => row.record),
+      payments: payments.map((row) => row.record),
+    };
+    return suppliers
+      .filter((row) => row.record.voidedAt === null)
+      .map((row) => ({ supplier: stored(row), account: supplierAccountOf(row.record.id, records) }))
+      .filter(({ account }) => account.balanceCents !== 0)
+      .sort((a, b) => b.account.balanceCents - a.account.balanceCents);
+  }
+
+  /** A supplier's account and statement (BUILD_PROMPTS 5.3). */
+  async statement(supplierId: string): Promise<SupplierStatementDetail> {
+    const supplier = await this.sync.find('supplier', supplierId);
+    if (!supplier) {
+      throw new AppHttpException('not_found', `No supplier ${supplierId}`, HttpStatus.NOT_FOUND);
+    }
+    const [purchases, payments] = await Promise.all([
+      this.purchases.listBySupplier(supplierId),
+      this.supplierPayments.listBySupplier(supplierId),
+    ]);
+    const records = {
+      purchases: purchases.map((row) => row.record),
+      payments: payments.map((row) => row.record),
+    };
+    return {
+      supplier: stored(supplier) as SupplierStatementDetail['supplier'],
+      account: supplierAccountOf(supplierId, records),
+      statement: supplierStatementOf(supplierId, records),
+      payments: payments.map(stored),
+    };
+  }
+
+  /** REST: pays a supplier (SP3); refused above what is owed. */
+  async pay(supplierId: string, input: NewSupplierPayment): Promise<SupplierStatementDetail> {
+    const now = new Date().toISOString();
+    const payment: SupplierPayment = {
+      id: crypto.randomUUID(),
+      createdAt: now,
+      updatedAt: now,
+      deviceId: requestContext()?.deviceId ?? SERVER_DEVICE_ID,
+      voidedAt: null,
+      supplierId,
+      purchaseId: input.purchaseId,
+      amountCents: input.amountCents,
+      date: input.date,
+      method: input.method,
+      note: input.note,
+    };
+    await this.sync.saveDirect('supplier_payment', payment);
+    return this.statement(supplierId);
+  }
+
+  async voidPayment(id: string, reason: string): Promise<StoredSupplierPayment> {
+    return stored(
+      await this.sync.voidDirect('supplier_payment', id, reason),
+    ) as StoredSupplierPayment;
   }
 
   /** REST: the same aggregate a device would push (scripts and tools act as a device). */

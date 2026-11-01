@@ -1,15 +1,23 @@
 import {
   amountDueCents,
   computeSaleLine,
+  effectiveAllocations,
   paymentParts,
   type RollLedger,
   type SaleLine as PricedLine,
   type SaleSplit,
+  shareOfLineCents,
   splitSaleCapitalProfit,
 } from '@fabric/core';
 import { z } from 'zod';
 import { recordBaseSchema } from './catalog.js';
-import { amountCentsSchema, idSchema, isoDateSchema, optionalTextSchema } from './common.js';
+import {
+  amountCentsSchema,
+  idSchema,
+  isoDateSchema,
+  optionalTextSchema,
+  SALE_MAX_LINES,
+} from './common.js';
 import {
   type Payment,
   type PaymentAllocation,
@@ -22,9 +30,12 @@ import type { ValidationIssue } from './errors.js';
 import { syncOrder } from './order.js';
 import { rollLedgerOf, type SequencedMove } from './inventory.js';
 import { type Roll, type StockMove, stockMoveSchema } from './purchasing.js';
-
-/** Lines on one invoice: far more than a shop counter needs, small enough for one op. */
-export const SALE_MAX_LINES = 50;
+import {
+  returnedCmByLine,
+  returnedCreditCents,
+  type SaleReturn,
+  storedSaleReturnSchema,
+} from './returns.js';
 
 /** SPEC §13 `sale`. What was paid is derived from its payment allocations (SPEC §4.1). */
 export const saleSchema = recordBaseSchema.extend({
@@ -129,6 +140,7 @@ export const SALE_ISSUES = {
   inconsistent: 'sale_records_inconsistent',
   notCore: 'sale_does_not_match_core',
   alreadyVoided: 'sale_already_voided',
+  hasReturns: 'sale_has_returns',
 } as const;
 
 /** A roll and every move it has so far: what pricing and costing need to know about it. */
@@ -401,6 +413,18 @@ export interface SaleRecords {
   moves: readonly StockMove[];
   /** The payments applied to it. */
   allocations: readonly PaymentAllocation[];
+  /** The goods given back from it (RT1); a sale with returns is not voided (RT7). */
+  returns: readonly SaleReturn[];
+}
+
+/**
+ * Why a sale cannot be voided (RT7): goods already came back from it, so the void's reversals
+ * would put the same length back twice. The rest of its goods can still be returned.
+ */
+export function saleVoidIssues(records: Pick<SaleRecords, 'returns'>): ValidationIssue[] {
+  return records.returns.some((given) => given.voidedAt === null)
+    ? [issue(['saleId'], SALE_ISSUES.hasReturns)]
+    : [];
 }
 
 /**
@@ -471,6 +495,8 @@ export function checkSaleVoid(
 ): ValidationIssue[] {
   if (records.sale.voidedAt !== null)
     return [issue(['saleVoid', 'saleId'], SALE_ISSUES.alreadyVoided)];
+  if (saleVoidIssues(records).length > 0)
+    return [issue(['saleVoid', 'saleId'], SALE_ISSUES.hasReturns)];
   const reversalOf = new Map(aggregate.reversals.map((move) => [move.refId, move.id]));
   const sorted = [...records.moves].sort((a, b) => a.id.localeCompare(b.id));
   const expected = buildSaleVoid(
@@ -497,21 +523,30 @@ export const saleFiguresSchema = z.object({
   lines: z.array(
     z.object({
       lineId: idSchema,
-      /** Null on a voided sale. */
+      /** What the line still carries: its cost less the cost of what came back (RT1). Null on a voided sale. */
       costCents: z.int().nullable(),
+      /** What the kept part of the line earned. */
       profitCents: z.int().nullable(),
       /** The roll's length is still an estimate: the profit may change (SPEC §2.3). */
       provisional: z.boolean(),
+      /** Given back so far. */
+      returnedCm: z.int().default(0),
     }),
   ),
   linesTotalCents: z.int(),
   discountCents: z.int(),
+  /** As sold. */
   totalCents: z.int(),
+  /** What the returns credited so far (RT2). */
+  returnedCents: z.int().default(0),
+  /** The invoice's worth now: total − returned. */
+  netTotalCents: z.int().default(0),
   /** Null on a voided sale. */
   capitalCents: z.int().nullable(),
   profitCents: z.int().nullable(),
+  /** What is applied to the invoice, at most what it is worth now (RT3). */
   paidCents: z.int(),
-  /** Still owed (0 on a voided sale); negative when overpaid. */
+  /** Still owed (0 on a voided sale), never negative. */
   dueCents: z.int(),
   /**
    * Each payment applied to the sale, in order, with the capital it recovered and the profit it
@@ -531,8 +566,8 @@ export const saleFiguresSchema = z.object({
 export type SaleFigures = z.output<typeof saleFiguresSchema>;
 
 /**
- * A sale's figures, derived (P9, P10): each line's cost from its roll's ledger, the invoice's
- * capital and profit, and what was paid and is still due.
+ * A sale's figures, derived (P9, P10): each line's cost from its roll's ledger (net of what was
+ * returned), the invoice's worth, capital and profit now, and what was paid and is still due.
  */
 export function saleFigures(
   sale: Sale,
@@ -540,51 +575,64 @@ export function saleFigures(
   moves: readonly StockMove[],
   ledgers: ReadonlyMap<string, RollLedger>,
   allocations: readonly (PaymentAllocation & { serverSeq?: number | null })[],
+  returns: readonly SaleReturn[] = [],
 ): SaleFigures {
   const voided = sale.voidedAt !== null;
   const moveOfLine = new Map(moves.map((move) => [move.refId, move.id]));
+  const returnedCm = returnedCmByLine(returns);
   const figures = lines.map((line) => {
     const ledger = ledgers.get(line.rollId);
     const moveId = moveOfLine.get(line.id);
     const cost = voided ? undefined : ledger?.costs.find((entry) => entry.id === moveId);
+    const given = returnedCm.get(line.id) ?? 0;
+    const keptCents =
+      line.lineTotalCents - shareOfLineCents(line.lineTotalCents, line.soldCm, given);
     return {
       lineId: line.id,
       costCents: cost?.costCents ?? null,
-      profitCents: cost ? line.lineTotalCents - cost.costCents : null,
+      profitCents: cost ? keptCents - cost.costCents : null,
       provisional: ledger?.lengthEstimated ?? false,
+      returnedCm: given,
     };
   });
   const linesTotalCents = lines.reduce((sum, line) => sum + line.lineTotalCents, 0);
+  const returnedCents = returnedCreditCents(returns);
+  const netTotalCents = sale.totalCents - returnedCents;
   const known = figures.every((line) => line.costCents !== null);
-  const split = known
-    ? splitSaleCapitalProfit({
-        lines: lines.map((line, index) => ({
-          lineTotalCents: line.lineTotalCents,
-          lineCostCents: figures[index]?.costCents ?? 0,
-        })),
-        discountCents: sale.discountCents,
-      })
-    : null;
-  const ordered = [...allocations].sort(syncOrder);
-  const paid = ordered.map((allocation) => allocation.amountCents);
-  const parts = split ? paymentParts(split, paid) : null;
+  const capitalCents = known ? figures.reduce((sum, line) => sum + (line.costCents ?? 0), 0) : null;
+  const ordered = effectiveAllocations(
+    [...allocations].sort(syncOrder),
+    new Map([[sale.id, netTotalCents]]),
+  );
+  const paid = ordered.map((allocation) => allocation.amountCents).filter((amount) => amount > 0);
+  const parts =
+    capitalCents === null ? null : paymentParts({ totalCents: netTotalCents, capitalCents }, paid);
+  let partIndex = 0;
   return {
     lines: figures,
     linesTotalCents,
     discountCents: sale.discountCents,
     totalCents: sale.totalCents,
-    capitalCents: split?.capitalCents ?? null,
-    profitCents: split?.profitCents ?? null,
+    returnedCents,
+    netTotalCents,
+    capitalCents,
+    profitCents: capitalCents === null ? null : netTotalCents - capitalCents,
     paidCents: paid.reduce((sum, amount) => sum + amount, 0),
-    dueCents: voided ? 0 : amountDueCents(sale.totalCents, paid),
-    payments: ordered.map((allocation, index) => ({
-      allocationId: allocation.id,
-      paymentId: allocation.paymentId,
-      date: allocation.date,
-      amountCents: allocation.amountCents,
-      capitalCents: parts?.[index]?.capitalRecoveredCents ?? null,
-      profitCents: parts?.[index]?.profitRecognizedCents ?? null,
-    })),
+    dueCents: voided ? 0 : amountDueCents(netTotalCents, paid),
+    payments: ordered
+      .filter((allocation) => allocation.amountCents > 0)
+      .map((allocation) => {
+        const part = parts?.[partIndex];
+        partIndex += 1;
+        return {
+          allocationId: allocation.id,
+          paymentId: allocation.paymentId,
+          date: allocation.date,
+          amountCents: allocation.amountCents,
+          capitalCents: part?.capitalRecoveredCents ?? null,
+          profitCents: part?.profitRecognizedCents ?? null,
+        };
+      }),
   };
 }
 
@@ -599,6 +647,8 @@ export const saleDetailSchema = z.object({
   allocations: z.array(paymentAllocationSchema.extend(withServerSeq)),
   saleVoid: saleVoidSchema.extend(withServerSeq).nullable(),
   writeOff: writeOffSchema.extend(withServerSeq).nullable(),
+  /** The goods given back from it, oldest first (RT1). */
+  returns: z.array(storedSaleReturnSchema).default([]),
   figures: saleFiguresSchema,
 });
 export type SaleDetail = z.output<typeof saleDetailSchema>;

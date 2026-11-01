@@ -32,8 +32,12 @@ const DAY_MS = 86_400_000;
  */
 const REUSE_GRACE_MS = 30_000;
 
-/** Who may sign in (BUILD_PROMPTS 4.2): the owner, and the partner read-only. */
-const SIGN_IN_ROLES: ReadonlySet<string> = new Set(['owner', 'partner']);
+/**
+ * Who may sign in (BUILD_PROMPTS 4.2, 5.3): the owner; the partner, read-only; a cashier, who
+ * sells and never sees a cost or a profit (what each may reach is decided in the AuthGuard and
+ * the sync hub).
+ */
+const SIGN_IN_ROLES: ReadonlySet<string> = new Set(['owner', 'partner', 'cashier']);
 
 function toAuthUser(user: UserRow): AuthUser {
   return { id: user.id, username: user.username, displayName: user.displayName, role: user.role };
@@ -82,7 +86,7 @@ export class AuthService {
         HttpStatus.FORBIDDEN,
       );
     }
-    actAs(user.id);
+    actAs(user.id, user.role);
     const issued = await this.startSession(user, randomUUID());
     await this.audit.record({
       entity: 'app_user',
@@ -222,24 +226,45 @@ export class AuthService {
    * For the create-partner-user command: a read-only account for the partner (BUILD_PROMPTS
    * 4.2), or a new password for it (signing it out everywhere).
    */
-  async setPartnerUser(input: {
+  setPartnerUser(input: {
     username: string;
     password: string;
     displayName?: string;
   }): Promise<'created' | 'password_reset'> {
+    return this.setRoleUser('partner', 'partner account created from the command line', input);
+  }
+
+  /**
+   * For the create-cashier-user command: an account for a worker at the till (BUILD_PROMPTS 5.3):
+   * it sells and takes payments, and never receives a cost or a profit. A new password signs it
+   * out everywhere.
+   */
+  setCashierUser(input: {
+    username: string;
+    password: string;
+    displayName?: string;
+  }): Promise<'created' | 'password_reset'> {
+    return this.setRoleUser('cashier', 'cashier account created from the command line', input);
+  }
+
+  private async setRoleUser(
+    role: 'partner' | 'cashier',
+    createdReason: string,
+    input: { username: string; password: string; displayName?: string },
+  ): Promise<'created' | 'password_reset'> {
     const username = usernameSchema.parse(input.username);
     const passwordHash = await this.hasher.hash(newPasswordSchema.parse(input.password));
     return this.tx.run(async () => {
       const existing = await this.users.findByUsername(username);
-      if (existing && existing.role !== 'partner') {
-        throw new Error(`${username} is the ${existing.role}'s account, not a partner's`);
+      if (existing && existing.role !== role) {
+        throw new Error(`${username} is the ${existing.role}'s account, not a ${role}'s`);
       }
       if (!existing) {
         const user = await this.users.insert({
           username,
           displayName: input.displayName?.trim() || username,
           passwordHash,
-          role: 'partner',
+          role,
           deviceId: SERVER_DEVICE_ID,
         });
         await this.audit.record({
@@ -248,7 +273,7 @@ export class AuthService {
           action: 'create',
           before: null,
           after: auditView(user),
-          reason: 'partner account created from the command line',
+          reason: createdReason,
         });
         return 'created';
       }

@@ -7,7 +7,7 @@ const SOURCES = {
     src: '/brand/logo-full-on-burgundy.png',
     width: 1600,
     height: 1023,
-    alt: messages.brand.logoAlt,
+    alt: 'logoAlt',
     // The artwork fills ~54% × 34% of the canvas. Show the middle (2:1, ×1.6), which keeps
     // more clear space than a diamond's height around it (DESIGN_SYSTEM.md §2.7).
     frame: '2 / 1',
@@ -17,7 +17,7 @@ const SOURCES = {
     src: '/brand/mark-on-burgundy.png',
     width: 489,
     height: 681,
-    alt: messages.brand.markAlt,
+    alt: 'markAlt',
     frame: '489 / 681',
     fit: 'object-contain',
   },
@@ -47,7 +47,7 @@ export function Logo({
         src={source.src}
         width={source.width}
         height={source.height}
-        alt={source.alt}
+        alt={messages.brand[source.alt]}
         priority={priority}
         // Static brand art: served as-is so it is cacheable offline and needs no image server.
         unoptimized

@@ -1,7 +1,13 @@
 import {
+  cashierPushIssues,
+  mayPush,
+  mayRead,
   periodDatesOf,
   type RecordBase,
+  redactForRole,
+  type Role,
   SERVER_DEVICE_ID,
+  SYNC_BATCH_MAX_BYTES,
   SYNC_ENTITIES,
   type SyncEntity,
   type SyncOp,
@@ -9,6 +15,7 @@ import {
   type SyncPullQuery,
   type SyncRecord,
   type SyncPullResponse,
+  syncWeightOf,
   voidPayloadSchema,
 } from '@fabric/contracts';
 import { HttpStatus, Injectable, type OnModuleInit } from '@nestjs/common';
@@ -110,24 +117,78 @@ export class SyncService implements OnModuleInit {
   }
 
   async pull({ since, limit }: SyncPullQuery): Promise<SyncPullResponse> {
+    // What this account is allowed to receive (SPEC §11, RL1): a cashier is sent no cost, no
+    // profit and no record of the partners' money, because the device keeps a copy of what it gets.
+    const role = this.role();
     // Each entity's next `limit + 1` rows, merged: enough to fill the page and know if more remain.
     const batches = await Promise.all(
-      this.registry.all().map(async (handler) =>
-        (await handler.pull(since, limit + 1)).map((row) => ({
-          entity: handler.entity,
-          serverSeq: row.serverSeq,
-          record: row.record,
-        })),
-      ),
+      this.registry
+        .all()
+        .filter((handler) => mayRead(role, handler.entity))
+        .map(async (handler) =>
+          (await handler.pull(since, limit + 1)).map((row) => ({
+            entity: handler.entity,
+            serverSeq: row.serverSeq,
+            record: row.record,
+          })),
+        ),
     );
     const merged = batches.flat().sort((a, b) => a.serverSeq - b.serverSeq);
-    const changes = merged.slice(0, limit);
+    // A page is cut by size too (a photo is ~100 KB, ADR 0009): it stops before the record that
+    // takes it over the budget, never below one record. A handler that returns heavy records only
+    // returns up to that record, so nothing after it is skipped (PhotoRepository.pull).
+    let weight = 0;
+    const heavy = merged
+      .slice(0, limit)
+      .findIndex(
+        (change) => (weight += syncWeightOf(change.entity, change.record)) > SYNC_BATCH_MAX_BYTES,
+      );
+    const page = merged.slice(0, heavy < 0 ? limit : Math.max(heavy, 1));
+    // The cursor moves past rows that are cut out too, or a device would ask for them forever.
+    const changes = page.flatMap((change) => {
+      const record = redactForRole(role, change.entity, change.record as object);
+      return record === null ? [] : [{ ...change, record }];
+    });
     return {
       changes,
-      nextSince: changes.at(-1)?.serverSeq ?? since,
-      hasMore: merged.length > limit,
+      nextSince: page.at(-1)?.serverSeq ?? since,
+      hasMore: merged.length > page.length,
       epoch: await this.repository.epoch(),
     };
+  }
+
+  /** The signed-in account's role; the owner's when nobody is (the server acting for itself). */
+  private role(): Role {
+    return requestContext()?.actorRole ?? 'owner';
+  }
+
+  /** Whether the account may push this op (SPEC §11, RL3), as the rejection if it may not. */
+  private permission(op: SyncOp): OpOutcome | null {
+    const role = this.role();
+    if (!mayPush(role, op.entity, op.kind)) {
+      return {
+        status: 'rejected',
+        serverSeq: null,
+        error: {
+          code: 'forbidden',
+          message:
+            role === 'partner'
+              ? 'A partner account can read, not change, the shop'
+              : `This account cannot ${op.kind} ${op.entity}`,
+        },
+      };
+    }
+    if (role === 'cashier') {
+      const issues = cashierPushIssues(op.entity, op.payload);
+      if (issues.length > 0) {
+        return {
+          status: 'rejected',
+          serverSeq: null,
+          error: { code: 'forbidden', message: 'A cashier cannot do that', issues },
+        };
+      }
+    }
+    return null;
   }
 
   /**
@@ -150,8 +211,8 @@ export class SyncService implements OnModuleInit {
       entity,
       entityId: record.id,
       action: current ? 'update' : 'create',
-      before: current?.record ?? null,
-      after: written.record,
+      before: current ? this.view(entity, current.record) : null,
+      after: this.view(entity, written.record),
     });
     return written;
   }
@@ -177,8 +238,8 @@ export class SyncService implements OnModuleInit {
       entity,
       entityId: id,
       action: 'void',
-      before: current.record,
-      after: written.record,
+      before: this.view(entity, current.record),
+      after: this.view(entity, written.record),
       reason,
     });
     return written;
@@ -223,6 +284,12 @@ export class SyncService implements OnModuleInit {
     if (dates.length > 0) await guard.assertOpen(dates);
   }
 
+  /** A record as the audit and conflict logs keep it (a handler may leave out what is heavy). */
+  private view(entity: SyncEntity, record: unknown): unknown {
+    const handler = this.registry.get(entity);
+    return handler?.auditView ? handler.auditView(record as never) : record;
+  }
+
   private mutableHandler(entity: SyncEntity): MutableHandler {
     const handler = this.registry.get(entity);
     if (!handler?.find || !handler.write || !handler.markVoided) {
@@ -244,11 +311,16 @@ export class SyncService implements OnModuleInit {
         };
       }
       let outcome: OpOutcome;
-      try {
-        // A savepoint: a failing op leaves the transaction usable to record its rejection.
-        outcome = await this.tx.savepoint(() => this.apply(op));
-      } catch (error) {
-        outcome = this.rejection(error);
+      const refused = this.permission(op);
+      if (refused) {
+        outcome = refused;
+      } else {
+        try {
+          // A savepoint: a failing op leaves the transaction usable to record its rejection.
+          outcome = await this.tx.savepoint(() => this.apply(op));
+        } catch (error) {
+          outcome = this.rejection(error);
+        }
       }
       await this.repository.recordOp(op, outcome, requestContext()?.actorId ?? null);
       return { opId: op.opId, ...outcome };
@@ -402,7 +474,7 @@ export class SyncService implements OnModuleInit {
         entityId: op.entityId,
         action: 'create',
         before: null,
-        after: written.record,
+        after: this.view(op.entity, written.record),
         deviceId: op.deviceId,
       });
       return applied(written.serverSeq);
@@ -415,8 +487,8 @@ export class SyncService implements OnModuleInit {
       await this.repository.recordConflict({
         op,
         winner: 'server',
-        loser: record,
-        winnerRecord: currentRecord,
+        loser: this.view(op.entity, record),
+        winnerRecord: this.view(op.entity, currentRecord),
       });
       return { status: 'conflict', serverSeq: current.serverSeq, error: null };
     }
@@ -425,16 +497,16 @@ export class SyncService implements OnModuleInit {
       await this.repository.recordConflict({
         op,
         winner: 'incoming',
-        loser: currentRecord,
-        winnerRecord: written.record,
+        loser: this.view(op.entity, currentRecord),
+        winnerRecord: this.view(op.entity, written.record),
       });
     }
     await this.audit.record({
       entity: op.entity,
       entityId: op.entityId,
       action: 'update',
-      before: currentRecord,
-      after: written.record,
+      before: this.view(op.entity, currentRecord),
+      after: this.view(op.entity, written.record),
       deviceId: op.deviceId,
     });
     return applied(written.serverSeq);
@@ -459,8 +531,8 @@ export class SyncService implements OnModuleInit {
       entity: op.entity,
       entityId: op.entityId,
       action: 'void',
-      before: current.record,
-      after: written.record,
+      before: this.view(op.entity, current.record),
+      after: this.view(op.entity, written.record),
       reason: payload.data.reason,
       deviceId: op.deviceId,
     });

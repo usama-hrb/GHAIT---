@@ -46,6 +46,7 @@ const empty = (sales: Sale[]): CustomerRecords => ({
   payments: [],
   allocations: [],
   writeOffs: [],
+  returns: [],
 });
 
 /** Records the payment as the device would, and returns the records with it. */

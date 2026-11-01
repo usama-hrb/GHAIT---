@@ -7,15 +7,16 @@ import { useState } from 'react';
 import { toast } from 'sonner';
 import { PaymentDialog } from '@/features/customers';
 import { messages } from '@/i18n';
-import { useLiveQuery, useRepositories, useSession } from '@/local-db';
+import { useCanSeeCosts, useLiveQuery, useRepositories, useSession } from '@/local-db';
 import { EmptyState, LoadingState, OfflineNotice, VoidDialog } from '@/shared/brand';
-import { DateAr, Meters, Money, useMoneyUnit } from '@/shared/format';
+import { DateText, Meters, Money, useMoneyUnit } from '@/shared/format';
 import { shopToday } from '@/shared/lib/dates';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
 import { whatsAppLink } from '@/shared/lib/whatsapp';
 import { invoiceText } from './invoice-text';
+import { ReturnDialog } from './return-dialog';
 import { isLockedOn, PeriodLockHint, useLockedThrough } from '@/features/settlements';
 
 const t = messages.sales;
@@ -26,8 +27,11 @@ export function SaleDetailScreen() {
   const repositories = useRepositories();
   const session = useSession();
   const isOwner = session.user?.role === 'owner';
+  // The partner sees the same numbers as the owner (SPEC §11); a cashier sees no cost or profit.
+  const seesCosts = useCanSeeCosts();
   const { unit } = useMoneyUnit();
   const [voiding, setVoiding] = useState(false);
+  const [returning, setReturning] = useState(false);
   const lockedThrough = useLockedThrough();
   const [paying, setPaying] = useState(false);
   const data = useLiveQuery(async () => {
@@ -78,7 +82,7 @@ export function SaleDetailScreen() {
       </Button>
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="font-heading text-xl font-semibold">{t.detailTitle}</h2>
-        <DateAr value={sale.date} format="long" className="text-muted-foreground" />
+        <DateText value={sale.date} format="long" className="text-muted-foreground" />
         {voided && <Badge variant="destructive">{t.voided}</Badge>}
         {view.writeOff && <Badge variant="outline">{t.writtenOff}</Badge>}
       </div>
@@ -102,7 +106,7 @@ export function SaleDetailScreen() {
               <TableHead className="text-end">{messages.pos.columns.length}</TableHead>
               <TableHead className="text-end max-sm:hidden">{messages.pos.columns.price}</TableHead>
               <TableHead className="text-end">{messages.pos.columns.total}</TableHead>
-              {isOwner && (
+              {seesCosts && (
                 <TableHead className="text-end max-sm:hidden">
                   {messages.pos.columns.profit}
                 </TableHead>
@@ -134,7 +138,7 @@ export function SaleDetailScreen() {
                 <TableCell className="text-end">
                   <Money cents={line.lineTotalCents} />
                 </TableCell>
-                {isOwner && (
+                {seesCosts && (
                   <TableCell className="text-end max-sm:hidden">
                     {lineFigures?.profitCents == null ? (
                       '—'
@@ -167,6 +171,22 @@ export function SaleDetailScreen() {
             <Money cents={figures.totalCents} />
           </dd>
         </div>
+        {figures.returnedCents > 0 && (
+          <>
+            <div className="flex justify-between gap-2">
+              <dt className="text-muted-foreground">{t.returnedValue}</dt>
+              <dd>
+                <Money cents={figures.returnedCents} />
+              </dd>
+            </div>
+            <div className="flex justify-between gap-2">
+              <dt className="text-muted-foreground">{t.netTotal}</dt>
+              <dd className="font-semibold">
+                <Money cents={figures.netTotalCents} />
+              </dd>
+            </div>
+          </>
+        )}
         <div className="flex justify-between gap-2">
           <dt className="text-muted-foreground">{t.paid}</dt>
           <dd>
@@ -186,11 +206,11 @@ export function SaleDetailScreen() {
           <div className="flex justify-between gap-2">
             <dt className="text-muted-foreground">{t.dueDate}</dt>
             <dd>
-              <DateAr value={sale.dueDate} format="long" />
+              <DateText value={sale.dueDate} format="long" />
             </dd>
           </div>
         )}
-        {isOwner && figures.capitalCents !== null && figures.profitCents !== null && (
+        {seesCosts && figures.capitalCents !== null && figures.profitCents !== null && (
           <>
             <div className="flex justify-between gap-2">
               <dt className="text-muted-foreground">{t.cost}</dt>
@@ -220,20 +240,20 @@ export function SaleDetailScreen() {
                 <TableRow>
                   <TableHead>{messages.customers.columns.date}</TableHead>
                   <TableHead className="text-end">{messages.customers.columns.amount}</TableHead>
-                  {isOwner && <TableHead className="text-end">{t.capital}</TableHead>}
-                  {isOwner && <TableHead className="text-end">{t.recognized}</TableHead>}
+                  {seesCosts && <TableHead className="text-end">{t.capital}</TableHead>}
+                  {seesCosts && <TableHead className="text-end">{t.recognized}</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {figures.payments.map((payment) => (
                   <TableRow key={payment.allocationId}>
                     <TableCell>
-                      <DateAr value={payment.date} />
+                      <DateText value={payment.date} />
                     </TableCell>
                     <TableCell className="text-end">
                       <Money cents={payment.amountCents} />
                     </TableCell>
-                    {isOwner && (
+                    {seesCosts && (
                       <TableCell className="text-end">
                         {payment.capitalCents === null ? (
                           '—'
@@ -242,7 +262,7 @@ export function SaleDetailScreen() {
                         )}
                       </TableCell>
                     )}
-                    {isOwner && (
+                    {seesCosts && (
                       <TableCell className="text-end">
                         {payment.profitCents === null ? (
                           '—'
@@ -256,6 +276,30 @@ export function SaleDetailScreen() {
               </TableBody>
             </Table>
           </div>
+        </section>
+      )}
+      {view.returns.length > 0 && (
+        <section aria-label={t.returnsTitle} className="grid gap-2">
+          <h3 className="font-heading font-semibold">{t.returnsTitle}</h3>
+          <ul className="grid gap-2">
+            {view.returns.map((given) => (
+              <li key={given.id} className="rounded-lg border bg-card p-3 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <DateText value={given.date} format="long" />
+                  <Money cents={given.creditCents} />
+                </div>
+                <p className="text-muted-foreground">{given.reason}</p>
+                <p className="text-muted-foreground">
+                  {given.lines
+                    .map((returned) => {
+                      const found = view.lines.find((entry) => entry.line.id === returned.lineId);
+                      return `${found?.fabric?.name ?? ''} ${found?.variant?.colorName ?? ''}`.trim();
+                    })
+                    .join(messages.forms.listSeparator)}
+                </p>
+              </li>
+            ))}
+          </ul>
         </section>
       )}
       {view.writeOff && (
@@ -294,7 +338,27 @@ export function SaleDetailScreen() {
               {messages.customers.recordPayment}
             </Button>
           )}
-          {isLockedOn(sale.date, lockedThrough) ? (
+          {isOwner &&
+            view.writeOff === undefined &&
+            figures.lines.some(
+              (entry) =>
+                entry.returnedCm <
+                (view.lines.find((l) => l.line.id === entry.lineId)?.line.soldCm ?? 0),
+            ) && (
+              <Button
+                type="button"
+                variant="outline"
+                size="lg"
+                onClick={() => {
+                  setReturning(true);
+                }}
+              >
+                {t.returnAction}
+              </Button>
+            )}
+          {view.returns.length > 0 ? (
+            <p className="ms-auto self-center text-sm text-muted-foreground">{t.voidBlocked}</p>
+          ) : isLockedOn(sale.date, lockedThrough) ? (
             <div className="ms-auto">
               <PeriodLockHint date={sale.date} lockedThrough={lockedThrough} />
             </div>
@@ -334,6 +398,7 @@ export function SaleDetailScreen() {
           defaultTarget={sale.id}
         />
       )}
+      <ReturnDialog open={returning} onOpenChange={setReturning} view={view} />
       <VoidDialog
         open={voiding}
         onOpenChange={setVoiding}

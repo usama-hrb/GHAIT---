@@ -63,7 +63,7 @@ fabric-shop/
 │   │   │   #   purchasing.service.spec.ts
 │   │   │   #   index.ts                    # الواجهة العامة الوحيدة
 │   │   └── test/                         # e2e
-│   └── web/                              # Next.js PWA (عربي RTL)
+│   └── web/                              # Next.js PWA (إنجليزي افتراضي + عربي RTL)
 │       └── src/
 │           ├── app/                      # توجيه فقط، صفحات رفيعة
 │           ├── features/                 # نفس أسماء modules
@@ -73,7 +73,7 @@ fabric-shop/
 │           │   └── …
 │           ├── local-db/                 # قاعدة المتصفح + outbox + محرك المزامنة
 │           ├── shared/                   # ui/, hooks/, lib/ (لا يستورد من features)
-│           └── i18n/                     # ar (RTL)
+│           └── i18n/                     # en (الافتراضية) + ar (RTL)
 ├── packages/
 │   ├── core/                             # المنطق المحاسبي النقي (بلا أي اعتماد خارجي)
 │   │   └── src/{money,length,costing,pricing,payments,settlement,integrity,zakat}/
@@ -141,7 +141,7 @@ Read docs/PROJECT_SPEC.md fully. Do NOT write application code yet.
    - Append-only: stock_move, payment, audit_log are never updated or deleted; corrections are compensating records. Use voided_at, never hard delete.
    - Folder rules and dependency directions from section 1.3 of docs/BUILD_PROMPTS.md.
    - Every table has: id (uuid), created_at, updated_at, device_id, voided_at.
-   - UI is Arabic RTL; user-facing strings go through i18n; never hardcode Arabic in components.
+   - UI is English (default, LTR) and Arabic (RTL), chosen per device (ADR 0008); user-facing strings go through i18n, added to both ar.ts and en.ts; never hardcode Arabic or English in components.
    - Definition of done: typecheck + lint + tests pass (make check), feature works offline, and docs updated.
    - Commands: make up, make down, make test, make check, make migrate, make backup.
    - Ask before assuming anything about accounting rules.
@@ -322,7 +322,7 @@ Tests: T3, T4, T12 via UI/API; Playwright for length correction recalculating co
 Slice 4: POS sales per SPEC sections 3 and 4.
 
 Contracts: Sale, SaleLine. API (modules/sales): create sale validates with core computeSaleLine, splits across rolls when needed, writes stock_moves, returns warnings; server rejects below-cost sales unless confirmedBelowCost=true.
-Web feature pos (optimised for speed on desktop and usable on phone):
+Web feature pos (optimised for a touch tablet at the till, usable on desktop and phone; redesigned after the first version: colour tiles, the invoice at the side, an on-screen keypad for lengths, prices and amounts):
   - pick fabric/color → enter length in meters (decimals ok) → app proposes the oldest roll that fits (editable) and splits automatically across rolls if needed.
   - price per meter prefilled with reference price in rial, editable; line shows profit only for the owner; warnings for below min price / below cost with explicit confirmation.
   - cart of multiple lines, optional discount, optional customer (can add quickly), paid now (cash) or credit with optional due date.

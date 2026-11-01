@@ -1,7 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { fromDirham } from '../money/index.js';
-import { type AccountSale, customerAccount } from './account.js';
+import { type AccountSale, customerAccount, effectiveAllocations } from './account.js';
 import {
   allocateCustomerPayment,
   applyCredit,
@@ -225,5 +225,114 @@ describe('customerAccount (SPEC §4.1, §13)', () => {
         },
       ),
     );
+  });
+});
+
+describe('returns on the account (RT3)', () => {
+  const payment = (paymentId: string, amountCents: number) => ({
+    paymentId,
+    kind: 'payment' as const,
+    amountCents,
+  });
+
+  it('effectiveAllocations: an invoice never holds more than it is worth; the latest give way first', () => {
+    const allocations = [
+      { saleId: 'a', amountCents: 50 },
+      { saleId: 'a', amountCents: 50 },
+      { saleId: 'b', amountCents: 10 },
+      { saleId: 'unknown', amountCents: 7 },
+    ];
+    const kept = effectiveAllocations(
+      allocations,
+      new Map([
+        ['a', 70],
+        ['b', 10],
+      ]),
+    );
+    expect(kept.map((entry) => entry.amountCents)).toEqual([50, 20, 10, 7]);
+    // Nothing changes when nothing is over-applied, and the input is left alone.
+    expect(effectiveAllocations(allocations, new Map([['a', 100]]))[1]).toBe(allocations[1]);
+    expect(allocations[1]?.amountCents).toBe(50);
+  });
+
+  it('a return lowers what is owed; what was paid beyond the new worth is credit', () => {
+    // 200 dh paid in full, then 80 dh of it returned.
+    const account = customerAccount({
+      sales: [sale('a', dh(200), { returnedCents: dh(80) })],
+      payments: [payment('p', dh(200))],
+      allocations: [{ paymentId: 'p', saleId: 'a', amountCents: dh(200) }],
+      today: TODAY,
+    });
+    expect(account).toMatchObject({
+      balanceCents: -dh(80),
+      creditCents: dh(80),
+      collectibleCents: 0,
+      openInvoices: [],
+    });
+  });
+
+  it('a credit sale returned in part owes the rest; a refund takes the credit down', () => {
+    const owing = customerAccount({
+      sales: [sale('a', dh(200), { returnedCents: dh(80) })],
+      payments: [payment('p', dh(50))],
+      allocations: [{ paymentId: 'p', saleId: 'a', amountCents: dh(50) }],
+      today: TODAY,
+    });
+    expect(owing).toMatchObject({ balanceCents: dh(70), collectibleCents: dh(70), creditCents: 0 });
+    expect(owing.openInvoices[0]).toMatchObject({
+      totalCents: dh(120),
+      paidCents: dh(50),
+      dueCents: dh(70),
+    });
+
+    const refunded = customerAccount({
+      sales: [sale('a', dh(200), { returnedCents: dh(80) })],
+      payments: [payment('p', dh(200)), { paymentId: 'r', kind: 'refund', amountCents: dh(80) }],
+      allocations: [{ paymentId: 'p', saleId: 'a', amountCents: dh(200) }],
+      today: TODAY,
+    });
+    expect(refunded).toMatchObject({ balanceCents: 0, creditCents: 0 });
+  });
+
+  it('the freed credit can be applied to another invoice without exceeding the payment', () => {
+    const account = customerAccount({
+      sales: [sale('a', dh(200), { returnedCents: dh(80) }), sale('b', dh(100))],
+      payments: [payment('p', dh(200))],
+      allocations: [
+        { paymentId: 'p', saleId: 'a', amountCents: dh(200) },
+        { paymentId: 'p', saleId: 'b', amountCents: dh(80) },
+      ],
+      today: TODAY,
+    });
+    expect(account).toMatchObject({
+      creditCents: 0,
+      collectibleCents: dh(20),
+      balanceCents: dh(20),
+    });
+  });
+
+  it('still refuses a payment applied beyond its amount once returns are counted', () => {
+    expect(() =>
+      customerAccount({
+        sales: [sale('a', dh(200), { returnedCents: dh(10) }), sale('b', dh(100))],
+        payments: [payment('p', dh(100))],
+        allocations: [
+          { paymentId: 'p', saleId: 'a', amountCents: dh(100) },
+          { paymentId: 'p', saleId: 'b', amountCents: dh(50) },
+        ],
+        today: TODAY,
+      }),
+    ).toThrow('applied beyond its amount');
+  });
+
+  it('rejects a negative return', () => {
+    expect(() =>
+      customerAccount({
+        sales: [sale('a', dh(200), { returnedCents: -1 })],
+        payments: [],
+        allocations: [],
+        today: TODAY,
+      }),
+    ).toThrow(RangeError);
   });
 });

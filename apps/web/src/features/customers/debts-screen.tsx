@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { messages } from '@/i18n';
 import { useLiveQuery, useRepositories } from '@/local-db';
 import { EmptyState, LoadingState, OfflineNotice } from '@/shared/brand';
-import { DateAr, Money } from '@/shared/format';
+import { DateText, Money } from '@/shared/format';
 import { daysBetween, shopToday } from '@/shared/lib/dates';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
@@ -78,7 +78,7 @@ export function DebtsScreen() {
                   <TableCell className="text-end">
                     {account.oldestOpenDate && (
                       <span className="grid">
-                        <DateAr value={account.oldestOpenDate} />
+                        <DateText value={account.oldestOpenDate} />
                         <span className="text-xs text-muted-foreground">
                           {t.ageDays(daysBetween(account.oldestOpenDate, today))}
                         </span>

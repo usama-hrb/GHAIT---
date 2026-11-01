@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { messages } from '@/i18n';
 import { useLiveQuery, useRepositories } from '@/local-db';
 import { EmptyState, LoadingState, OfflineNotice, VoidDialog } from '@/shared/brand';
-import { DateAr, Money } from '@/shared/format';
+import { DateText, Money } from '@/shared/format';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
@@ -107,7 +107,7 @@ export function PartnerAccountScreen() {
                     className={move.voidedAt ? 'text-muted-foreground line-through' : undefined}
                   >
                     <TableCell>
-                      <DateAr value={move.date} />
+                      <DateText value={move.date} />
                     </TableCell>
                     <TableCell>{t.types[move.type]}</TableCell>
                     <TableCell className="text-end">
@@ -163,7 +163,7 @@ export function PartnerAccountScreen() {
                     className={draw.voidedAt ? 'text-muted-foreground line-through' : undefined}
                   >
                     <TableCell>
-                      <DateAr value={draw.date} />
+                      <DateText value={draw.date} />
                     </TableCell>
                     <TableCell className="text-end">
                       <Money cents={draw.amountCents} />

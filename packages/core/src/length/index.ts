@@ -11,6 +11,7 @@ export const CM_PER_METER = 100;
 
 export const LENGTH_UNIT_LABELS = {
   ar: { meter: 'م' },
+  en: { meter: 'm' },
 } as const satisfies Record<DisplayLocale, { meter: string }>;
 
 export interface LengthInputOptions {

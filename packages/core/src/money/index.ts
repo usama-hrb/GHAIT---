@@ -11,12 +11,13 @@ import {
  */
 export type MoneyUnit = 'rial' | 'dirham';
 
-/** Locales with unit labels. The app is Arabic-only for now (SPEC §0.4). */
-export type DisplayLocale = 'ar';
+/** Locales with unit labels: the app is shown in English (the default) or Arabic (SPEC §0.4). */
+export type DisplayLocale = 'ar' | 'en';
 
-/** Unit symbols as the shop writes them (SPEC §0.2: "410 ريال (20.5 د)"). */
+/** Unit symbols as the shop writes them (SPEC §0.2: "410 ريال (20.5 د)", "410 rial (20.5 dh)"). */
 export const MONEY_UNIT_LABELS = {
   ar: { rial: 'ريال', dirham: 'د' },
+  en: { rial: 'rial', dirham: 'dh' },
 } as const satisfies Record<DisplayLocale, Record<MoneyUnit, string>>;
 
 /** Keeps a number and its unit on one line. */
@@ -109,7 +110,8 @@ export function formatMoneyAmount(
 
 /**
  * Formats cents with the unit label, as plain text (invoice sharing, messages):
- * formatMoney(2050, 'rial') → "410 ريال", formatMoney(2050, 'dirham') → "20.50 د".
+ * formatMoney(2050, 'rial') → "410 ريال", formatMoney(2050, 'dirham') → "20.50 د"; in English
+ * (`'en'`) "410 rial" and "20.50 dh".
  * The space is a no-break space; a negative amount starts with an LRM (see directionSafeSign).
  * Components render the digits and the label separately (apps/web <Money/>).
  */

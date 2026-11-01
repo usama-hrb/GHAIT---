@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { deviceIdSchema, HEADERS, SERVER_DEVICE_ID } from '@fabric/contracts';
+import { deviceIdSchema, HEADERS, type Role, SERVER_DEVICE_ID } from '@fabric/contracts';
 import { BadRequestException, Injectable, type NestMiddleware } from '@nestjs/common';
 import type { NextFunction, Request, Response } from 'express';
 
@@ -10,6 +10,8 @@ export interface RequestContext {
   readonly reason: string | null;
   /** Set by the auth guard once the access token is verified. */
   actorId: string | null;
+  /** The signed-in account's role (SPEC §11); null on a public route. */
+  actorRole: Role | null;
   readonly request: Request;
 }
 
@@ -64,6 +66,9 @@ export class RequestContextMiddleware implements NestMiddleware {
       next(error);
       return;
     }
-    storage.run({ deviceId: device ?? SERVER_DEVICE_ID, reason, actorId: null, request }, next);
+    storage.run(
+      { deviceId: device ?? SERVER_DEVICE_ID, reason, actorId: null, actorRole: null, request },
+      next,
+    );
   }
 }

@@ -6,6 +6,7 @@ export const GRAMS_PER_KG = 1000;
 
 export const WEIGHT_UNIT_LABELS = {
   ar: { kilogram: 'كغ' },
+  en: { kilogram: 'kg' },
 } as const satisfies Record<DisplayLocale, { kilogram: string }>;
 
 /** Parses kilograms typed by the user into integer grams, to 1 g precision ("20.5" → 20500). */

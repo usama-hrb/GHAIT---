@@ -207,15 +207,17 @@ export class CustomersService implements OnModuleInit {
       this.sales.salesOfCustomer(customerId),
       this.receivables.paymentsOfCustomer(customerId),
     ]);
-    const [allocations, writeOffs] = await Promise.all([
+    const [allocations, writeOffs, returns] = await Promise.all([
       this.receivables.allocationsOfPayments(payments.map((payment) => payment.record.id)),
       this.receivables.writeOffsOfSales(sales.map((sale) => sale.id)),
+      this.sales.returnsOfSales(sales.map((sale) => sale.id)),
     ]);
     return {
       sales,
       payments: payments.map((row) => ({ ...row.record, serverSeq: row.serverSeq })),
-      allocations: allocations.map((row) => row.record),
+      allocations: allocations.map((row) => ({ ...row.record, serverSeq: row.serverSeq })),
       writeOffs: writeOffs.map((row) => row.record),
+      returns,
     };
   }
 

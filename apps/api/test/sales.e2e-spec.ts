@@ -263,6 +263,7 @@ describe('sales (BUILD_PROMPTS 3.4)', () => {
       sale: aggregate.sale,
       moves: aggregate.moves,
       allocations: aggregate.allocation ? [aggregate.allocation] : [],
+      returns: [],
     };
     const voided = buildSaleVoid(
       { reason: 'أرجع الزبون القماش', date: DAY },

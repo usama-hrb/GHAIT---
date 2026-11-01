@@ -5,7 +5,7 @@ import { useEffect, useId, useState } from 'react';
 import { messages } from '@/i18n';
 import { type AuditFilters, type AuditPage, useRepositories } from '@/local-db';
 import { EmptyState, ErrorState, LoadingState, OfflineNotice } from '@/shared/brand';
-import { DateAr } from '@/shared/format';
+import { DateText } from '@/shared/format';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
@@ -33,7 +33,7 @@ function Entry({ entry }: { entry: AuditEntry }) {
         </Badge>
         <span className="font-medium">{entityName(entry.entity)}</span>
         <span className="text-sm text-muted-foreground">
-          {entry.actorName ?? t.system} · <DateAr value={entry.at} format="dateTime" />
+          {entry.actorName ?? t.system} · <DateText value={entry.at} format="dateTime" />
         </span>
       </div>
       {entry.reason && (
@@ -198,7 +198,7 @@ export function AuditScreen() {
           {loaded.page.cached && (
             <Alert>
               <AlertDescription>
-                {t.cached} <DateAr value={loaded.page.fetchedAt} format="dateTime" />
+                {t.cached} <DateText value={loaded.page.fetchedAt} format="dateTime" />
               </AlertDescription>
             </Alert>
           )}

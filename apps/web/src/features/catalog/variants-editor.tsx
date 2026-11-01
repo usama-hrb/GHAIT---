@@ -1,14 +1,15 @@
 'use client';
 
-import type { Variant } from '@fabric/contracts';
+import type { PhotoImage, Variant } from '@fabric/contracts';
 import { PaletteIcon, PencilIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 import { useId, useState } from 'react';
 import { toast } from 'sonner';
 import { messages } from '@/i18n';
 import { type Local, useLiveQuery, useRepositories, ValidationError } from '@/local-db';
-import { EmptyState, LoadingState, VoidDialog } from '@/shared/brand';
+import { EmptyState, LoadingState, ProductPhoto, VoidDialog } from '@/shared/brand';
 import { MeterInput, Meters } from '@/shared/format';
 import { errorsByField } from '@/shared/lib/form-errors';
+import { compressImage, ImageError } from '@/shared/lib/image';
 import { Button } from '@/shared/ui/button';
 import {
   Dialog,
@@ -21,6 +22,7 @@ import {
 } from '@/shared/ui/dialog';
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
+import { PhotoField } from './photo-field';
 
 const t = messages.catalog;
 const DEFAULT_THRESHOLD_CM = 500;
@@ -44,6 +46,34 @@ function ColorDialog({
   );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitted, setSubmitted] = useState(false);
+  // The photo: the colour's own, or a change made here and saved with the colour.
+  const photos = useLiveQuery(() => repositories.photos.sources(), [repositories]);
+  const [picked, setPicked] = useState<PhotoImage | 'removed' | null>(null);
+  const [preparing, setPreparing] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const shown =
+    picked === 'removed'
+      ? undefined
+      : picked
+        ? `data:${picked.contentType};base64,${picked.data}`
+        : variant && photos?.get(variant.id);
+
+  const pickFile = (file: File) => {
+    setPhotoError(null);
+    setPreparing(true);
+    compressImage(file)
+      .then(setPicked)
+      .catch((error: unknown) => {
+        setPhotoError(
+          error instanceof ImageError && error.reason === 'too_large'
+            ? t.photo.tooLarge
+            : t.photo.unreadable,
+        );
+      })
+      .finally(() => {
+        setPreparing(false);
+      });
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -57,7 +87,9 @@ function ColorDialog({
             if (threshold === null) return;
             repositories.variants
               .save({ fabricId, colorName, lowStockThresholdCm: threshold }, variant?.id)
-              .then(() => {
+              .then(async (variantId) => {
+                if (picked === 'removed') await repositories.photos.remove(variantId);
+                else if (picked) await repositories.photos.set(variantId, picked);
                 toast.success(t.colorSaved);
                 onOpenChange(false);
               })
@@ -96,6 +128,19 @@ function ColorDialog({
               />
               <FieldDescription>{t.lowStockHint}</FieldDescription>
             </Field>
+            <Field>
+              <FieldLabel>{t.photo.title}</FieldLabel>
+              <PhotoField
+                src={shown}
+                busy={preparing}
+                error={photoError}
+                onFile={pickFile}
+                onRemove={() => {
+                  setPicked('removed');
+                }}
+              />
+              <FieldDescription>{t.photo.hint}</FieldDescription>
+            </Field>
           </FieldGroup>
           <DialogFooter>
             <DialogClose asChild>
@@ -103,7 +148,10 @@ function ColorDialog({
                 {messages.forms.cancel}
               </Button>
             </DialogClose>
-            <Button type="submit">{messages.forms.save}</Button>
+            {/* Saving waits for the picture to be made small, or the colour would be saved without it. */}
+            <Button type="submit" disabled={preparing}>
+              {messages.forms.save}
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>
@@ -118,6 +166,7 @@ export function VariantsEditor({ fabricId }: { fabricId: string }) {
     () => repositories.variants.listByFabric(fabricId),
     [repositories, fabricId],
   );
+  const photos = useLiveQuery(() => repositories.photos.sources(), [repositories]);
   const [editing, setEditing] = useState<{ variant?: Local<Variant>; key: number } | null>(null);
   const [removing, setRemoving] = useState<Local<Variant> | null>(null);
 
@@ -146,6 +195,7 @@ export function VariantsEditor({ fabricId }: { fabricId: string }) {
         <ul className="divide-y rounded-lg border bg-card">
           {variants.map((variant) => (
             <li key={variant.id} className="flex min-h-12 items-center gap-3 px-4 py-2">
+              <ProductPhoto src={photos?.get(variant.id)} className="size-10 rounded-md" />
               <span className="me-auto font-medium">{variant.colorName}</span>
               <span className="text-sm text-muted-foreground">
                 {t.lowStock} <Meters cm={variant.lowStockThresholdCm} />

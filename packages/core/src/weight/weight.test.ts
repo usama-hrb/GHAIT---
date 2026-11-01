@@ -35,6 +35,7 @@ describe('formatWeight', () => {
 
   it('adds the unit with a no-break space, and can drop grouping', () => {
     expect(formatWeight(20_500)).toBe('20.5 كغ');
+    expect(formatWeight(20_500, 'en')).toBe('20.5\u00A0kg');
     expect(formatWeightKg(1_234_500, { grouping: false })).toBe('1234.5');
   });
 

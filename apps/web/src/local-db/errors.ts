@@ -32,6 +32,15 @@ export class ReadOnlyError extends Error {
   }
 }
 
+/** The account's role may not make this change: a cashier sells, it does not buy (RL3). */
+export class NotAllowedError extends Error {
+  override readonly name = 'NotAllowedError';
+
+  constructor() {
+    super('This account cannot make this change');
+  }
+}
+
 /** The change is dated inside a settled period (BUILD_PROMPTS 4.3): unlock the period first. */
 export function isPeriodLocked(error: unknown): boolean {
   return (

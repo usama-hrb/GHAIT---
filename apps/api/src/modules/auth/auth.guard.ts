@@ -4,6 +4,7 @@ import { AppHttpException } from '../../common/index.js';
 import {
   actAs,
   type AuthenticatedRequest,
+  CASHIER_MAY_CALL,
   IS_PUBLIC,
   PARTNER_MAY_WRITE,
 } from './auth.decorators.js';
@@ -18,8 +19,9 @@ const READS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 /**
  * Global: every route needs a valid access token unless it is @Public(). Roles (SPEC §11,
- * BUILD_PROMPTS 4.2): the owner may do everything; a partner may read everything and write
- * nothing (only routes marked @PartnerMayCall()). The cashier role is not let in yet (5.3).
+ * BUILD_PROMPTS 4.2, 5.3): the owner may do everything; a partner may read everything and write
+ * nothing (only routes marked @PartnerMayCall()); a cashier may call only the routes marked
+ * @CashierMayCall(), and what those send it is filtered by role (RL1–RL3).
  */
 @Injectable()
 export class AuthGuard implements CanActivate {
@@ -41,23 +43,23 @@ export class AuthGuard implements CanActivate {
       throw new AppHttpException('unauthorized', 'Missing bearer token', HttpStatus.UNAUTHORIZED);
     }
     const claims = await this.tokens.verifyAccess(token);
+    const flagged = (key: symbol) =>
+      this.reflector.get<boolean | undefined>(key, context.getHandler()) === true;
     const mayCall =
       claims.role === 'owner' ||
-      (claims.role === 'partner' &&
-        (READS.has(request.method) ||
-          this.reflector.get<boolean | undefined>(PARTNER_MAY_WRITE, context.getHandler()) ===
-            true));
+      (claims.role === 'partner' && (READS.has(request.method) || flagged(PARTNER_MAY_WRITE))) ||
+      (claims.role === 'cashier' && flagged(CASHIER_MAY_CALL));
     if (!mayCall) {
       throw new AppHttpException(
         'forbidden',
         claims.role === 'partner'
           ? 'A partner account can read, not change, the shop'
-          : 'Not allowed',
+          : 'This account cannot do that',
         HttpStatus.FORBIDDEN,
       );
     }
     request.user = { id: claims.sub, role: claims.role, sessionId: claims.sid };
-    actAs(claims.sub);
+    actAs(claims.sub, claims.role);
     return true;
   }
 }

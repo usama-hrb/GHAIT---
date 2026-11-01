@@ -1,9 +1,12 @@
 import type { SettingKey } from '@fabric/contracts';
 import { Injectable } from '@nestjs/common';
-import { and, asc, eq, gt, isNull } from 'drizzle-orm';
+import { and, asc, eq, gt, isNull, sql } from 'drizzle-orm';
 import { schema, TransactionHost } from '../../database/index.js';
 
 export type SettingRow = typeof schema.setting.$inferSelect;
+
+/** A value as jsonb: JSON null is a value (a setting set to "none"), not SQL NULL. */
+const jsonValue = (value: unknown) => (value === null ? sql`'null'::jsonb` : value);
 
 @Injectable()
 export class SettingsRepository {
@@ -56,7 +59,10 @@ export class SettingsRepository {
     effectiveFrom: string | null;
     deviceId: string;
   }): Promise<SettingRow> {
-    const [inserted] = await this.tx.db.insert(schema.setting).values(row).returning();
+    const [inserted] = await this.tx.db
+      .insert(schema.setting)
+      .values({ ...row, value: jsonValue(row.value) })
+      .returning();
     if (!inserted) throw new Error('insert returned no row');
     return inserted;
   }
@@ -64,7 +70,7 @@ export class SettingsRepository {
   async updateValue(id: string, value: unknown, deviceId: string): Promise<SettingRow> {
     const [updated] = await this.tx.db
       .update(schema.setting)
-      .set({ value, deviceId, updatedAt: new Date() })
+      .set({ value: jsonValue(value), deviceId, updatedAt: new Date() })
       .where(eq(schema.setting.id, id))
       .returning();
     if (!updated) throw new Error(`no setting row ${id}`);

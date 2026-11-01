@@ -1,5 +1,6 @@
 import type { CustomerAccount } from '@fabric/core';
 import { describe, expect, it } from 'vitest';
+import { setLanguage } from '@/i18n';
 import type { CustomerAccountView } from '@/local-db';
 import { statementText } from './statement-text';
 
@@ -21,6 +22,7 @@ const view = (account: Partial<CustomerAccount>): CustomerAccountView => ({
   payments: [],
   allocations: [],
   writeOffs: [],
+  returns: [],
 });
 
 describe('statementText', () => {
@@ -71,5 +73,48 @@ describe('statementText', () => {
     const text = statementText(view({ creditCents: 500 }), 'غيث', 'dirham', '2026-10-30');
     expect(text).toContain('لا شيء مستحق عليكم.');
     expect(text).toContain('رصيدكم لدينا: 5 د');
+  });
+});
+
+describe('statementText in English', () => {
+  it('lists what is still to collect, in English', () => {
+    setLanguage('en', { persist: false });
+    const text = statementText(
+      view({
+        collectibleCents: 3000,
+        openInvoices: [
+          {
+            saleId: 'a',
+            date: '2026-10-01',
+            dueDate: '2026-11-01',
+            totalCents: 4000,
+            paidCents: 1000,
+            dueCents: 3000,
+            writtenOff: false,
+            overdue: false,
+          },
+        ],
+      }),
+      'Ghaith',
+      'rial',
+      '2026-10-30',
+    );
+    expect(text.split('\n')).toEqual([
+      'Ghaith',
+      'Account statement · فاطمة · 30 October 2026',
+      '',
+      '• Invoice 1 October 2026: Total 800\u00A0rial · Paid 200\u00A0rial · Remaining 600\u00A0rial · Due on 1 November 2026',
+      '',
+      'Total owed: 600\u00A0rial',
+      '',
+      'Thank you for your business',
+    ]);
+  });
+
+  it('says nothing is due, and shows a credit the shop holds', () => {
+    setLanguage('en', { persist: false });
+    const text = statementText(view({ creditCents: 500 }), 'Ghaith', 'dirham', '2026-10-30');
+    expect(text).toContain('Nothing is due from you.');
+    expect(text).toContain('Your credit with us: 5\u00A0dh');
   });
 });

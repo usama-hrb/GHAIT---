@@ -1,20 +1,30 @@
 import {
   buildSaleAggregate,
+  buildSaleReturn,
   buildSaleVoid,
   checkSaleAggregate,
+  checkSaleReturn,
   checkSaleVoid,
   type Customer,
   type Fabric,
   type NewSaleInput,
+  type NewSaleReturnInput,
+  newSaleReturnSchema,
   newSaleSchema,
+  type PricedReturn,
   type PricedSale,
   priceSale,
+  priceSaleReturn,
+  returnedCreditCents,
   type Roll,
   rollLedgerOf,
   type Sale,
   type SaleFigures,
   saleFigures,
   type SaleLine,
+  type SaleReturn,
+  type SaleReturnRecords,
+  saleVoidIssues,
   type SaleVoid,
   type StockMove,
   type Variant,
@@ -63,12 +73,16 @@ export interface SaleView {
   saleVoid: Local<SaleVoid> | undefined;
   /** Written off as a bad debt (SPEC §4.1). */
   writeOff: Local<WriteOff> | undefined;
+  /** The goods given back from it, oldest first (RT1). */
+  returns: Local<SaleReturn>[];
 }
 
 export interface SaleSummary {
   sale: Local<Sale>;
   customerName: string | null;
   lineCount: number;
+  /** The invoice's worth now: its total less what goods given back took off (RT2). */
+  netTotalCents: number;
   dueCents: number;
 }
 
@@ -98,6 +112,33 @@ async function historiesOf(
     if (roll) histories.set(roll.id, { roll, moves: moves.filter((m) => m.rollId === roll.id) });
   }
   return histories;
+}
+
+/** What a return of this sale is priced and checked against, from this device's records. */
+async function returnRecordsOf(db: ShopDatabase, sale: Local<Sale>): Promise<SaleReturnRecords> {
+  const lines = await db.saleLines.where('saleId').equals(sale.id).toArray();
+  const [moves, allocations, returns, writeOffs] = await Promise.all([
+    db.stockMoves
+      .where('refId')
+      .anyOf(lines.map((line) => line.id))
+      .toArray(),
+    db.paymentAllocations.where('saleId').equals(sale.id).toArray(),
+    db.saleReturns.where('saleId').equals(sale.id).toArray(),
+    db.writeOffs.where('saleId').equals(sale.id).toArray(),
+  ]);
+  const refundIds = returns.flatMap((given) => (given.refundId ? [given.refundId] : []));
+  const refunds = (await db.payments.bulkGet(refundIds)).flatMap((payment) =>
+    payment ? [payment] : [],
+  );
+  return {
+    sale,
+    lines,
+    moves: moves.filter((move) => move.type === 'sale'),
+    returns,
+    allocations,
+    refunds,
+    writtenOff: writeOffs.some((writeOff) => writeOff.voidedAt === null),
+  };
 }
 
 /**
@@ -269,6 +310,7 @@ export class SalesRepository {
         db.payments,
         db.paymentAllocations,
         db.saleVoids,
+        db.saleReturns,
         db.settlements,
         db.outbox,
       ],
@@ -288,7 +330,11 @@ export class SalesRepository {
           sale,
           moves,
           allocations: await db.paymentAllocations.where('saleId').equals(saleId).toArray(),
+          returns: await db.saleReturns.where('saleId').equals(saleId).toArray(),
         };
+        // Goods came back from it: the rest is returned instead (RT7).
+        const refused = saleVoidIssues(records);
+        if (refused.length > 0) throw new ValidationError(refused);
         const aggregate = buildSaleVoid(
           { reason: payload.reason, date: shopToday(this.store.now()) },
           records,
@@ -324,6 +370,83 @@ export class SalesRepository {
     this.store.changed();
   }
 
+  /**
+   * The return as it would be saved (RT1–RT3): the credit, the invoice's worth after it and the
+   * most that can be handed back in cash. Issues come back as data for the form to show.
+   */
+  async previewReturn(input: NewSaleReturnInput): Promise<PricedReturn | undefined> {
+    const parsed = parseOrThrow(newSaleReturnSchema, input);
+    const sale = await this.store.db.sales.get(parsed.saleId);
+    if (!sale) return undefined;
+    return priceSaleReturn(parsed, await returnRecordsOf(this.store.db, sale));
+  }
+
+  /**
+   * Records goods a customer gave back (RT1): a `return` stock move per line puts the length on
+   * its roll, the credit lowers the invoice, and cash handed back is a refund payment, with one
+   * outbox op. The server prices it again (checkSaleReturn). Returns the return's id.
+   */
+  async giveBack(input: NewSaleReturnInput): Promise<string> {
+    this.store.assertWritable();
+    const parsed = parseOrThrow(newSaleReturnSchema, input);
+    // A return belongs to the day it is made, never to a settled one (RT4).
+    await this.store.assertPeriodOpen([parsed.date]);
+    const { db } = this.store;
+    const deviceId = await this.store.deviceId();
+    const now = this.store.now().toISOString();
+    const returnId = crypto.randomUUID();
+    await db.transaction(
+      'rw',
+      [
+        db.sales,
+        db.saleLines,
+        db.stockMoves,
+        db.payments,
+        db.paymentAllocations,
+        db.saleReturns,
+        db.writeOffs,
+        db.settlements,
+        db.outbox,
+      ],
+      async () => {
+        const sale = await db.sales.get(parsed.saleId);
+        if (!sale) throw new Error(`No sale ${parsed.saleId}`);
+        const records = await returnRecordsOf(db, sale);
+        const built = buildSaleReturn(
+          parsed,
+          records,
+          {
+            returnId,
+            moveIds: parsed.lines.map(() => crypto.randomUUID()),
+            refundId: parsed.refundCents > 0 ? crypto.randomUUID() : null,
+          },
+          { deviceId, now },
+        );
+        if (!built.ok) throw new ValidationError(built.issues);
+        const { aggregate } = built;
+        const issues = checkSaleReturn(aggregate, records);
+        if (issues.length > 0) throw new ValidationError(issues);
+        await db.saleReturns.put({ ...aggregate.saleReturn, serverSeq: null });
+        await db.stockMoves.bulkPut(aggregate.moves.map((move) => ({ ...move, serverSeq: null })));
+        if (aggregate.refund) await db.payments.put({ ...aggregate.refund, serverSeq: null });
+        await db.outbox.add({
+          opId: crypto.randomUUID(),
+          entity: 'sale_return',
+          entityId: returnId,
+          kind: 'append',
+          payload: aggregate,
+          deviceId,
+          clientTs: now,
+          baseServerSeq: null,
+          state: 'pending',
+          error: null,
+        });
+      },
+    );
+    this.store.changed();
+    return returnId;
+  }
+
   async get(id: string): Promise<SaleView | undefined> {
     const { db } = this.store;
     const sale = await db.sales.get(id);
@@ -334,17 +457,19 @@ export class SalesRepository {
       (a, b) => (a.serverSeq ?? unsynced) - (b.serverSeq ?? unsynced) || a.id.localeCompare(b.id),
     );
     const rollIds = lines.map((line) => line.rollId);
-    const [histories, allocations, saleVoid, customer, moves, writeOff] = await Promise.all([
-      historiesOf(db, rollIds),
-      db.paymentAllocations.where('saleId').equals(id).toArray(),
-      db.saleVoids.where('saleId').equals(id).first(),
-      sale.customerId ? db.customers.get(sale.customerId) : undefined,
-      db.stockMoves
-        .where('refId')
-        .anyOf(lines.map((line) => line.id))
-        .toArray(),
-      db.writeOffs.where('saleId').equals(id).first(),
-    ]);
+    const [histories, allocations, saleVoid, customer, moves, writeOff, returns] =
+      await Promise.all([
+        historiesOf(db, rollIds),
+        db.paymentAllocations.where('saleId').equals(id).toArray(),
+        db.saleVoids.where('saleId').equals(id).first(),
+        sale.customerId ? db.customers.get(sale.customerId) : undefined,
+        db.stockMoves
+          .where('refId')
+          .anyOf(lines.map((line) => line.id))
+          .toArray(),
+        db.writeOffs.where('saleId').equals(id).first(),
+        db.saleReturns.where('saleId').equals(id).toArray(),
+      ]);
     const ledgers = new Map(
       [...histories].map(([rollId, history]) => [
         rollId,
@@ -357,6 +482,7 @@ export class SalesRepository {
       moves.filter((move) => move.type === 'sale'),
       ledgers,
       allocations,
+      returns,
     );
     const variants = await db.variants.bulkGet(
       lines.map((line) => histories.get(line.rollId)?.roll.variantId ?? ''),
@@ -375,31 +501,51 @@ export class SalesRepository {
       figures,
       saleVoid,
       writeOff,
+      returns: returns.sort(
+        (a, b) => (a.serverSeq ?? unsynced) - (b.serverSeq ?? unsynced) || a.id.localeCompare(b.id),
+      ),
     };
+  }
+
+  /** What goods given back on this day credited (RT4): it lowers that day's sales. */
+  async returnedOn(date: string): Promise<number> {
+    const returns = await this.store.db.saleReturns
+      .filter((given) => given.date === date)
+      .toArray();
+    return returnedCreditCents(returns);
   }
 
   /** Newest first, with the customer's name and what is still due. */
   async list(): Promise<SaleSummary[]> {
     const { db } = this.store;
-    const [sales, lines, allocations, customers] = await Promise.all([
+    const [sales, lines, allocations, customers, returns] = await Promise.all([
       db.sales.toArray(),
       db.saleLines.toArray(),
       db.paymentAllocations.toArray(),
       db.customers.toArray(),
+      db.saleReturns.toArray(),
     ]);
     const customerName = new Map(customers.map((customer) => [customer.id, customer.name]));
-    return sales.sort(newest).map((sale) => ({
-      sale,
-      customerName: sale.customerId ? (customerName.get(sale.customerId) ?? null) : null,
-      lineCount: lines.filter((line) => line.saleId === sale.id).length,
-      dueCents:
-        sale.voidedAt === null
-          ? amountDueCents(
-              sale.totalCents,
-              allocations.filter((a) => a.saleId === sale.id).map((a) => a.amountCents),
-            )
-          : 0,
-    }));
+    return sales.sort(newest).map((sale) => {
+      const netTotalCents =
+        sale.totalCents - returnedCreditCents(returns.filter((r) => r.saleId === sale.id));
+      return {
+        sale,
+        customerName: sale.customerId ? (customerName.get(sale.customerId) ?? null) : null,
+        lineCount: lines.filter((line) => line.saleId === sale.id).length,
+        netTotalCents,
+        dueCents:
+          sale.voidedAt === null
+            ? Math.max(
+                0,
+                amountDueCents(
+                  netTotalCents,
+                  allocations.filter((a) => a.saleId === sale.id).map((a) => a.amountCents),
+                ),
+              )
+            : 0,
+      };
+    });
   }
 }
 

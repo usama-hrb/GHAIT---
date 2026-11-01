@@ -31,6 +31,7 @@ function period(overrides: Partial<SettlementInput> = {}): SettlementInput {
     periodStart: '2026-10-01',
     periodEnd: '2026-10-31',
     recognizedProfitCents: 0,
+    returnsEffectCents: 0,
     recoveredBadDebtCents: 0,
     losses: NO_LOSSES,
     expensesCents: 0,
@@ -76,6 +77,7 @@ describe('computeSettlement (SPEC §8.1)', () => {
     ]);
     expect(settlement.breakdown).toEqual([
       { key: 'recognized_profit', cents: 40_000 },
+      { key: 'returns_effect', cents: 0 },
       { key: 'bad_debt_recovered', cents: 0 },
       { key: 'loss_damage', cents: 0 },
       { key: 'loss_bad_debt', cents: 0 },
@@ -151,7 +153,7 @@ describe('computeSettlement (SPEC §8.1)', () => {
     );
     expect(settlement).toMatchObject({ lossesCents: 480 + 5000 + 2000, netProfitCents: 22_520 });
     expect(shares(settlement)).toEqual([7506, 7506, 7508]);
-    expect(settlement.breakdown.slice(2, 5)).toEqual([
+    expect(settlement.breakdown.slice(3, 6)).toEqual([
       { key: 'loss_damage', cents: -480 },
       { key: 'loss_bad_debt', cents: -5000 },
       { key: 'loss_below_cost', cents: -2000 },

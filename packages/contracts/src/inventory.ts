@@ -73,6 +73,7 @@ export function rollLedgerOf(roll: Roll, moves: readonly SequencedMove[]): RollL
       type: move.type,
       deltaCm: move.deltaCm,
       reverses: move.type === 'reversal' ? move.refId : null,
+      returns: move.type === 'return' ? move.refId : null,
       lockedCostCents: move.lockedCostCents,
     })),
   );
@@ -216,6 +217,10 @@ export const rollLedgerSchema = z.object({
   unallocatedCostCents: z.int(),
   oversoldCm: z.int(),
   costs: z.array(z.object({ id: idSchema, costCents: z.int() })),
+  /** What each return put back on the roll (RT1); older servers send none. */
+  returns: z
+    .array(z.object({ id: idSchema, saleMoveId: idSchema, costCents: z.int() }))
+    .default([]),
 });
 
 /** GET /rolls/:id: the roll, its history and what core derives from it. */

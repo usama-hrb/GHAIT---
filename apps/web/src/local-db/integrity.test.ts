@@ -158,6 +158,7 @@ describe('the integrity check on the device (BUILD_PROMPTS 4.4)', () => {
       periodStart: '2026-10-01',
       periodEnd: '2026-10-31',
       recognizedProfitCents: 0,
+      returnsEffectCents: 0,
       recoveredBadDebtCents: 0,
       damageCents: 0,
       badDebtCents: 0,

@@ -55,6 +55,7 @@ describe('checkIntegrity (SPEC §9)', () => {
       partnerBalancesCents: -2000, // the owner drew 20 dh before any settlement
       unsettledNetProfitCents: 2520, // 40 dh profit − 4.80 loss − 10 expense
       customerCreditsCents: 0,
+      supplierPayablesCents: 0,
     } satisfies IntegrityState);
 
     const settled = runScenario(T13);
@@ -74,6 +75,7 @@ describe('checkIntegrity (SPEC §9)', () => {
       { side: 'claims', key: 'partner_balances', cents: -320 }, // 840 − 2000 + 840
       { side: 'claims', key: 'unsettled_net_profit', cents: 0 },
       { side: 'claims', key: 'customer_credits', cents: 0 },
+      { side: 'claims', key: 'supplier_payables', cents: 0 },
     ]);
   });
 
@@ -207,6 +209,19 @@ describe('checkIntegrity (SPEC §9)', () => {
       costCents: amount,
     }),
     fc.record({
+      type: fc.constant('purchase' as const),
+      lengthCm: fc.nat({ max: 10_000 }),
+      costCents: amount,
+      paidCents: amount,
+    }),
+    fc.record({ type: fc.constant('supplier_payment' as const), amountCents: amount }),
+    fc.record({
+      type: fc.constant('return' as const),
+      sale: fc.nat(),
+      returnedCm: fc.nat({ max: 5000 }),
+      refundCents: fc.oneof(fc.constant(0), amount),
+    }),
+    fc.record({
       type: fc.constant('sale' as const),
       roll: fc.nat(),
       soldCm: fc.nat({ max: 5000 }),
@@ -261,10 +276,12 @@ describe('checkIntegrity (SPEC §9)', () => {
       roll.costTotalCents += delta;
       return delta;
     },
-    'a purchase paid amount edited': (ledger, pick, delta) => {
+    // Editing what was paid moves the cash and the debt together, so only the physical count
+    // would show it; editing the total moves the debt alone, away from the rolls' cost.
+    'a purchase total that no longer matches its rolls': (ledger, pick, delta) => {
       const purchase = ledger.purchases[pick % ledger.purchases.length];
       if (!purchase) return null;
-      purchase.paidCents += delta;
+      purchase.totalCents += delta;
       return -delta;
     },
     'an expense edited after its period was settled': (ledger, pick, delta) => {
@@ -347,6 +364,124 @@ describe('checkIntegrity (SPEC §9)', () => {
   });
 });
 
+describe('returns (RT1–RT4) and supplier payables (SP1–SP3)', () => {
+  // 50 m at 16 dh/m; 10 m sold at 20 dh (cost 160 dh, profit 40 dh).
+  const START: ScenarioEvent[] = [
+    { type: 'contribution', partner: 'owner', amountCents: dh(1000) },
+    { type: 'purchase', lengthCm: 5000, costCents: dh(800) },
+  ];
+  const sale = (paidCents: number): ScenarioEvent => ({
+    type: 'sale',
+    roll: 0,
+    soldCm: 1000,
+    pricePerMeterCents: dh(20),
+    paidCents,
+  });
+  const giveBack = (refundCents: number): ScenarioEvent => ({
+    type: 'return',
+    sale: 0,
+    returnedCm: 400,
+    refundCents,
+  });
+
+  it('T15: a paid sale partly returned: the cash is refunded, the stock is back at cost, the profit follows', () => {
+    const ledger = runScenario([...START, sale(dh(200)), giveBack(dh(80))]);
+    expect(integrityStateOf(ledger)).toEqual({
+      cashCents: dh(1000 - 800 + 200 - 80),
+      stockAtCostCents: dh(800 - 160 + 64), // 4 of the 10 m, at 16 dh/m, are back
+      unrecoveredCapitalCents: 0,
+      capitalCents: dh(1000),
+      partnerBalancesCents: 0,
+      unsettledNetProfitCents: dh(24), // 6 m kept × (20 − 16)
+      customerCreditsCents: 0,
+      supplierPayablesCents: 0,
+    } satisfies IntegrityState);
+    expect(check(ledger)).toMatchObject({ ok: true, diffCents: 0 });
+  });
+
+  it('without a refund, the money stays as the customer’s credit', () => {
+    const ledger = runScenario([...START, sale(dh(200)), giveBack(0)]);
+    expect(integrityStateOf(ledger)).toMatchObject({
+      cashCents: dh(1000 - 800 + 200),
+      customerCreditsCents: dh(80),
+      unsettledNetProfitCents: dh(24),
+    });
+    expect(check(ledger).ok).toBe(true);
+  });
+
+  it('a credit sale partly returned: the debt shrinks, and with it the capital to recover', () => {
+    const ledger = runScenario([...START, sale(0), giveBack(0)]);
+    expect(integrityStateOf(ledger)).toMatchObject({
+      unrecoveredCapitalCents: dh(96), // 6 m at 16 dh
+      unsettledNetProfitCents: 0,
+      customerCreditsCents: 0,
+    });
+    expect(check(ledger).ok).toBe(true);
+  });
+
+  it('T15: a return after the settlement lowers the next period; the settled one stays as it was', () => {
+    const ledger = runScenario([...START, sale(dh(200)), { type: 'settlement' }, giveBack(dh(80))]);
+    expect(ledger.settlements[0]).toMatchObject({
+      recognizedProfitCents: dh(40),
+      netProfitCents: dh(40),
+    });
+    expect(periodResult(ledger, 1)).toMatchObject({
+      recognizedProfitCents: 0,
+      returnsEffectCents: -dh(16),
+    });
+    expect(check(ledger)).toMatchObject({ ok: true, diffCents: 0 });
+    // The month’s loss carries into the one after it, like any other (S8).
+    expect(integrityStateOf(ledger).unsettledNetProfitCents).toBe(-dh(16));
+  });
+
+  it('a whole return leaves nothing sold: stock and cash as before the sale', () => {
+    const ledger = runScenario([
+      ...START,
+      sale(dh(200)),
+      { type: 'return', sale: 0, returnedCm: 1000, refundCents: dh(200) },
+    ]);
+    expect(integrityStateOf(ledger)).toMatchObject({
+      cashCents: dh(200),
+      stockAtCostCents: dh(800),
+      unsettledNetProfitCents: 0,
+    });
+    expect(check(ledger).ok).toBe(true);
+  });
+
+  it('T16: a purchase part paid is a debt to the supplier until it is paid (SP1, SP3)', () => {
+    const owing: ScenarioEvent[] = [
+      { type: 'contribution', partner: 'owner', amountCents: dh(1000) },
+      { type: 'purchase', lengthCm: 5000, costCents: dh(800), paidCents: dh(300) },
+    ];
+    const ledger = runScenario(owing);
+    expect(integrityStateOf(ledger)).toMatchObject({
+      cashCents: dh(700),
+      stockAtCostCents: dh(800),
+      supplierPayablesCents: dh(500),
+    });
+    expect(check(ledger)).toMatchObject({ ok: true, diffCents: 0 });
+
+    applyEvent(ledger, { type: 'supplier_payment', amountCents: dh(200) });
+    expect(integrityStateOf(ledger)).toMatchObject({
+      cashCents: dh(500),
+      supplierPayablesCents: dh(300),
+    });
+    expect(check(ledger).ok).toBe(true);
+  });
+
+  it('a payment is limited to what is owed and what the till holds', () => {
+    const ledger = runScenario([
+      { type: 'contribution', partner: 'owner', amountCents: dh(100) },
+      { type: 'purchase', lengthCm: 5000, costCents: dh(800), paidCents: 0 },
+      { type: 'supplier_payment', amountCents: dh(900) },
+    ]);
+    expect(integrityStateOf(ledger)).toMatchObject({
+      cashCents: 0,
+      supplierPayablesCents: dh(700),
+    });
+  });
+});
+
 describe('integrity amounts', () => {
   it('cashBalanceCents: in − out', () => {
     expect(
@@ -356,11 +491,12 @@ describe('integrity amounts', () => {
         contributionsCents: 200_000,
         capitalWithdrawalsCents: 10_000,
         purchasesPaidCents: 80_000,
+        supplierPaymentsCents: 5000,
         expensesPaidCents: 1000,
         drawsCents: 2000,
         cashAdjustmentsCents: -500,
       }),
-    ).toBe(133_500);
+    ).toBe(128_500);
     expect(() =>
       cashBalanceCents({
         customerPaymentsCents: -1,
@@ -368,6 +504,7 @@ describe('integrity amounts', () => {
         contributionsCents: 0,
         capitalWithdrawalsCents: 0,
         purchasesPaidCents: 0,
+        supplierPaymentsCents: 0,
         expensesPaidCents: 0,
         drawsCents: 0,
         cashAdjustmentsCents: 0,
@@ -394,6 +531,14 @@ describe('integrity amounts', () => {
         { totalCents: 20_000, capitalCents: 16_000, paymentsCents: [], writtenOff: true },
       ]),
     ).toEqual({ unrecoveredCapitalCents: 6000 + 14_000, customerCreditsCents: 5000 });
+  });
+
+  it('receivablesPosition: cash handed back against an overpayment is no longer held (RT3)', () => {
+    expect(
+      receivablesPosition([
+        { totalCents: 7000, capitalCents: 5600, paymentsCents: [10_000], refundedCents: 2000 },
+      ]),
+    ).toEqual({ unrecoveredCapitalCents: 0, customerCreditsCents: 1000 });
   });
 
   it('periodDates: month n from January 2026', () => {

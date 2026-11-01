@@ -41,6 +41,8 @@ export const partnerDrawSchema = recordBaseSchema.extend({
   amountCents: amountCentsSchema.min(1),
   date: isoDateSchema,
   reason: z.string().trim().min(1).max(500),
+  /** The zakat report this draw pays, the partner's part by ownership (BUILD_PROMPTS 5.1, Z7). */
+  zakatReportId: idSchema.nullable().default(null),
 });
 export type PartnerDraw = z.output<typeof partnerDrawSchema>;
 

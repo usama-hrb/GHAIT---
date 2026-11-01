@@ -1,6 +1,6 @@
 import type { AuditEntry } from '@fabric/contracts';
 import { messages } from '@/i18n';
-import { DateAr, Meters, Money } from '@/shared/format';
+import { DateText, Meters, Money } from '@/shared/format';
 
 const t = messages.audit;
 
@@ -42,9 +42,9 @@ export function AuditValue({ field, value }: { field: string; value: unknown }) 
   if (typeof value === 'number' && field.endsWith('Cents')) return <Money cents={value} />;
   if (typeof value === 'number' && field.endsWith('Cm')) return <Meters cm={value} />;
   if (typeof value === 'boolean') return <>{value ? t.yes : t.no}</>;
-  if (typeof value === 'string' && DATE.test(value)) return <DateAr value={value} />;
+  if (typeof value === 'string' && DATE.test(value)) return <DateText value={value} />;
   if (typeof value === 'string' && TIMESTAMP.test(value)) {
-    return <DateAr value={value} format="dateTime" />;
+    return <DateText value={value} format="dateTime" />;
   }
   if (Array.isArray(value)) return <>{t.items(value.length)}</>;
   if (typeof value === 'string') return <bdi>{value}</bdi>;

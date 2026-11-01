@@ -5,6 +5,7 @@ import { useEffect, useId, useState } from 'react';
 import { messages } from '@/i18n';
 import { ApiError, NetworkError, useSession } from '@/local-db';
 import { Logo } from '@/shared/brand';
+import { LanguageToggle } from '@/shared/language';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
 import { Field, FieldGroup, FieldLabel } from '@/shared/ui/field';
@@ -46,7 +47,8 @@ export function LoginScreen() {
   const knownUser = session.user?.username;
 
   return (
-    <main className="flex min-h-svh items-center justify-center bg-burgundy-800 p-4">
+    <main className="relative flex min-h-svh items-center justify-center bg-burgundy-800 p-4">
+      <LanguageToggle className="absolute end-3 top-3 text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground aria-expanded:bg-sidebar-accent aria-expanded:text-sidebar-accent-foreground" />
       <div className="grid w-full max-w-sm gap-6">
         <Logo className="mx-auto w-48" priority />
         <form

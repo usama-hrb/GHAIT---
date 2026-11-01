@@ -186,3 +186,114 @@ describe('rollState (SPEC §4)', () => {
     expect(rollState(remaining, marked, threshold)).toBe(state);
   });
 });
+
+describe('rollLedger: returns (RT1)', () => {
+  const piece = { costTotalCents: 10_000, lengthCmInitial: 230, lengthEstimated: false };
+  const returned = (deltaCm: number, of: string, id: string = crypto.randomUUID()) => ({
+    ...move('return', deltaCm, id),
+    returns: of,
+  });
+
+  it('puts back the same share of the sale’s cost as of its length', () => {
+    const ledger = rollLedger(piece, [
+      move('purchase', 230),
+      move('sale', -100, 'a'),
+      returned(40, 'a', 'r'),
+    ]);
+    // The sale cost 4348; 40 of its 100 cm came back: round(4348 × 40 / 100) = 1739.
+    expect(ledger.costs).toEqual([{ id: 'a', costCents: 4348 - 1739 }]);
+    expect(ledger.returns).toEqual([{ id: 'r', saleMoveId: 'a', costCents: 1739 }]);
+    expect(ledger).toMatchObject({ remainingCm: 170, unallocatedCostCents: 10_000 - 2609 });
+  });
+
+  it('a whole return leaves the roll as if the sale had never been made', () => {
+    const ledger = rollLedger(piece, [
+      move('purchase', 230),
+      move('sale', -100, 'a'),
+      returned(100, 'a'),
+    ]);
+    expect(ledger.costs).toEqual([{ id: 'a', costCents: 0 }]);
+    expect(ledger).toMatchObject({ remainingCm: 230, unallocatedCostCents: 10_000 });
+  });
+
+  it('several returns add up to the sale exactly', () => {
+    const ledger = rollLedger(piece, [
+      move('purchase', 230),
+      move('sale', -100, 'a'),
+      returned(33, 'a', 'r1'),
+      returned(33, 'a', 'r2'),
+      returned(34, 'a', 'r3'),
+    ]);
+    expect(ledger.returns.reduce((sum, back) => sum + back.costCents, 0)).toBe(4348);
+    expect(ledger.costs).toEqual([{ id: 'a', costCents: 0 }]);
+  });
+
+  it('what is sold after a return is costed on the roll as it is then', () => {
+    const ledger = rollLedger(piece, [
+      move('purchase', 230),
+      move('sale', -100, 'a'),
+      returned(100, 'a'),
+      move('sale', -230, 'b'), // the whole roll again: takes the exact remainder
+    ]);
+    expect(ledger.costs).toEqual([
+      { id: 'a', costCents: 0 },
+      { id: 'b', costCents: 10_000 },
+    ]);
+    expect(ledger).toMatchObject({ remainingCm: 0, unallocatedCostCents: 0 });
+  });
+
+  it('a sale whose cost a settlement froze gives back a share of the frozen cost', () => {
+    const ledger = rollLedger(piece, [
+      move('purchase', 230),
+      { ...move('sale', -100, 'a'), lockedCostCents: 5000 },
+      returned(50, 'a'),
+    ]);
+    expect(ledger.costs).toEqual([{ id: 'a', costCents: 2500 }]);
+    expect(ledger.returns[0]?.costCents).toBe(2500);
+  });
+
+  it('a return of nothing the roll knows only puts the length back', () => {
+    const ledger = rollLedger(piece, [
+      move('purchase', 230),
+      move('sale', -100, 'a'),
+      returned(10, 'nothing'),
+      returned(500, 'a'), // more than was sold: no cost to give back
+    ]);
+    expect(ledger.returns).toEqual([]);
+    expect(ledger.costs).toEqual([{ id: 'a', costCents: 4348 }]);
+    expect(ledger.remainingCm).toBe(130 + 10 + 500);
+  });
+
+  it('property: sale costs and returned costs always add up to what the sales cost', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 1_000_000 }),
+        fc.integer({ min: 10, max: 5000 }),
+        fc.array(fc.double({ min: 0, max: 1, noNaN: true }), { minLength: 1, maxLength: 5 }),
+        (costTotalCents, lengthCmInitial, fractions) => {
+          const roll = { costTotalCents, lengthCmInitial, lengthEstimated: false };
+          const moves: RollLedgerMove[] = [move('purchase', lengthCmInitial)];
+          // One sale of the whole roll, then partial returns of it.
+          moves.push(move('sale', -lengthCmInitial, 's'));
+          let back = 0;
+          for (const fraction of fractions) {
+            const cm = Math.min(
+              lengthCmInitial - back,
+              Math.floor(lengthCmInitial * fraction * 0.3),
+            );
+            if (cm < 1) continue;
+            back += cm;
+            moves.push({ ...move('return', cm), returns: 's' });
+          }
+          const ledger = rollLedger(roll, moves);
+          const net = ledger.costs.reduce((sum, cost) => sum + cost.costCents, 0);
+          const given = ledger.returns.reduce((sum, entry) => sum + entry.costCents, 0);
+          expect(net + given).toBe(costTotalCents);
+          expect(ledger.unallocatedCostCents).toBe(costTotalCents - net);
+          expect(ledger.remainingCm).toBe(back);
+          if (back === lengthCmInitial) expect(net).toBe(0);
+        },
+      ),
+    );
+  });
+});

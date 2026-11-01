@@ -141,6 +141,48 @@
       "when": 1793408113899,
       "tag": "0019_cash_counts_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1793427063139,
+      "tag": "0020_zakat",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1793427063789,
+      "tag": "0021_zakat_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1793456986791,
+      "tag": "0022_returns_and_payables",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1793456994148,
+      "tag": "0023_returns_and_payables_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1793479421857,
+      "tag": "0024_photos",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1793479429199,
+      "tag": "0025_photos_guards",
+      "breakpoints": true
     }
   ]
 }

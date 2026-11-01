@@ -49,6 +49,8 @@ export function buildOpenApiDocument(app: INestApplication): OpenAPIObject {
  */
 export function configureHttp(app: NestExpressApplication): void {
   app.useLogger(app.get(Logger));
+  // A sync push may carry a photo (~100-200 KB of base64): the default 100 KB would refuse it.
+  app.useBodyParser('json', { limit: '4mb' });
   app.use(cookieParser());
   // Caddy (prod) is one hop away on the Docker network: client IPs for rate limiting.
   app.set('trust proxy', 'loopback, uniquelocal');

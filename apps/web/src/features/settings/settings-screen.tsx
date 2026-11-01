@@ -13,7 +13,7 @@ import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Field, FieldLabel } from '@/shared/ui/field';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
-import { download, toCsv } from './csv';
+import { download, toCsv } from '@/shared/lib/csv';
 
 const t = messages.settings;
 
@@ -90,7 +90,7 @@ export function SettingsScreen() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {EXPORT_ENTITIES.map((entity) => (
+                {EXPORT_ENTITIES.filter((entity) => entity !== 'photo').map((entity) => (
                   <SelectItem key={entity} value={entity}>
                     {t.entities[entity]}
                   </SelectItem>

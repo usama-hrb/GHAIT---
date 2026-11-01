@@ -4,7 +4,6 @@ import {
   cashCountFieldsOf,
   cashFlowsOf,
   checkCashAdjustment,
-  type IntegrityRecords,
   type IntegrityReport,
   integrityReportOf,
   type NewCashCountInput,
@@ -14,6 +13,7 @@ import {
 import { cashBalanceCents } from '@fabric/core';
 import type { Local } from './db';
 import { parseOrThrow, ValidationError } from './errors';
+import { loadShopRecords } from './records';
 import type { LocalStore } from './store';
 import { SyncedTable } from './tables';
 
@@ -112,6 +112,8 @@ export class IntegrityRepository {
       writeOffs,
       counts,
       settlements,
+      returns,
+      supplierPayments,
     ] = await Promise.all([
       db.sales.toArray(),
       db.saleVoids.toArray(),
@@ -124,6 +126,8 @@ export class IntegrityRepository {
       db.writeOffs.toArray(),
       db.cashAdjustments.toArray(),
       db.settlements.toArray(),
+      db.saleReturns.toArray(),
+      db.supplierPayments.toArray(),
     ]);
     const event = (
       entity: SyncEntity,
@@ -170,65 +174,18 @@ export class IntegrityRepository {
       ...settlements.map((s) =>
         event('settlement', s, s.periodEnd, s.netProfitCents, `/settlements/view?id=${s.id}`),
       ),
+      ...returns.map((r) =>
+        event('sale_return', r, r.date, -r.creditCents, `/pos/view?id=${r.saleId}`),
+      ),
+      ...supplierPayments.map((p) =>
+        event('supplier_payment', p, p.date, -p.amountCents, `/payables/view?id=${p.supplierId}`),
+      ),
     ];
     return events.sort((a, b) => b.at.localeCompare(a.at)).slice(0, limit);
   }
 
   /** Everything the check is derived from, on this device. */
-  private async records(): Promise<IntegrityRecords> {
-    const { db } = this.store;
-    const [
-      rolls,
-      stockMoves,
-      sales,
-      saleLines,
-      allocations,
-      writeOffs,
-      expenses,
-      cashAdjustments,
-      lockedCosts,
-      settlements,
-      splitRules,
-      partners,
-    ] = await Promise.all([
-      db.rolls.toArray(),
-      db.stockMoves.toArray(),
-      db.sales.toArray(),
-      db.saleLines.toArray(),
-      db.paymentAllocations.toArray(),
-      db.writeOffs.toArray(),
-      db.expenses.toArray(),
-      db.cashAdjustments.toArray(),
-      db.lockedCosts.toArray(),
-      db.settlements.toArray(),
-      db.profitSplitRules.toArray(),
-      db.partners.toArray(),
-    ]);
-    const [payments, purchases, capitalMoves, draws, settlementShares] = await Promise.all([
-      db.payments.toArray(),
-      db.purchases.toArray(),
-      db.capitalMoves.toArray(),
-      db.partnerDraws.toArray(),
-      db.settlementShares.toArray(),
-    ]);
-    return {
-      rolls,
-      stockMoves,
-      sales,
-      saleLines,
-      allocations,
-      writeOffs,
-      expenses,
-      cashAdjustments,
-      lockedCosts,
-      settlements,
-      splitRules,
-      partners,
-      payments,
-      purchases,
-      capitalMoves,
-      draws,
-      settlementShares,
-    };
+  private records() {
+    return loadShopRecords(this.store.db);
   }
 }

@@ -1,4 +1,4 @@
-import type { Sale, SaleLine, SaleVoid } from '@fabric/contracts';
+import type { Sale, SaleLine, SaleReturn, SaleVoid } from '@fabric/contracts';
 import { Injectable } from '@nestjs/common';
 import { asc, desc, eq, gt, inArray } from 'drizzle-orm';
 import { baseOf, baseValues, schema, TransactionHost } from '../../database/index.js';
@@ -220,5 +220,82 @@ export class SaleVoidRepository {
       .orderBy(asc(schema.saleVoid.serverSeq))
       .limit(limit);
     return rows.map(voidOf);
+  }
+}
+
+type ReturnRow = typeof schema.saleReturn.$inferSelect;
+
+function returnOf(row: ReturnRow): SyncedRow<SaleReturn> {
+  return {
+    serverSeq: row.serverSeq,
+    record: {
+      ...baseOf(row),
+      saleId: row.saleId,
+      date: row.date,
+      reason: row.reason,
+      lines: row.lines,
+      creditCents: row.creditCents,
+      refundId: row.refundId,
+    },
+  };
+}
+
+/** Goods given back (RT1): append-only (row guards), as many per sale as there are returns. */
+@Injectable()
+export class SaleReturnRepository {
+  constructor(private readonly tx: TransactionHost) {}
+
+  async find(id: string): Promise<SyncedRow<SaleReturn> | undefined> {
+    const [row] = await this.tx.db
+      .select()
+      .from(schema.saleReturn)
+      .where(eq(schema.saleReturn.id, id));
+    return row && returnOf(row);
+  }
+
+  async insert(given: SaleReturn): Promise<SyncedRow<SaleReturn>> {
+    const [row] = await this.tx.db
+      .insert(schema.saleReturn)
+      .values({
+        ...baseValues(given),
+        saleId: given.saleId,
+        date: given.date,
+        reason: given.reason,
+        lines: given.lines,
+        creditCents: given.creditCents,
+        refundId: given.refundId,
+      })
+      .returning();
+    if (!row) throw new Error('insert returned no row');
+    return returnOf(row);
+  }
+
+  async listBySale(saleId: string): Promise<SyncedRow<SaleReturn>[]> {
+    const rows = await this.tx.db
+      .select()
+      .from(schema.saleReturn)
+      .where(eq(schema.saleReturn.saleId, saleId))
+      .orderBy(asc(schema.saleReturn.serverSeq));
+    return rows.map(returnOf);
+  }
+
+  async listBySales(saleIds: readonly string[]): Promise<SyncedRow<SaleReturn>[]> {
+    if (saleIds.length === 0) return [];
+    const rows = await this.tx.db
+      .select()
+      .from(schema.saleReturn)
+      .where(inArray(schema.saleReturn.saleId, [...saleIds]))
+      .orderBy(asc(schema.saleReturn.serverSeq));
+    return rows.map(returnOf);
+  }
+
+  async pull(since: number, limit: number): Promise<SyncedRow<SaleReturn>[]> {
+    const rows = await this.tx.db
+      .select()
+      .from(schema.saleReturn)
+      .where(gt(schema.saleReturn.serverSeq, since))
+      .orderBy(asc(schema.saleReturn.serverSeq))
+      .limit(limit);
+    return rows.map(returnOf);
   }
 }

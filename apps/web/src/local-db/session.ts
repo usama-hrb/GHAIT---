@@ -151,8 +151,9 @@ export class Session {
 
   private set(state: SessionState): void {
     this.state = state;
-    // Only the owner changes the shop; a partner's device reads it (BUILD_PROMPTS 4.2).
-    this.store.setReadOnly(state.user !== null && state.user.role !== 'owner');
+    // The owner changes the shop; a partner's device reads it (BUILD_PROMPTS 4.2); a cashier's
+    // only makes sales, payments and customers (BUILD_PROMPTS 5.3).
+    this.store.setRole(state.user?.role ?? null);
     for (const listener of this.listeners) listener();
   }
 }

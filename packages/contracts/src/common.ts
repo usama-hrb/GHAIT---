@@ -45,3 +45,6 @@ export const HEADERS = {
 /** device_id values: the web client's id, or `server` for changes made by the API itself. */
 export const deviceIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 export const SERVER_DEVICE_ID = 'server';
+
+/** Lines on one invoice: far more than a shop counter needs, small enough for one op. */
+export const SALE_MAX_LINES = 50;

@@ -67,6 +67,26 @@ make partner-user USERNAME=<name> [NAME="<display name>"]   # add STACK=prod on 
 
 Creates the partner's account, or sets a new password for it (signing it out everywhere). It reads everything, on any device, and changes nothing: the API refuses its writes and its devices do not save any (ADR 0004, Roles). The owner keeps the only account that changes the shop.
 
+## A worker's account (cashier)
+
+```sh
+make cashier-user USERNAME=<name> [NAME="<display name>"]   # add STACK=prod on the server
+```
+
+Creates an account for someone who works the till, or sets a new password for it (signing it out everywhere). There can be several. It **sells, takes customers' payments and adds customers**, and nothing else; it never receives a cost, a profit, or any record of the partners' money ([ADR 0007](../adr/0007-returns-payables-roles.md), docs/accounting-assumptions.md RL1–RL5):
+
+- the sync hub sends its device the catalog, the rolls **with their cost set to 0**, stock moves, customers, sales, payments, returns and three settings (the shop's name, the money unit, the remnant length); purchases, suppliers, expenses, partners, settlements, zakat, counts and conflicts are not sent;
+- every REST route except the sync hub, device registration and its own profile answers 403;
+- it cannot void, return, refund, write off, buy, spend, or confirm a sale under cost. Its device refuses the same changes before saving, and the server rejects them if they arrive anyway (Settings → sync issues shows them on the worker's device).
+
+A sale under cost made at the till is **rejected by the server** (the device saw no cost, so it could not warn). It appears in the owner's sync issues; decide what to do with the sale that happened at the counter and enter it again with the confirmation.
+
+## Returns and what the shop owes suppliers
+
+**Returns.** On the sale's page (owner's account), "إرجاع بضاعة": choose the length of each line, write the reason, and say how much of the overpayment is handed back in cash (the rest stays as the customer's credit; a walk-in buyer gets all of it). The cloth goes back on its roll; mark the roll a remnant if it is no longer part of a whole one. The profit already recognised on those goods is reversed **on the day of the return**, so a settled month never changes. A sale with returns cannot be voided: return the rest. Over the API: `POST /sales/:id/return` with `{ date, reason, lines: [{ lineId, returnedCm }], refundCents }`.
+
+**Suppliers.** When a purchase is only part paid ("المدفوع الآن"), the rest is a debt to the supplier (the purchase needs one). The screen "ديون الموردين" lists who the shop owes and shows each supplier's statement; "دفع للمورد" records a payment (never more than is owed, from the shop's cash). A mistaken payment is voided with a reason. Over the API: `GET /supplier-payables`, `GET /suppliers/:id/statement`, `POST /suppliers/:id/payments` with `{ amountCents, date, purchaseId? }`, `POST /supplier-payments/:id/void` with `{ reason }`. The integrity check carries the debt as a claim (`supplier_payables`) and the zakat base subtracts it.
+
 ## Settling a month, and unlocking it
 
 The owner settles from the Settlement screen (التسوية): pick the period's end, read the breakdown, approve. Approving needs a connection: the server settles on every device's records ([ADR 0005](../adr/0005-settlement-and-period-lock.md)). Sync the phone and every other device first.
@@ -90,3 +110,9 @@ The Integrity screen (فحص التطابق) compares what the shop holds with w
 3. A record changed outside the app (SQL on the database) is the usual cause. The audit log shows every change the API made, so a change that is not in it was made outside.
 
 A cash count is not a fix for a difference: it records what was counted, and the check stays balanced either way. Count the till and the shop's bank account together (I5), after every device has synced.
+
+## Zakat
+
+The Zakat screen (الزكاة) holds the settings (hawl start, nisab metal and its price per gram with the day it was seen, valuation, doubtful debts, reminder days); changing them needs a connection. On the hawl, save the report (it works offline), then record the payment: it becomes a draw on each partner by ownership (docs/accounting-assumptions.md Z5–Z10). The figures are a calculation, not a ruling: the settings follow the scholar the owner follows.
+
+Over the API: `GET /zakat/reports`, `GET /zakat/reports/:id` (with what was paid), `POST /zakat/reports/:id/payments` with `{ amountCents, date }`, `POST /zakat/reports/:id/void` with `{ reason }` (refused while something is paid on it).

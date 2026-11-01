@@ -1,7 +1,7 @@
 import { formatMoney, type MoneyUnit } from '@fabric/core';
-import { messages } from '@/i18n';
+import { getLanguage, messages } from '@/i18n';
 import type { CustomerAccountView } from '@/local-db';
-import { formatDateAr } from '@/shared/format';
+import { formatDate } from '@/shared/format';
 
 const t = messages.customers.statement;
 
@@ -15,21 +15,22 @@ export function statementText(
   unit: MoneyUnit,
   today: string,
 ): string {
-  const money = (cents: number) => formatMoney(cents, unit);
+  const language = getLanguage();
+  const money = (cents: number) => formatMoney(cents, unit, language);
   const { account } = view;
   const invoices = account.openInvoices
     .filter((invoice) => !invoice.writtenOff)
     .map((invoice) =>
       [
-        `• ${t.invoice} ${formatDateAr(invoice.date, 'long')}: ${t.total} ${money(invoice.totalCents)}`,
+        `• ${t.invoice} ${formatDate(invoice.date, 'long')}: ${t.total} ${money(invoice.totalCents)}`,
         `${t.paid} ${money(invoice.paidCents)}`,
         `${t.due} ${money(invoice.dueCents)}`,
-        ...(invoice.dueDate ? [`${t.dueDate} ${formatDateAr(invoice.dueDate, 'long')}`] : []),
+        ...(invoice.dueDate ? [`${t.dueDate} ${formatDate(invoice.dueDate, 'long')}`] : []),
       ].join(' · '),
     );
   return [
     shopName,
-    `${t.title} · ${view.customer.name} · ${formatDateAr(today, 'long')}`,
+    `${t.title} · ${view.customer.name} · ${formatDate(today, 'long')}`,
     '',
     ...(invoices.length > 0
       ? [...invoices, '', `${t.owed}: ${money(account.collectibleCents)}`]

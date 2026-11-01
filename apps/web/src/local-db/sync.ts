@@ -1,4 +1,5 @@
 import {
+  SYNC_BATCH_MAX_BYTES,
   SYNC_ENTITIES,
   SYNC_PUSH_MAX_OPS,
   type SyncEntity,
@@ -7,6 +8,7 @@ import {
   type SyncPullResponse,
   syncPullResponseSchema,
   syncPushResponseSchema,
+  syncWeightOf,
 } from '@fabric/contracts';
 import type { Table } from 'dexie';
 import { ApiError, NetworkError } from './api';
@@ -28,6 +30,7 @@ type AnyLocal = Local<{ id: string }>;
 const TABLES = {
   fabric: 'fabrics',
   variant: 'variants',
+  photo: 'photos',
   supplier: 'suppliers',
   setting: 'settings',
   purchase: 'purchases',
@@ -39,6 +42,8 @@ const TABLES = {
   payment: 'payments',
   payment_allocation: 'paymentAllocations',
   sale_void: 'saleVoids',
+  sale_return: 'saleReturns',
+  supplier_payment: 'supplierPayments',
   write_off: 'writeOffs',
   sync_conflict: 'syncConflicts',
   expense: 'expenses',
@@ -51,6 +56,7 @@ const TABLES = {
   settlement_share: 'settlementShares',
   locked_cost: 'lockedCosts',
   cash_adjustment: 'cashAdjustments',
+  zakat_report: 'zakatReports',
 } as const satisfies Record<SyncEntity, keyof ShopDatabase>;
 
 /** The Dexie table of a synced entity. */
@@ -111,6 +117,23 @@ export async function applyPulledChanges(db: ShopDatabase, page: SyncPullRespons
     }
     await db.meta.put({ key: PULL_CURSOR, value: page.nextSince });
   });
+}
+
+/**
+ * The oldest pending ops that go in one request: at most SYNC_PUSH_MAX_OPS, and at most
+ * SYNC_BATCH_MAX_BYTES of images (a photo is ~100 KB, every other op a few hundred bytes). An op
+ * over the budget on its own still goes, alone.
+ */
+export function takeBatch(entries: readonly OutboxEntry[]): OutboxEntry[] {
+  const batch: OutboxEntry[] = [];
+  let weight = 0;
+  for (const entry of entries.slice(0, SYNC_PUSH_MAX_OPS)) {
+    const next = weight + syncWeightOf(entry.entity, entry.payload);
+    if (batch.length > 0 && next > SYNC_BATCH_MAX_BYTES) break;
+    batch.push(entry);
+    weight = next;
+  }
+  return batch;
 }
 
 /** The op as pushed: an outbox entry without its local bookkeeping. */
@@ -272,11 +295,13 @@ export class SyncEngine {
   private async push(): Promise<void> {
     const { db } = this.store;
     for (;;) {
-      const entries = await db.outbox
-        .orderBy('seq')
-        .filter((entry) => entry.state === 'pending')
-        .limit(SYNC_PUSH_MAX_OPS)
-        .toArray();
+      const entries = takeBatch(
+        await db.outbox
+          .orderBy('seq')
+          .filter((entry) => entry.state === 'pending')
+          .limit(SYNC_PUSH_MAX_OPS)
+          .toArray(),
+      );
       if (entries.length === 0) return;
       const ops = entries.map(toOp);
       const { results } = await this.session.request('/sync/push', syncPushResponseSchema, {

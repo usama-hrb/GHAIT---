@@ -23,6 +23,7 @@ import { rollLedgerOf, type SequencedMove } from './inventory.js';
 import { syncOrder } from './order.js';
 import { type CapitalMove, capitalMoveSchema, type Partner } from './partners.js';
 import type { Roll } from './purchasing.js';
+import type { SaleReturn } from './returns.js';
 import type { Sale, SaleLine } from './sales.js';
 
 const weightSchema = z.int().min(0).max(10_000);
@@ -55,6 +56,7 @@ export const DEFAULT_SPLIT_RULE = {
 /** The breakdown's lines, in order (@fabric/core computeSettlement). */
 export const SETTLEMENT_LINE_KEYS = [
   'recognized_profit',
+  'returns_effect',
   'bad_debt_recovered',
   'loss_damage',
   'loss_bad_debt',
@@ -80,6 +82,8 @@ const figuresFields = {
   periodStart: isoDateSchema,
   periodEnd: isoDateSchema,
   recognizedProfitCents: z.int(),
+  /** What returns changed in the period (RT4); signed; 0 on settlements made before returns. */
+  returnsEffectCents: z.int().default(0),
   recoveredBadDebtCents: z.int(),
   damageCents: z.int(),
   badDebtCents: z.int(),
@@ -284,6 +288,8 @@ export interface SettlementRecords {
   stockMoves: readonly SequencedMove[];
   sales: readonly Sale[];
   saleLines: readonly SaleLine[];
+  /** Goods given back (RT1), voided ones included. */
+  saleReturns: readonly SaleReturn[];
   allocations: readonly (PaymentAllocation & { serverSeq?: number | null })[];
   writeOffs: readonly WriteOff[];
   expenses: readonly Expense[];
@@ -313,8 +319,18 @@ export interface PeriodBasis {
   costOf: Map<string, number>;
   /** Moves whose cost a live settlement froze. */
   frozen: Set<string>;
-  /** Live sales, with the ids of their sale moves. */
-  sales: { sale: Sale; moveIds: string[]; period: PeriodSale }[];
+  /** Each sale move's cost before its returns (what a settlement freezes). */
+  grossCostOf: Map<string, number>;
+  /**
+   * Live sales, with the ids of their sale moves. `period` is the invoice as it was sold and its
+   * returns, for periodResultOf; `now` is the invoice once its returns are taken off.
+   */
+  sales: {
+    sale: Sale;
+    moveIds: string[];
+    period: PeriodSale;
+    now: { totalCents: number; capitalCents: number };
+  }[];
   /** Loss moves that were not reversed, at cost. */
   losses: { id: string; date: string; costCents: number }[];
   /** What periodResultOf takes. */
@@ -331,10 +347,19 @@ export function periodBasisOf(records: SettlementRecords): PeriodBasis {
   const movesByRoll = groupBy(moves, (move) => move.rollId);
   const ledgers = new Map<string, RollLedger>();
   const costOf = new Map<string, number>();
+  const grossCostOf = new Map<string, number>();
+  const returnCostOf = new Map<string, number>();
   for (const roll of records.rolls) {
     const ledger = rollLedgerOf(roll, movesByRoll.get(roll.id) ?? []);
     ledgers.set(roll.id, ledger);
-    for (const cost of ledger.costs) costOf.set(cost.id, cost.costCents);
+    for (const cost of ledger.costs) {
+      costOf.set(cost.id, cost.costCents);
+      grossCostOf.set(cost.id, cost.costCents);
+    }
+    for (const back of ledger.returns) {
+      returnCostOf.set(back.id, back.costCents);
+      grossCostOf.set(back.saleMoveId, (grossCostOf.get(back.saleMoveId) ?? 0) + back.costCents);
+    }
   }
   const moveOfLine = new Map<string, string>();
   for (const move of moves) {
@@ -342,6 +367,7 @@ export function periodBasisOf(records: SettlementRecords): PeriodBasis {
   }
   const linesBySale = groupBy(records.saleLines, (line) => line.saleId);
   const allocationsBySale = groupBy(records.allocations, (allocation) => allocation.saleId);
+  const returnsBySale = groupBy(live(records.saleReturns), (given) => given.saleId);
   const writtenOffOn = new Map(live(records.writeOffs).map((w) => [w.saleId, w.date]));
 
   const sales = live(records.sales).map((sale) => {
@@ -349,23 +375,40 @@ export function periodBasisOf(records: SettlementRecords): PeriodBasis {
     const moveIds: string[] = [];
     for (const line of linesBySale.get(sale.id) ?? []) {
       const moveId = moveOfLine.get(line.id);
-      const cost = moveId === undefined ? undefined : costOf.get(moveId);
+      const cost = moveId === undefined ? undefined : grossCostOf.get(moveId);
       if (moveId === undefined || cost === undefined) {
         throw new Error(`sale line ${line.id} has no cost`);
       }
       capitalCents += cost;
       moveIds.push(moveId);
     }
+    const allocations = [...(allocationsBySale.get(sale.id) ?? [])].sort(syncOrder);
+    // Each return in the order it was recorded among the payments (RT4).
+    const returns = [...(returnsBySale.get(sale.id) ?? [])].sort(syncOrder).map((given) => ({
+      date: given.date,
+      creditCents: given.creditCents,
+      costCents: given.lines.reduce(
+        (total, line) => total + (returnCostOf.get(line.moveId) ?? 0),
+        0,
+      ),
+      after: allocations.filter((allocation) => syncOrder(allocation, given) < 0).length,
+    }));
     const period: PeriodSale = {
       date: sale.date,
       totalCents: sale.totalCents,
       capitalCents,
-      allocations: [...(allocationsBySale.get(sale.id) ?? [])]
-        .sort(syncOrder)
-        .map((allocation) => ({ date: allocation.date, amountCents: allocation.amountCents })),
+      allocations: allocations.map((allocation) => ({
+        date: allocation.date,
+        amountCents: allocation.amountCents,
+      })),
       writtenOffOn: writtenOffOn.get(sale.id) ?? null,
+      returns,
     };
-    return { sale, moveIds, period };
+    const now = {
+      totalCents: sale.totalCents - returns.reduce((total, given) => total + given.creditCents, 0),
+      capitalCents: capitalCents - returns.reduce((total, given) => total + given.costCents, 0),
+    };
+    return { sale, moveIds, period, now };
   });
   const losses = moves
     .filter((move) => move.type === 'loss' && costOf.has(move.id))
@@ -373,6 +416,7 @@ export function periodBasisOf(records: SettlementRecords): PeriodBasis {
   return {
     ledgers,
     costOf,
+    grossCostOf,
     frozen: new Set(
       moves.filter((move) => move.lockedCostCents !== undefined).map((move) => move.id),
     ),
@@ -467,13 +511,14 @@ export function previewSettlement(
 
   const lockedCosts = [...toFreeze]
     .filter((moveId) => !basis.frozen.has(moveId))
-    .map((stockMoveId) => ({ stockMoveId, costCents: basis.costOf.get(stockMoveId) ?? 0 }));
+    .map((stockMoveId) => ({ stockMoveId, costCents: basis.grossCostOf.get(stockMoveId) ?? 0 }));
   return {
     ok: true,
     preview: {
       periodStart: settlement.periodStart,
       periodEnd,
       recognizedProfitCents: settlement.recognizedProfitCents,
+      returnsEffectCents: settlement.returnsEffectCents,
       recoveredBadDebtCents: settlement.recoveredBadDebtCents,
       damageCents: result.losses.damageCents,
       badDebtCents: result.losses.badDebtCents,
@@ -577,6 +622,7 @@ export function breakdownOf(figures: SettlementFigures): SettlementLine[] {
   const net = figures.netProfitCents;
   return [
     { key: 'recognized_profit', cents: figures.recognizedProfitCents },
+    { key: 'returns_effect', cents: figures.returnsEffectCents },
     { key: 'bad_debt_recovered', cents: figures.recoveredBadDebtCents },
     { key: 'loss_damage', cents: 0 - figures.damageCents },
     { key: 'loss_bad_debt', cents: 0 - figures.badDebtCents },

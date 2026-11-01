@@ -110,7 +110,7 @@
 
 ### سطح المكتب
 
-- **شريط جانبي على اليمين** (RTL)، عنابي، فيه الشعار في الأعلى: بيع، المخزون، شراء، الزبائن، المصروفات، الشركاء، التسوية، الزكاة، التقارير، الإعدادات. العنصر النشط له ماسة ذهبية وخلفية أفتح قليلاً.
+- **شريط جانبي فاتح** عند بداية الاتجاه (يمين في RTL، يسار في الإنجليزية LTR) بطلب صاحب المشروع (مرجعه شريط فاتح بعنصر نشط داكن): بطاقة في الأعلى فيها شعار غيث (على إطاره العنابي) واسم المستخدم ودوره، ثم حقل بحث عن الصفحات (Ctrl K)، ثم الصفحات في مجموعات يفصل بينها خط متقطع: (الرئيسية، بيع، المخزون، شراء، الزبائن) ثم (ديون الموردين، المصروفات، الشركاء، التسوية، فحص التطابق، الزكاة، التقارير) ثم (سجل التعديلات، الإعدادات). العنصر النشط قرص عنابي بماسة ذهبية؛ وعند المرور بالمؤشر يخفّ لونه قليلاً. زر الطي في الترويسة يحوّل الشريط إلى عمود أيقونات كبيرة (24 بكسل) دون الأسماء، وتظهر الأسماء في تلميح.
 - منطقة المحتوى كريمية. رأس الصفحة: العنوان، بحث سريع (`⌘K`/`Ctrl K`)، حالة الاتصال (متصل / دون اتصال + عدد العمليات المعلّقة).
 
 ### الهاتف
@@ -145,7 +145,7 @@ apps/web/
     └── shared/
         ├── ui/              # مكونات shadcn (button, input, dialog, table …)
         ├── brand/           # Logo, DiamondBullet, AppShell, Sidebar, BottomNav
-        ├── format/          # Money, Meters, DateAr (تستعمل @fabric/core)
+        ├── format/          # Money, Meters, DateText (تستعمل @fabric/core)
         └── lib/utils.ts     # cn()
 ```
 
@@ -165,7 +165,7 @@ Implement the design system described in docs/DESIGN_SYSTEM.md. No feature scree
 3. Fonts with next/font/google: Noto Kufi Arabic for headings (--font-heading) and IBM Plex Sans Arabic for body (--font-body), subsets arabic+latin, display swap. Root layout: <html lang="ar" dir="rtl">, ThemeProvider (system default + manual toggle, class strategy), Sonner Toaster positioned correctly for RTL.
 4. Add shadcn components: button, input, textarea, label, form, select, combobox (command + popover), checkbox, switch, radio-group, tabs, card, badge, table, dialog, drawer (vaul), sheet, dropdown-menu, tooltip, alert, skeleton, separator, sonner, sidebar, chart, command, calendar, popover. Add an "accent" variant (gold) and "success"/"warning" badge variants to Button/Badge using tokens.
 5. Brand components in src/shared/brand: Logo (uses /brand/logo-full-on-burgundy.png and mark; only rendered on burgundy surfaces), DiamondBullet, AppShell (desktop: right-hand burgundy sidebar with gold-diamond active indicator, header with search trigger + connectivity status slot; mobile: bottom tab bar with 5 items + "more" drawer), EmptyState, ErrorState, LoadingState.
-6. Format components in src/shared/format using @fabric/core: <Money cents unit?/> (reads the money_display_unit setting; tabular-nums; optional tone: profit|loss|debt|capital|estimated), <Meters cm/>, <DateAr/>. Add a MoneyInput and MeterInput (decimal input, Arabic-Indic digits accepted, inputmode=decimal, returns integer cents/cm via core).
+6. Format components in src/shared/format using @fabric/core: <Money cents unit?/> (reads the money_display_unit setting; tabular-nums; optional tone: profit|loss|debt|capital|estimated), <Meters cm/>, <DateText/>. Add a MoneyInput and MeterInput (decimal input, Arabic-Indic digits accepted, inputmode=decimal, returns integer cents/cm via core).
 7. PWA: manifest.ts (name غيث, short_name غيث, theme_color #491017, background_color #491017, display standalone, dir rtl, lang ar), icons from /public/brand, favicon.
 8. A dev-only gallery at /design (excluded from production build) that renders every component and token in light and dark, plus RTL checks (icons flip, spacing logical).
 9. Accessibility checks: add an automated contrast test over the semantic token pairs (background/foreground, primary/primary-foreground, accent/accent-foreground, muted, destructive, success, warning, info, sidebar) in both themes asserting >= 4.5:1 for text pairs and >= 3:1 for input borders and focus ring. Fix tokens only with approval; never lower thresholds.

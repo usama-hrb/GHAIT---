@@ -6,7 +6,7 @@ import { useSearchParams } from 'next/navigation';
 import { messages } from '@/i18n';
 import { useLiveQuery, useRepositories } from '@/local-db';
 import { EmptyState, LoadingState, OfflineNotice } from '@/shared/brand';
-import { DateAr, Money } from '@/shared/format';
+import { DateText, Money } from '@/shared/format';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Breakdown } from './breakdown';
@@ -48,14 +48,14 @@ export function SettlementDetailScreen() {
       </Button>
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="font-heading text-xl font-semibold">
-          <DateAr value={settlement.periodStart} /> – <DateAr value={settlement.periodEnd} />
+          <DateText value={settlement.periodStart} /> – <DateText value={settlement.periodEnd} />
         </h2>
         <Badge variant={settlement.voidedAt ? 'outline' : 'secondary'}>
           {settlement.voidedAt ? t.unlocked : t.locked}
         </Badge>
       </div>
       <p className="text-sm text-muted-foreground">
-        {t.lockedAt} <DateAr value={settlement.lockedAt} format="dateTime" />
+        {t.lockedAt} <DateText value={settlement.lockedAt} format="dateTime" />
       </p>
       <section aria-label={t.newTitle} className="rounded-xl border bg-card p-4">
         <Breakdown lines={breakdownOf(settlement)} />

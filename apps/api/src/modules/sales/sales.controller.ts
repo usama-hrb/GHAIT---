@@ -1,5 +1,7 @@
 import {
   idSchema,
+  type NewSaleReturn,
+  newSaleReturnSchema,
   type SaleAggregate,
   saleAggregateSchema,
   type SaleDetail,
@@ -42,6 +44,20 @@ export class SalesController {
   @ZodResponse(saleDetailSchema)
   get(@ZodParam('id', idSchema) id: string): Promise<SaleDetail> {
     return this.sales.get(id);
+  }
+
+  /**
+   * Records goods the customer gave back (RT1): the credit, the `return` stock moves and the cash
+   * handed back are built and checked on the server; a device sends the same through sync.
+   */
+  @Post(':id/return')
+  @HttpCode(200)
+  @ZodResponse(saleDetailSchema)
+  giveBack(
+    @ZodParam('id', idSchema) id: string,
+    @ZodBody(newSaleReturnSchema.omit({ saleId: true })) body: Omit<NewSaleReturn, 'saleId'>,
+  ): Promise<SaleDetail> {
+    return this.sales.giveBack({ ...body, saleId: id });
   }
 
   /** Cancels the sale: its cloth goes back on the rolls and what was paid is refunded. */

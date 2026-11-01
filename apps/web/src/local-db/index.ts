@@ -4,7 +4,7 @@ export type { AccountsRepository, CustomerAccountView, CustomerSummary } from '.
 export { ApiError, NetworkError } from './api';
 export type { AuditFilters, AuditPage, AuditRepository } from './audit';
 export type { Local, OutboxEntry } from './db';
-export { isPeriodLocked, ReadOnlyError, ValidationError } from './errors';
+export { isPeriodLocked, NotAllowedError, ReadOnlyError, ValidationError } from './errors';
 export type { ExpenseCategory, ExpensesRepository, MonthView, ReminderView } from './expenses';
 export type { IntegrityRepository, RecentEvent } from './integrity';
 export type {
@@ -33,10 +33,13 @@ export {
   LocalDbProvider,
   type SyncOverview,
   useLiveQuery,
+  useCanSeeCosts,
   useRepositories,
   useSession,
   useSyncStatus,
 } from './react';
+export type { PhotosRepository } from './photos';
+export type { ReportsRepository, ReportsView } from './reports';
 export type { Repositories } from './repositories';
 export type { RollChoice, SaleLineView, SalesRepository, SaleSummary, SaleView } from './sales';
 export {
@@ -54,4 +57,17 @@ export type {
   VariantsRepository,
 } from './tables';
 export type { SessionState } from './session';
+export type {
+  PayableView,
+  SupplierAccountsRepository,
+  SupplierStatementView,
+} from './supplier-accounts';
 export type { SyncState, SyncStatus } from './sync';
+export type {
+  HawlView,
+  ZakatOptions,
+  ZakatPreview,
+  ZakatReminder,
+  ZakatReportView,
+  ZakatRepository,
+} from './zakat';

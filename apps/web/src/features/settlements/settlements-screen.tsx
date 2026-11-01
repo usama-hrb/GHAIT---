@@ -6,7 +6,7 @@ import { toast } from 'sonner';
 import { messages } from '@/i18n';
 import { useLiveQuery, useRepositories } from '@/local-db';
 import { LoadingState, OfflineNotice, useOnlineStatus, VoidDialog } from '@/shared/brand';
-import { DateAr, Money } from '@/shared/format';
+import { DateText, Money } from '@/shared/format';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
@@ -69,7 +69,7 @@ export function SettlementsScreen() {
         <p className="text-sm text-muted-foreground">
           {data.lockedThrough ? (
             <>
-              {t.lockedThrough} <DateAr value={data.lockedThrough} />
+              {t.lockedThrough} <DateText value={data.lockedThrough} />
             </>
           ) : (
             t.noneYet
@@ -101,7 +101,8 @@ export function SettlementsScreen() {
         {local && (
           <div className="grid gap-3">
             <p>
-              {t.period}: <DateAr value={local.periodStart} /> – <DateAr value={local.periodEnd} />
+              {t.period}: <DateText value={local.periodStart} /> –{' '}
+              <DateText value={local.periodEnd} />
             </p>
             <Breakdown lines={local.breakdown} />
             <p className="text-sm text-muted-foreground">
@@ -144,8 +145,8 @@ export function SettlementsScreen() {
                     className={settlement.voidedAt ? 'text-muted-foreground' : undefined}
                   >
                     <TableCell>
-                      <DateAr value={settlement.periodStart} /> –{' '}
-                      <DateAr value={settlement.periodEnd} />
+                      <DateText value={settlement.periodStart} /> –{' '}
+                      <DateText value={settlement.periodEnd} />
                     </TableCell>
                     <TableCell className="text-end">
                       <Money

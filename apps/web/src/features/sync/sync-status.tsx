@@ -52,22 +52,24 @@ export function SyncStatus() {
   );
 }
 
-/** Forgets the user on this device (its local data stays, for the next sign-in). */
+/** Signs out this device while preserving its local data. */
 export function SignOutButton() {
   const session = useSession();
   const router = useRouter();
+
   return (
     <Button
-      size="icon-sm"
+      type="button"
       variant="ghost"
-      aria-label={messages.auth.signOut}
+      className="h-9 w-full justify-start gap-2 px-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
       onClick={() => {
         void session.logout().then(() => {
           router.replace('/login');
         });
       }}
     >
-      <LogOutIcon aria-hidden />
+      <LogOutIcon className="size-4 shrink-0" aria-hidden />
+      <span className="text-sm font-medium">{messages.auth.signOut}</span>
     </Button>
   );
 }

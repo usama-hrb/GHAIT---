@@ -17,6 +17,7 @@ import { DatabaseModule } from './database/index.js';
 import { AuditInterceptor, AuditModule } from './modules/audit/index.js';
 import { AuthModule } from './modules/auth/index.js';
 import { CatalogModule } from './modules/catalog/index.js';
+import { PhotosModule } from './modules/photos/index.js';
 import { CustomersModule } from './modules/customers/index.js';
 import { DataModule } from './modules/data/index.js';
 import { DevicesModule } from './modules/devices/index.js';
@@ -31,6 +32,7 @@ import { SalesModule } from './modules/sales/index.js';
 import { SettingsModule } from './modules/settings/index.js';
 import { SettlementsModule } from './modules/settlements/index.js';
 import { SyncModule } from './modules/sync/index.js';
+import { ZakatModule } from './modules/zakat/index.js';
 
 @Module({})
 export class AppModule implements NestModule {
@@ -46,6 +48,7 @@ export class AppModule implements NestModule {
         SettingsModule,
         SyncModule,
         CatalogModule,
+        PhotosModule,
         DevicesModule,
         InventoryModule,
         PurchasingModule,
@@ -56,6 +59,7 @@ export class AppModule implements NestModule {
         PartnersModule,
         SettlementsModule,
         IntegrityModule,
+        ZakatModule,
         DataModule,
         HealthModule,
       ],

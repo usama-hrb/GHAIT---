@@ -11,6 +11,7 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import { baseColumns } from './columns.js';
+import { zakatReport } from './zakat.js';
 
 /** SPEC §13 `partner`: the owner and the partner (SPEC §6). */
 export const partner = pgTable(
@@ -35,9 +36,11 @@ export const partnerDraw = pgTable(
     amountCents: bigint({ mode: 'number' }).notNull(),
     date: date({ mode: 'string' }).notNull(),
     reason: text().notNull(),
+    zakatReportId: uuid().references(() => zakatReport.id),
   },
   (table) => [
     index('partner_draw_partner_idx').on(table.partnerId),
+    index('partner_draw_zakat_report_idx').on(table.zakatReportId),
     check('partner_draw_amount_positive', sql`${table.amountCents} > 0`),
   ],
 );

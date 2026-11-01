@@ -36,6 +36,11 @@ export interface SyncHandler<E extends SyncEntity = SyncEntity> {
     context: { entityId: string; deviceId: string },
   ): Promise<SyncedRow<SyncRecord<E>>>;
   /**
+   * The record as the audit log and the conflict log keep it, when it should not keep all of it
+   * (a photo's image would add ~100 KB to every entry). Default: the record itself.
+   */
+  auditView?(record: SyncRecord<E>): unknown;
+  /**
    * The dates a change is accounted on, when they are not all in the payload (a sale void is
    * dated by its sale too). Default: periodDatesOf (@fabric/contracts).
    */

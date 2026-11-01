@@ -5,5 +5,6 @@ export default defineConfig({
   resolve: { alias: { '@': path.join(import.meta.dirname, 'src') } },
   test: {
     include: ['src/**/*.test.{ts,tsx}'],
+    setupFiles: ['./src/test-setup.ts'],
   },
 });

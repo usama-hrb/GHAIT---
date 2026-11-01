@@ -3,7 +3,7 @@
 import { TrendingDownIcon, TrendingUpIcon } from 'lucide-react';
 import { useId, useState } from 'react';
 import { designMessages as t } from '@/i18n/ar.design';
-import { DateAr, MeterInput, Meters, Money, MoneyInput, type MoneyTone } from '@/shared/format';
+import { DateText, MeterInput, Meters, Money, MoneyInput, type MoneyTone } from '@/shared/format';
 import { Field, FieldDescription, FieldLabel } from '@/shared/ui/field';
 import { Demo, Section } from './section';
 
@@ -54,10 +54,10 @@ export function FormatSection() {
         <Meters cm={123_456} />
       </Demo>
       <Demo title={t.format.dates} className="gap-6">
-        <DateAr value={SAMPLE_DATE} format="short" />
-        <DateAr value={SAMPLE_DATE} />
-        <DateAr value={SAMPLE_DATE} format="long" />
-        <DateAr value={SAMPLE_DATE} format="dateTime" />
+        <DateText value={SAMPLE_DATE} format="short" />
+        <DateText value={SAMPLE_DATE} />
+        <DateText value={SAMPLE_DATE} format="long" />
+        <DateText value={SAMPLE_DATE} format="dateTime" />
       </Demo>
       <div className="grid max-w-2xl gap-4 sm:grid-cols-2">
         <Field>

@@ -5,9 +5,9 @@ import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { type ReactNode, useState } from 'react';
 import { messages } from '@/i18n';
-import { useLiveQuery, useRepositories } from '@/local-db';
+import { useCanSeeCosts, useLiveQuery, useRepositories } from '@/local-db';
 import { EmptyState, LoadingState, OfflineNotice } from '@/shared/brand';
-import { DateAr, Meters, Money } from '@/shared/format';
+import { DateText, Meters, Money } from '@/shared/format';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
@@ -30,6 +30,8 @@ function SignedMeters({ cm }: { cm: number }) {
 export function RollScreen() {
   const id = useSearchParams().get('id') ?? '';
   const repositories = useRepositories();
+  // A cashier sees the length left, never what the roll cost (SPEC §11); the stock actions are the owner's.
+  const seesCosts = useCanSeeCosts();
   const view = useLiveQuery(
     async () => (await repositories.inventory.roll(id)) ?? null,
     [repositories, id],
@@ -98,56 +100,61 @@ export function RollScreen() {
         {field(t.rollFields.initial, <Meters cm={roll.lengthCmInitial} />)}
         {ledger.basisLengthCm !== roll.lengthCmInitial &&
           field(t.rollFields.basis, <Meters cm={ledger.basisLengthCm} />)}
-        {field(t.rollFields.cost, <Money cents={roll.costTotalCents} />)}
-        {field(t.rollFields.costPerMeter, <Money cents={ledger.costPerMeterCents} />)}
-        {field(t.rollFields.stockValue, <Money cents={ledger.unallocatedCostCents} />)}
-        {purchase &&
+        {seesCosts && field(t.rollFields.cost, <Money cents={roll.costTotalCents} />)}
+        {seesCosts && field(t.rollFields.costPerMeter, <Money cents={ledger.costPerMeterCents} />)}
+        {seesCosts && field(t.rollFields.stockValue, <Money cents={ledger.unallocatedCostCents} />)}
+        {seesCosts &&
+          purchase &&
           field(
             t.rollFields.purchase,
             <Link
               href={`/purchases/view?id=${purchase.id}`}
               className="underline-offset-4 hover:underline"
             >
-              <DateAr value={purchase.date} />
+              <DateText value={purchase.date} />
             </Link>,
           )}
       </dl>
 
-      <div className="flex flex-wrap gap-2">
-        <Button
-          variant={ledger.lengthEstimated ? 'accent' : 'outline'}
-          onClick={() => {
-            setAction('length_correction');
-          }}
-        >
-          <RulerIcon data-icon="inline-start" aria-hidden />
-          {t.actions.measure}
-        </Button>
-        <Button
-          variant="outline"
-          disabled={ledger.remainingCm <= 0}
-          onClick={() => {
-            setAction('loss');
-          }}
-        >
-          {t.actions.loss}
-        </Button>
-        <Button
-          variant="outline"
-          onClick={() => {
-            setAction('adjustment');
-          }}
-        >
-          {t.actions.adjustment}
-        </Button>
-        <Button
-          variant="ghost"
-          disabled={state === 'empty'}
-          onClick={() => void repositories.inventory.setRemnant(roll.id, roll.status !== 'remnant')}
-        >
-          {roll.status === 'remnant' ? t.actions.unmarkRemnant : t.actions.markRemnant}
-        </Button>
-      </div>
+      {seesCosts && (
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant={ledger.lengthEstimated ? 'accent' : 'outline'}
+            onClick={() => {
+              setAction('length_correction');
+            }}
+          >
+            <RulerIcon data-icon="inline-start" aria-hidden />
+            {t.actions.measure}
+          </Button>
+          <Button
+            variant="outline"
+            disabled={ledger.remainingCm <= 0}
+            onClick={() => {
+              setAction('loss');
+            }}
+          >
+            {t.actions.loss}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              setAction('adjustment');
+            }}
+          >
+            {t.actions.adjustment}
+          </Button>
+          <Button
+            variant="ghost"
+            disabled={state === 'empty'}
+            onClick={() =>
+              void repositories.inventory.setRemnant(roll.id, roll.status !== 'remnant')
+            }
+          >
+            {roll.status === 'remnant' ? t.actions.unmarkRemnant : t.actions.markRemnant}
+          </Button>
+        </div>
+      )}
 
       <section className="grid gap-2" aria-labelledby="history">
         <h3 id="history" className="font-heading font-semibold">
@@ -160,7 +167,7 @@ export function RollScreen() {
                 <TableHead>{t.historyColumns.date}</TableHead>
                 <TableHead>{t.historyColumns.move}</TableHead>
                 <TableHead className="text-end">{t.historyColumns.length}</TableHead>
-                <TableHead className="text-end">{t.historyColumns.cost}</TableHead>
+                {seesCosts && <TableHead className="text-end">{t.historyColumns.cost}</TableHead>}
                 <TableHead className="max-sm:hidden">{t.historyColumns.note}</TableHead>
               </TableRow>
             </TableHeader>
@@ -168,15 +175,17 @@ export function RollScreen() {
               {moves.map((move) => (
                 <TableRow key={move.id} className="h-12">
                   <TableCell>
-                    <DateAr value={move.date} />
+                    <DateText value={move.date} />
                   </TableCell>
                   <TableCell>{t.moveTypes[move.type]}</TableCell>
                   <TableCell className="text-end">
                     <SignedMeters cm={move.deltaCm} />
                   </TableCell>
-                  <TableCell className="text-end">
-                    {costOf.has(move.id) && <Money cents={costOf.get(move.id) ?? 0} />}
-                  </TableCell>
+                  {seesCosts && (
+                    <TableCell className="text-end">
+                      {costOf.has(move.id) && <Money cents={costOf.get(move.id) ?? 0} />}
+                    </TableCell>
+                  )}
                   <TableCell className="text-sm text-muted-foreground max-sm:hidden">
                     {move.note}
                   </TableCell>

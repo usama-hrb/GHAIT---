@@ -12,7 +12,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { messages } from '@/i18n';
 import { type ColorStock, useLiveQuery, useRepositories } from '@/local-db';
-import { EmptyState, LoadingState, OfflineNotice } from '@/shared/brand';
+import { EmptyState, LoadingState, OfflineNotice, ProductPhoto } from '@/shared/brand';
 import { Meters } from '@/shared/format';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
@@ -31,7 +31,13 @@ function StockBadge({ color }: { color: ColorStock }) {
   );
 }
 
-function ColorRows({ colors }: { colors: ColorStock[] }) {
+function ColorRows({
+  colors,
+  photos,
+}: {
+  colors: ColorStock[];
+  photos: ReadonlyMap<string, string> | undefined;
+}) {
   return (
     <Table>
       <TableHeader>
@@ -45,13 +51,18 @@ function ColorRows({ colors }: { colors: ColorStock[] }) {
         {colors.map((color) => (
           <TableRow key={color.variant.id} className="h-12">
             <TableCell>
-              <Link
-                href={`/inventory/color?id=${color.variant.id}`}
-                className="me-2 font-medium underline-offset-4 hover:underline"
-              >
-                {color.variant.colorName}
-              </Link>
-              <StockBadge color={color} />
+              <span className="flex items-center gap-3">
+                <ProductPhoto src={photos?.get(color.variant.id)} className="size-9 rounded-md" />
+                <span>
+                  <Link
+                    href={`/inventory/color?id=${color.variant.id}`}
+                    className="me-2 font-medium underline-offset-4 hover:underline"
+                  >
+                    {color.variant.colorName}
+                  </Link>
+                  <StockBadge color={color} />
+                </span>
+              </span>
             </TableCell>
             <TableCell className="text-end">
               <Meters cm={color.remainingCm} />
@@ -72,6 +83,7 @@ export function InventoryScreen() {
   const repositories = useRepositories();
   const [search, setSearch] = useState('');
   const data = useLiveQuery(() => repositories.inventory.overview(search), [repositories, search]);
+  const photos = useLiveQuery(() => repositories.photos.sources(), [repositories]);
 
   const out = (data?.fabrics ?? []).flatMap(({ fabric, colors }) =>
     colors.filter((color) => color.state === 'out').map((color) => ({ fabric, color })),
@@ -169,7 +181,7 @@ export function InventoryScreen() {
                 </span>
               </div>
               {colors.length > 0 ? (
-                <ColorRows colors={colors} />
+                <ColorRows colors={colors} photos={photos} />
               ) : (
                 <p className="px-4 py-3 text-sm text-muted-foreground">
                   {messages.catalog.colorsEmpty}

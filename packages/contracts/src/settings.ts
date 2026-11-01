@@ -2,6 +2,9 @@ import { DEFAULT_EST_CM_PER_KG_POLICY, DEFAULT_ZAKAT_SETTINGS, NISAB_GRAMS } fro
 import { z } from 'zod';
 import { isoDateSchema } from './common.js';
 
+/** A metal price entered by hand, with the day it was seen (SPEC §10). */
+const metalPriceSchema = z.object({ pricePerGramCents: z.int().min(1), date: isoDateSchema });
+
 /**
  * Every setting the app reads (SPEC §0.7: rules marked [قابل للإعداد] live in the `setting`
  * table). A key without a row has its default. Values are validated per key.
@@ -55,6 +58,13 @@ export const SETTINGS = {
     schema: z.boolean(),
     default: DEFAULT_ZAKAT_SETTINGS.includeDoubtfulDebts,
   },
+  /** SPEC §10: the day the first hawl started (e.g. the shop's opening); hawls fall on its Hijri day. */
+  zakat_hawl_start: { schema: isoDateSchema.nullable(), default: null },
+  /** SPEC §10: prices entered by hand, each with the day it was seen. */
+  zakat_gold_price: { schema: metalPriceSchema.nullable(), default: null },
+  zakat_silver_price: { schema: metalPriceSchema.nullable(), default: null },
+  /** SPEC §10 "تذكير قبل الحول بأسبوعين". */
+  zakat_reminder_days: { schema: z.int().min(0).max(60), default: 14 },
 } as const satisfies Record<string, { schema: z.ZodType; default: unknown }>;
 
 export type SettingKey = keyof typeof SETTINGS;

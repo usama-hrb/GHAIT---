@@ -300,6 +300,7 @@ describe('voiding a sale (P13)', () => {
       sale: aggregate.sale,
       moves: aggregate.moves,
       allocations: aggregate.allocation ? [aggregate.allocation] : [],
+      returns: [],
     };
     const sorted = [...aggregate.moves].sort((a, b) => a.id.localeCompare(b.id));
     const voided = buildSaleVoid(
@@ -358,7 +359,7 @@ describe('voiding a sale (P13)', () => {
     );
     const voided = buildSaleVoid(
       { reason: 'ألغى الزبون', date: DAY },
-      { sale: aggregate.sale, moves: aggregate.moves, allocations: [] },
+      { sale: aggregate.sale, moves: aggregate.moves, allocations: [], returns: [] },
       { voidId: crypto.randomUUID(), reversalIds: [crypto.randomUUID()], refundId: null },
       { deviceId: 'desk', now: NOW },
     );

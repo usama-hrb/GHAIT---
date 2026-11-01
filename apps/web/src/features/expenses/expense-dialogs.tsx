@@ -30,6 +30,7 @@ import { Input } from '@/shared/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
 import { Switch } from '@/shared/ui/switch';
 import { PeriodLockHint, useLockedThrough } from '@/features/settlements';
+import { categoryName } from './category-name';
 
 const t = messages.expenses;
 
@@ -67,7 +68,7 @@ function CategorySelect({
       <SelectContent>
         {categories.map((category) => (
           <SelectItem key={category.key} value={category.key}>
-            {category.label}
+            {categoryName(category)}
           </SelectItem>
         ))}
       </SelectContent>

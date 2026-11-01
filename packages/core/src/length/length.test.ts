@@ -75,6 +75,8 @@ describe('length', () => {
   ])('formatLength(%i) → %j', (cm, text) => {
     expect(formatLength(cm)).toBe(text);
     expect(formatLength(cm, 'ar')).toBe(text);
+    // The same digits with the English unit.
+    expect(formatLength(cm, 'en')).toBe(text.replace('\u00A0م', '\u00A0m'));
   });
 
   it('formatLength passes options and rejects non-integer cm', () => {

@@ -9,6 +9,7 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react';
+import { mayReadCosts } from '@fabric/contracts';
 import { ApiClient } from './api';
 import { ShopDatabase } from './db';
 import { createRepositories, type Repositories } from './repositories';
@@ -91,6 +92,16 @@ export function useSession(): SessionState & Pick<Session, 'login' | 'logout'> {
   const { session } = useLocalDb();
   const state = useSyncExternalStore(session.subscribe, session.getState, () => LOADING_SESSION);
   return { ...state, login: (input) => session.login(input), logout: () => session.logout() };
+}
+
+/**
+ * Whether the signed-in account sees costs, profit and what the shop earns (SPEC §11): everyone
+ * but a cashier. The API never sends a cashier's device a cost; this keeps the screens from
+ * showing blanks where a cost would be.
+ */
+export function useCanSeeCosts(): boolean {
+  const { user } = useSession();
+  return user !== null && mayReadCosts(user.role);
 }
 
 const IDLE: SyncStatus = { state: 'idle', lastSyncedAt: null };
