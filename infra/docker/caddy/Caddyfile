@@ -1,5 +1,10 @@
 {
 	email {$ACME_EMAIL}
+
+	# A browser sends no server name when it opens a bare IP address, and inside Docker Caddy sees
+	# the container's address, not the server's, so it could not pick the certificate. This names
+	# it. With a domain every browser sends the name and this changes nothing.
+	default_sni {$DOMAIN}
 }
 
 # HTTPS certificates are issued automatically for {$DOMAIN} (Let's Encrypt; local CA for localhost).

@@ -2,7 +2,10 @@
 # Docker targets use STACK=dev (default) or STACK=prod, e.g. `make up STACK=prod`.
 .DEFAULT_GOAL := help
 
-STACK ?= dev
+# The stack comes from the command line, the environment, or a STACK=prod line in .env, so a
+# server whose .env says STACK=prod runs production with a plain `make up`. Without any of those
+# it is dev.
+STACK ?= $(or $(shell sed -n 's/^STACK=//p' .env 2>/dev/null | tail -n 1),dev)
 COMPOSE := docker compose --env-file .env -f infra/docker/compose.$(STACK).yml
 # Extra compose profiles, e.g. `make up PROFILES=tools` for pgAdmin.
 PROFILES ?=

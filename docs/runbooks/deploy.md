@@ -65,6 +65,7 @@ Edit `.env`. Every variable is described in `.env.example`; on the server set at
 
 | Variable                    | Value                                                                       |
 | --------------------------- | --------------------------------------------------------------------------- |
+| `STACK`                     | `prod`: a plain `make up` and every other `make` target then run production |
 | `POSTGRES_PASSWORD`         | `openssl rand -base64 32`                                                   |
 | `JWT_ACCESS_SECRET`         | `openssl rand -base64 48` (the API refuses to start with the example value) |
 | `DOMAIN`                    | `shop.example.ma`                                                           |
@@ -90,6 +91,25 @@ Check:
 - the nightly service can write too: `docker compose --env-file .env -f infra/docker/compose.prod.yml run --rm -e BACKUP_ONCE=1 backup`.
 
 Every service has `restart: unless-stopped`: after a crash or a reboot, Docker starts it again.
+
+### Temporary: by IP address, before a domain exists
+
+Set `DOMAIN` to the server's IP address (for example `DOMAIN=76.13.56.213`) and `STACK=prod`, fill in the other values as above (`ACME_EMAIL` can be any address: an IP gets no Let's Encrypt certificate), and run `make up`. Open ports 80 and 443 in the server's firewall and in the hosting provider's panel, then browse to `https://<IP>`.
+
+It has to be HTTPS even on an IP. The app creates every record's id in the browser with `crypto.randomUUID`, and the sign-in cookie is marked Secure; a browser offers the first only on a secure page and drops the second over plain HTTP, so signing in and saving would fail. Caddy serves the IP over HTTPS with a certificate from its own local authority, which no browser knows, so each device shows a certificate warning until it trusts that authority. Verified on a production build of this stack: the page loads, sign-in survives a reload, and the health check answers.
+
+- **Quick use:** accept the warning. Selling and syncing work. The browser refuses to register the service worker for an untrusted certificate, so the app cannot be installed and cannot be reloaded while offline.
+- **Proper use on the shop's tablet:** copy Caddy's root certificate out of the server and install it on the tablet as a CA certificate (on Android: Settings → Security → Encryption and credentials → Install a certificate → CA certificate). The warning then disappears, the app can be installed, and it reloads offline.
+
+  ```sh
+  docker compose --env-file .env -f infra/docker/compose.prod.yml cp proxy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt
+  ```
+
+  The matching private key stays in the server's `caddy_data` volume. Install the certificate only on the shop's own devices, and remove it once the shop has a domain.
+
+- **Other ports:** if 80 and 443 are taken, set `HTTP_PORT` and `HTTPS_PORT` and browse to `https://<IP>:<HTTPS_PORT>` directly. The automatic redirect from plain HTTP always points at port 443, so it does not help on other ports.
+
+**Moving to a domain later.** Point the domain at the server, set `DOMAIN` to it, and run `make up`; Caddy then gets a trusted Let's Encrypt certificate. A browser keeps its local database per address, so `https://<domain>` starts with an empty database on each device and downloads everything from the server. Before changing, make sure every device shows "connected" with nothing waiting to sync, because work still waiting on the IP address's copy cannot be reached from the new address.
 
 ## 5. Backups off the server
 
