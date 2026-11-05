@@ -1,4 +1,4 @@
-import type { ReturnLine } from '@fabric/contracts';
+import type { ReturnLineInput } from '@fabric/contracts';
 import { sql } from 'drizzle-orm';
 import { bigint, check, date, index, jsonb, pgTable, text, uuid } from 'drizzle-orm/pg-core';
 import { baseColumns } from './columns.js';
@@ -20,7 +20,7 @@ export const saleReturn = pgTable(
     date: date({ mode: 'string' }).notNull(),
     reason: text().notNull(),
     /** Each line given back, with the stock move that restores it (returnLineSchema). */
-    lines: jsonb().$type<ReturnLine[]>().notNull(),
+    lines: jsonb().$type<ReturnLineInput[]>().notNull(),
     creditCents: bigint({ mode: 'number' }).notNull(),
     refundId: uuid().references(() => payment.id),
   },

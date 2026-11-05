@@ -63,17 +63,17 @@ export const photoImageSchema = imageFields.superRefine(imageRules);
 export type PhotoImage = z.output<typeof photoImageSchema>;
 
 /**
- * A picture of a colour, shown on its POS tile and in the lists. The device shrinks what the
+ * A picture of a product, shown on its POS tile and in the lists. The device shrinks what the
  * owner picks to a small JPEG before saving it, so the bytes travel inside the record, base64,
  * like any other field (ADR 0009). A photo is never edited: a new one is created and the old one
- * voided. The colour shows its newest live photo.
+ * voided. The product shows its newest live photo.
  */
 export const photoSchema = recordBaseSchema
-  .extend({ variantId: idSchema, ...imageFields.shape })
+  .extend({ productId: idSchema, ...imageFields.shape })
   .superRefine(imageRules);
 export type Photo = z.output<typeof photoSchema>;
 
-/** The photo a colour shows: its newest live one (null when it has none). */
+/** The photo a product shows: its newest live one (null when it has none). */
 export function currentPhotoOf<P extends Pick<Photo, 'id' | 'createdAt' | 'voidedAt'>>(
   photos: readonly P[],
 ): P | null {

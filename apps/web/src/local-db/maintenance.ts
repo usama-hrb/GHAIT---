@@ -1,29 +1,27 @@
 import {
+  batchLedgerOf,
   type DataExport,
   dataExportSchema,
   EXPORT_ENTITIES,
-  type Fabric,
-  type Roll,
-  rollLedgerOf,
+  type Product,
+  type ProductBatch,
   type SyncConflict,
-  type Variant,
 } from '@fabric/contracts';
-import type { RollLedger } from '@fabric/core';
+import type { ProductStockBatchLedger } from '@fabric/core';
 import type { Local, OutboxEntry } from './db';
 import { withFrozenCosts } from './ledgers';
 import type { LocalStore } from './store';
 import { PULLED_AT, tableOf } from './sync';
 
-export interface RollToReview {
-  roll: Local<Roll>;
-  variant: Local<Variant> | undefined;
-  fabric: Local<Fabric> | undefined;
-  ledger: RollLedger;
+export interface BatchToReview {
+  batch: Local<ProductBatch>;
+  product: Local<Product> | undefined;
+  ledger: ProductStockBatchLedger;
 }
 
 /**
  * What needs the owner's eye after syncing (BUILD_PROMPTS 3.6): changes the server refused,
- * conflicts it settled, and rolls sold beyond their length (two devices offline, or an estimate
+ * conflicts it settled, and batches sold beyond what they held (two devices offline, or an estimate
  * that was too short). Plus a full export of the device's data.
  */
 export class MaintenanceRepository {
@@ -50,25 +48,32 @@ export class MaintenanceRepository {
     );
   }
 
-  /** Rolls with less than nothing left, or length sold that was not on them: count or measure them. */
-  async rollsToReview(): Promise<RollToReview[]> {
+  /** Batches with less than nothing left, or more sold than was on them: count or measure them. */
+  async batchesToReview(): Promise<BatchToReview[]> {
     const { db } = this.store;
-    const [rolls, moves, variants, fabrics] = await Promise.all([
-      db.rolls.toArray(),
-      db.stockMoves.toArray().then((all) => withFrozenCosts(db, all)),
-      db.variants.toArray(),
-      db.fabrics.toArray(),
+    const [batches, moves, products] = await Promise.all([
+      db.productBatches.toArray(),
+      db.productStockMoves.toArray().then((all) => withFrozenCosts(db, all)),
+      db.products.toArray(),
     ]);
-    const variantById = new Map(variants.map((variant) => [variant.id, variant]));
-    const fabricById = new Map(fabrics.map((fabric) => [fabric.id, fabric]));
-    return rolls.flatMap((roll) => {
-      const ledger = rollLedgerOf(
-        roll,
-        moves.filter((move) => move.rollId === roll.id),
-      );
-      if (ledger.remainingCm >= 0 && ledger.oversoldCm === 0) return [];
-      const variant = variantById.get(roll.variantId);
-      return [{ roll, variant, fabric: variant && fabricById.get(variant.fabricId), ledger }];
+    const productById = new Map(products.map((product) => [product.id, product]));
+    return batches.flatMap((batch) => {
+      let ledger: ProductStockBatchLedger;
+      try {
+        ledger = batchLedgerOf(
+          batch,
+          moves.filter((move) => move.batchId === batch.id),
+        );
+      } catch {
+        return []; // A history the ledger cannot read has nothing to show here.
+      }
+      const oversold =
+        ledger.oversold.unit === 'meter'
+          ? ledger.oversold.centimeters
+          : ledger.oversold.unit === 'piece'
+            ? ledger.oversold.pieces
+            : ledger.oversold.grams;
+      return oversold > 0 ? [{ batch, product: productById.get(batch.productId), ledger }] : [];
     });
   }
 

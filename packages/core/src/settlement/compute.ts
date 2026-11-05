@@ -1,7 +1,9 @@
 import { assertInteger } from '../numeric/index.js';
-import { ownerAndPartner, type PartnerOwnership, splitByOwnership } from './ownership.js';
+import { type PartnerOwnership, participantsOf, splitByOwnership } from './ownership.js';
 import {
   assertIsoDate,
+  type PartnerWeight,
+  partnerWeightsFor,
   type ProfitSplitRule,
   splitNetProfit,
   splitRuleForPeriod,
@@ -95,7 +97,12 @@ export interface Settlement {
   carryDeficitOutCents: number;
   /** The rule the shares were computed with (store its id with the settlement). */
   splitRule: ProfitSplitRule;
-  /** Added to each partner's undrawn profit (partner balance); non-zero amounts only. */
+  /** What each partner's weight was under that rule (S17), in participant order. */
+  partnerWeights: PartnerWeight[];
+  /**
+   * Added to each partner's undrawn profit (partner balance); non-zero amounts only, the owner
+   * first, then the partners by id. `partnerShareCents` is the partners' total.
+   */
   partnerShares: { partnerId: string; role: 'owner' | 'partner'; amountCents: number }[];
   /** capital_move rows to create: the shop share kept as capital, split by ownership (T10). */
   capitalMoves: { partnerId: string; type: 'retained_profit'; amountCents: number }[];
@@ -164,19 +171,32 @@ export function computeSettlement(input: SettlementInput): Settlement {
     throw new RangeError(`period ends (${periodEnd}) before it starts (${periodStart})`);
   }
   const { lossesCents, netProfitCents } = periodNetProfit(input);
-  const [owner, partner] = ownerAndPartner(input.partners);
+  const [owner, ...partners] = participantsOf(input.partners);
+  if (!owner) throw new RangeError('no owner');
   const splitRule = splitRuleForPeriod(input.splitRules, periodStart);
+  // The rule's weights per partner, by the participants as they are (a rule that does not name
+  // its partners belongs to a shop with one).
+  const partnerWeights = partnerWeightsFor(splitRule, [owner, ...partners]);
 
   const shares =
     netProfitCents > 0
-      ? splitNetProfit(netProfitCents, splitRule)
-      : { ownerCents: 0, partnerCents: 0, shopCents: 0 };
+      ? splitNetProfit(netProfitCents, {
+          ...splitRule,
+          partnerWeight: partnerWeights.reduce((sum, { weight }) => sum + weight, 0),
+          partnerWeights,
+        })
+      : { ownerCents: 0, partnerCents: 0, shopCents: 0, partners: [] };
   // Math.max keeps +0 when net is exactly 0.
   const carryDeficitOutCents = Math.max(0, -netProfitCents);
 
+  const partnerCents = new Map((shares.partners ?? []).map((part) => [part.partnerId, part.cents]));
   const partnerShares = [
     { partnerId: owner.partnerId, role: 'owner' as const, amountCents: shares.ownerCents },
-    { partnerId: partner.partnerId, role: 'partner' as const, amountCents: shares.partnerCents },
+    ...partners.map(({ partnerId }) => ({
+      partnerId,
+      role: 'partner' as const,
+      amountCents: partnerCents.get(partnerId) ?? 0,
+    })),
   ].filter(({ amountCents }) => amountCents > 0);
   const capitalMoves = splitByOwnership(shares.shopCents, input.partners)
     .filter(({ amountCents }) => amountCents > 0)
@@ -223,6 +243,7 @@ export function computeSettlement(input: SettlementInput): Settlement {
     shopShareCents: shares.shopCents,
     carryDeficitOutCents,
     splitRule,
+    partnerWeights,
     partnerShares,
     capitalMoves,
     breakdown,

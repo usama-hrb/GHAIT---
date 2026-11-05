@@ -409,10 +409,10 @@ export function applyEvent(ledger: Ledger, event: ScenarioEvent): void {
       const creditCents = returnCreditCents({
         lines: [
           {
-            soldCm: line.soldCm,
+            soldQuantity: line.soldCm,
             lineTotalCents: line.lineTotalCents,
-            returnedCm: given.returnedCm,
-            returningCm: returnedCm,
+            returnedQuantity: given.returnedCm,
+            returningQuantity: returnedCm,
           },
         ],
         discountCents: 0,

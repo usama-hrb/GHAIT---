@@ -198,7 +198,7 @@ export class SettlementsService implements OnModuleInit {
     const records = <R>(rows: SyncedRow<R>[]) => rows.map((row) => row.record);
     const read = <E extends SyncEntity>(entity: E) => this.sync.readAll(entity);
     const [
-      rolls,
+      batches,
       stockMoves,
       sales,
       saleLines,
@@ -212,8 +212,8 @@ export class SettlementsService implements OnModuleInit {
       splitRules,
       partners,
     ] = await Promise.all([
-      read('roll'),
-      read('stock_move'),
+      read('product_batch'),
+      read('product_stock_move'),
       read('sale'),
       read('sale_line'),
       read('sale_return'),
@@ -227,7 +227,7 @@ export class SettlementsService implements OnModuleInit {
       read('partner'),
     ]);
     return {
-      rolls: records(rolls),
+      batches: records(batches),
       stockMoves: withSeq(stockMoves),
       sales: records(sales),
       saleLines: records(saleLines),

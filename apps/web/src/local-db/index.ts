@@ -4,26 +4,54 @@ export type { AccountsRepository, CustomerAccountView, CustomerSummary } from '.
 export { ApiError, NetworkError } from './api';
 export type { AuditFilters, AuditPage, AuditRepository } from './audit';
 export type { Local, OutboxEntry } from './db';
-export { isPeriodLocked, NotAllowedError, ReadOnlyError, ValidationError } from './errors';
-export type { ExpenseCategory, ExpensesRepository, MonthView, ReminderView } from './expenses';
-export type { IntegrityRepository, RecentEvent } from './integrity';
+export {
+  isAlreadyCreated,
+  isPeriodLocked,
+  NotAllowedError,
+  ReadOnlyError,
+  ValidationError,
+} from './errors';
+export {
+  type EmployeeDetailView,
+  type EmployeeDirectory,
+  type EmployeesRepository,
+  type EmployeeSummary,
+  SALARY_NEEDS_CONFIRMATION,
+  type SalaryWarning,
+} from './employees';
 export type {
-  ColorStock,
-  ColorStockState,
-  FabricStock,
-  InventoryRepository,
-  RollView,
-} from './inventory';
+  ExpenseCategory,
+  ExpensesRepository,
+  MonthRow,
+  MonthView,
+  ReminderView,
+  TemplateView,
+} from './expenses';
+export type {
+  ActivityEvent,
+  ActivityKind,
+  DailySales,
+  DuesOverview,
+  HomeRepository,
+  PayablesOverview,
+  ReceivablesOverview,
+  SalesOverview,
+  SalesWindow,
+  StockAdjustmentKind,
+  StockAttention,
+} from './home';
+export type { IntegrityRepository, RecentEvent } from './integrity';
 export {
   DeviceNotRegisteredError,
   type PurchasesRepository,
   type PurchaseSummary,
 } from './purchases';
-export type { MaintenanceRepository, RollToReview } from './maintenance';
+export type { MaintenanceRepository, BatchToReview } from './maintenance';
 export {
   NEEDS_CONFIRMATION,
-  PARTNER_SETUP_ISSUE,
   type PartnerAccountView,
+  type PartnerAllocation,
+  type PartnerDraft,
   type PartnersRepository,
   type PartnerView,
 } from './partners';
@@ -39,28 +67,48 @@ export {
   useSyncStatus,
 } from './react';
 export type { PhotosRepository } from './photos';
+export {
+  type InventorySummary,
+  type ProductBatchView,
+  type ProductDetailView,
+  type ProductInventoryOverview,
+  type ProductInventoryRepository,
+  type MovementReference,
+  type ProductMovementView,
+  type ProductRemovalView,
+  type ProductStockView,
+  STOCK_FILTERS,
+  type StockPurchase,
+  type StockFilter,
+  type StockStatus,
+} from './product-inventory';
 export type { ReportsRepository, ReportsView } from './reports';
 export type { Repositories } from './repositories';
-export type { RollChoice, SaleLineView, SalesRepository, SaleSummary, SaleView } from './sales';
+export type { BatchChoice, SaleLineView, SalesRepository, SaleSummary, SaleView } from './sales';
+export type { BatchView, StockRepository } from './stock';
 export {
+  type HistoryShare,
   NeedsServerError,
   type ServerLink,
+  type SettlementHistoryRow,
   type SettlementsRepository,
   type SettlementView,
   type SplitRuleRow,
 } from './settlements';
+export type { ShopIdentity, ShopSettingsRepository } from './shop-settings';
 export type {
   CustomersRepository,
-  FabricsRepository,
+  ProductsRepository,
   SettingsRepository,
   SuppliersRepository,
-  VariantsRepository,
 } from './tables';
 export type { SessionState } from './session';
 export type {
   PayableView,
   SupplierAccountsRepository,
-  SupplierStatementView,
+  SupplierAccountView,
+  SupplierPurchaseRecord,
+  SupplierSummary,
 } from './supplier-accounts';
 export type { SyncState, SyncStatus } from './sync';
 export type {

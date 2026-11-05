@@ -1,72 +1,91 @@
 import { AccountsRepository } from './accounts';
 import { AuditRepository } from './audit';
+import { EmployeesRepository } from './employees';
 import { ExpensesRepository } from './expenses';
+import { HomeRepository } from './home';
 import { IntegrityRepository } from './integrity';
-import { InventoryRepository } from './inventory';
 import { MaintenanceRepository } from './maintenance';
 import { PartnersRepository } from './partners';
 import { PhotosRepository } from './photos';
+import { ProductInventoryRepository } from './product-inventory';
 import { PurchasesRepository } from './purchases';
 import { ReportsRepository } from './reports';
 import { SalesRepository } from './sales';
+import { StockRepository } from './stock';
 import { SupplierAccountsRepository } from './supplier-accounts';
 import { type ServerLink, SettlementsRepository } from './settlements';
+import { ShopSettingsRepository } from './shop-settings';
 import { ZakatRepository } from './zakat';
 import type { LocalStore } from './store';
 import {
+  BatchesTable,
   CustomersRepository,
-  FabricsRepository,
-  RollsTable,
-  SettingsRepository,
+  ProductsRepository,
   SuppliersRepository,
-  VariantsRepository,
 } from './tables';
 
 export interface Repositories {
-  fabrics: FabricsRepository;
-  variants: VariantsRepository;
+  products: ProductsRepository;
   photos: PhotosRepository;
   suppliers: SuppliersRepository;
-  settings: SettingsRepository;
+  settings: ShopSettingsRepository;
   purchases: PurchasesRepository;
   supplierAccounts: SupplierAccountsRepository;
-  inventory: InventoryRepository;
+  stock: StockRepository;
+  productInventory: ProductInventoryRepository;
   customers: CustomersRepository;
   sales: SalesRepository;
   accounts: AccountsRepository;
   maintenance: MaintenanceRepository;
   expenses: ExpensesRepository;
+  employees: EmployeesRepository;
   partners: PartnersRepository;
   settlements: SettlementsRepository;
   integrity: IntegrityRepository;
   audit: AuditRepository;
   zakat: ZakatRepository;
   reports: ReportsRepository;
+  home: HomeRepository;
 }
 
 /** `server`: what approving a settlement needs (none in tests that do not settle). */
 export function createRepositories(store: LocalStore, server?: ServerLink): Repositories {
-  const fabrics = new FabricsRepository(store);
-  const settings = new SettingsRepository(store);
+  const settings = new ShopSettingsRepository(store, server);
+  const products = new ProductsRepository(store);
+  const purchases = new PurchasesRepository(store);
+  const stock = new StockRepository(store, new BatchesTable(store));
+  const accounts = new AccountsRepository(store);
+  const supplierAccounts = new SupplierAccountsRepository(store);
+  const productInventory = new ProductInventoryRepository(
+    store,
+    products,
+    purchases,
+    stock,
+    settings,
+  );
+  const expenses = new ExpensesRepository(store, settings);
+  const zakat = new ZakatRepository(store, settings, server);
   return {
-    fabrics,
-    variants: new VariantsRepository(store),
+    products,
     photos: new PhotosRepository(store),
     suppliers: new SuppliersRepository(store),
     settings,
-    purchases: new PurchasesRepository(store),
-    supplierAccounts: new SupplierAccountsRepository(store),
-    inventory: new InventoryRepository(store, new RollsTable(store), fabrics, settings),
+    purchases,
+    supplierAccounts,
+    stock,
+    productInventory,
     customers: new CustomersRepository(store),
     sales: new SalesRepository(store, settings),
-    accounts: new AccountsRepository(store),
+    accounts,
     maintenance: new MaintenanceRepository(store),
-    expenses: new ExpensesRepository(store, settings),
+    expenses,
+    employees: new EmployeesRepository(store, expenses),
     partners: new PartnersRepository(store),
     settlements: new SettlementsRepository(store, server),
     integrity: new IntegrityRepository(store),
     audit: new AuditRepository(store, server),
-    zakat: new ZakatRepository(store, settings, server),
+    zakat,
     reports: new ReportsRepository(store, settings),
+    home: new HomeRepository(store, accounts, supplierAccounts, productInventory, expenses, zakat),
   };
 }

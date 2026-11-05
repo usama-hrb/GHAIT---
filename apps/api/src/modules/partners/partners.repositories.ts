@@ -2,8 +2,8 @@ import {
   type CapitalMove,
   checkCapitalMove,
   checkCapitalMoveVoid,
+  checkPartnerWrite,
   checkUnchanged,
-  PARTNER_ISSUES,
   type Partner,
   type PartnerDraw,
 } from '@fabric/contracts';
@@ -17,11 +17,20 @@ type PartnerRow = typeof schema.partner.$inferSelect;
 function partnerOf(row: PartnerRow): SyncedRow<Partner> {
   return {
     serverSeq: row.serverSeq,
-    record: { ...baseOf(row), name: row.name, ownershipBp: row.ownershipBp, isOwner: row.isOwner },
+    record: {
+      ...baseOf(row),
+      name: row.name,
+      ownershipBp: row.ownershipBp,
+      isOwner: row.isOwner,
+      phone: row.phone,
+      title: row.title,
+      startDate: row.startDate,
+      notes: row.notes,
+    },
   };
 }
 
-/** The owner and the partner (SPEC §6): mutable, last write wins. */
+/** The owner and the partners (SPEC §6, S17): mutable, last write wins. */
 @Injectable()
 export class PartnerRepository implements SyncHandler<'partner'> {
   readonly entity = 'partner' as const;
@@ -34,20 +43,25 @@ export class PartnerRepository implements SyncHandler<'partner'> {
   }
 
   async write(record: Partner): Promise<SyncedRow<Partner>> {
-    // S4: the owner and one partner. A device that set them up again before it had pulled
-    // them would otherwise add two more.
-    if (!(await this.find(record.id))) {
-      const live = (await this.list()).filter((row) => row.record.voidedAt === null);
-      if (live.length >= 2) {
-        throw new SyncRejection('validation_failed', 'The two partners are set up already', [
-          { path: ['id'], message: PARTNER_ISSUES.alreadySetUp, code: 'custom' },
-        ]);
-      }
+    // S4, S17: one owner, who stays the owner, and no more than 100% owned between everyone. A
+    // device that set the owner up again before it had pulled them would otherwise add a second.
+    const current = await this.find(record.id);
+    const issues = checkPartnerWrite(
+      record,
+      current?.record,
+      (await this.list()).map((row) => row.record),
+    );
+    if (issues.length > 0) {
+      throw new SyncRejection('validation_failed', 'These partners do not fit together', issues);
     }
     const fields = {
       name: record.name,
       ownershipBp: record.ownershipBp,
       isOwner: record.isOwner,
+      phone: record.phone,
+      title: record.title,
+      startDate: record.startDate,
+      notes: record.notes,
       updatedAt: new Date(record.updatedAt),
       deviceId: record.deviceId,
     };

@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/index.js';
-import { InventoryModule } from '../inventory/index.js';
+import { AuthModule } from '../auth/index.js';
+import { CatalogModule } from '../catalog/index.js';
 import { ReceivablesModule } from '../receivables/index.js';
+import { StockModule } from '../stock/index.js';
 import { SyncModule } from '../sync/index.js';
 import { SalesController } from './sales.controller.js';
 import {
@@ -13,7 +15,7 @@ import {
 import { SalesService } from './sales.service.js';
 
 @Module({
-  imports: [SyncModule, AuditModule, InventoryModule, ReceivablesModule],
+  imports: [SyncModule, AuditModule, AuthModule, CatalogModule, StockModule, ReceivablesModule],
   controllers: [SalesController],
   providers: [
     SalesService,

@@ -232,9 +232,15 @@ describe('roles and the owner account', () => {
     await t.http().get('/settings').auth(partner, { type: 'bearer' }).expect(200);
     const refused = await t
       .http()
-      .put(`/fabrics/${crypto.randomUUID()}`)
+      .put(`/products/${crypto.randomUUID()}`)
       .auth(partner, { type: 'bearer' })
-      .send({ name: 'x', refPricePerMeterCents: 1, minPricePerMeterCents: 1 })
+      .send({
+        name: 'x',
+        purchaseUnits: ['meter'],
+        sellingUnits: ['meter'],
+        pricePerMeterCents: 100,
+        minPricePerMeterCents: 50,
+      })
       .expect(403);
     expect(errorCode(refused.body)).toBe('forbidden');
     await t

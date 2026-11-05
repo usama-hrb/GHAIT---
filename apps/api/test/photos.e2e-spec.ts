@@ -25,7 +25,7 @@ describe('photos of colours (ADR 0009)', () => {
   let t: TestApp;
   let owner: Session;
   let cashierToken = '';
-  const variantId = crypto.randomUUID();
+  const productId = crypto.randomUUID();
   let tick = 0;
 
   const photo = (bytes: number, overrides: Partial<Photo> = {}): Photo => {
@@ -37,7 +37,7 @@ describe('photos of colours (ADR 0009)', () => {
       updatedAt: at,
       deviceId: 'desk',
       voidedAt: null,
-      variantId,
+      productId,
       contentType: 'image/jpeg',
       width: 480,
       height: 480,
@@ -57,12 +57,14 @@ describe('photos of colours (ADR 0009)', () => {
   beforeAll(async () => {
     t = await createTestApp();
     owner = await t.login();
-    const fabricId = crypto.randomUUID();
-    await asOwner(t.http().put(`/fabrics/${fabricId}`))
-      .send({ name: 'روزا', refPricePerMeterCents: 2000, minPricePerMeterCents: 1700 })
-      .expect(200);
-    await asOwner(t.http().put(`/variants/${variantId}`))
-      .send({ fabricId, colorName: 'أحمر' })
+    await asOwner(t.http().put(`/products/${productId}`))
+      .send({
+        name: 'روزا أحمر',
+        purchaseUnits: ['meter'],
+        sellingUnits: ['meter'],
+        pricePerMeterCents: 2000,
+        minPricePerMeterCents: 1700,
+      })
       .expect(200);
     await t.app.get(AuthService).setCashierUser({
       username: 'amina',
@@ -120,7 +122,7 @@ describe('photos of colours (ADR 0009)', () => {
 
     const { page } = await pull(asOwner, 0);
     const change = page.changes.find((entry) => entry.entity === 'photo');
-    expect(change?.record).toMatchObject({ id: record.id, variantId, byteLength: 90_000 });
+    expect(change?.record).toMatchObject({ id: record.id, productId, byteLength: 90_000 });
     expect((change?.record as Photo).data).toBe(record.data);
 
     const { rows } = await t.sql.query<{ action: string; after: { data: string } }>(
@@ -169,10 +171,10 @@ describe('photos of colours (ADR 0009)', () => {
     expect(result?.error?.issues?.[0]?.message).toBe(PHOTO_ISSUES.fixed);
   });
 
-  it('refuses what is not a JPEG of the size it says, and a photo of a colour the server lacks', async () => {
+  it('refuses what is not a JPEG of the size it says, and a photo of a product the server lacks', async () => {
     const wrongSize = { ...photo(20_000), byteLength: 19_999 };
     const notJpeg = { ...photo(20_000), data: `iVBO${fakeJpeg(20_000).slice(4)}` };
-    const orphan = photo(20_000, { variantId: crypto.randomUUID() });
+    const orphan = photo(20_000, { productId: crypto.randomUUID() });
     const results = await push(asOwner, upsert(wrongSize), upsert(notJpeg), upsert(orphan));
     expect(results.map((result) => result.status)).toEqual(['rejected', 'rejected', 'rejected']);
     expect(results[0]?.error?.issues?.map((issue) => issue.message)).toContain(

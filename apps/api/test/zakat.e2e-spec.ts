@@ -66,6 +66,7 @@ describe('zakat reports and their payment (BUILD_PROMPTS 5.1)', () => {
             rollId: crypto.randomUUID(),
             label: 'R-A0001',
             remainingCm: 100_000,
+            remainingPieces: 0,
             refPricePerMeterCents: dh(30),
             costCents: dh(24_000),
             valueCents: 0,

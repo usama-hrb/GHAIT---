@@ -137,6 +137,74 @@ describe('customerAccount (SPEC §4.1, §13)', () => {
     ]);
   });
 
+  it('splits the balance into what was charged and what was received, refunds apart', () => {
+    const account = customerAccount({
+      sales: [
+        sale('a', 4000, { date: '2026-09-01', returnedCents: 500 }),
+        sale('b', 1600, { date: '2026-10-05' }),
+        sale('c', 9000, { voided: true }),
+      ],
+      payments: [
+        { paymentId: 'p1', kind: 'payment', amountCents: 2000 },
+        { paymentId: 'p2', kind: 'payment', amountCents: 700 },
+        { paymentId: 'r', kind: 'refund', amountCents: 200 },
+      ],
+      allocations: [
+        { paymentId: 'p1', saleId: 'a', amountCents: 2000 },
+        { paymentId: 'p2', saleId: 'a', amountCents: 700 },
+      ],
+      today: TODAY,
+    });
+    // The voided sale is not a purchase; the returned part of an invoice is not one either.
+    expect(account.purchasesCents).toBe(3500 + 1600);
+    expect(account.receivedCents).toBe(2700 - 200);
+    expect(account.refundedCents).toBe(200);
+    expect(account.purchasesCents - account.receivedCents).toBe(account.balanceCents);
+  });
+
+  it('lists every invoice not voided, settled ones too, with what was paid and returned', () => {
+    const account = customerAccount({
+      sales: [
+        sale('late', 1000, { date: '2026-10-09' }),
+        sale('paid', 2000, { date: '2026-09-01', returnedCents: 300 }),
+        sale('gone', 5000, { voided: true }),
+      ],
+      payments: [{ paymentId: 'p', kind: 'payment', amountCents: 1700 }],
+      allocations: [{ paymentId: 'p', saleId: 'paid', amountCents: 1700 }],
+      today: TODAY,
+    });
+    expect(
+      account.invoices.map((invoice) => [
+        invoice.saleId,
+        invoice.totalCents,
+        invoice.returnedCents,
+        invoice.paidCents,
+        invoice.dueCents,
+      ]),
+    ).toEqual([
+      ['paid', 1700, 300, 1700, 0],
+      ['late', 1000, 0, 0, 1000],
+    ]);
+    // The open ones are those with something due, as before.
+    expect(account.openInvoices.map((invoice) => invoice.saleId)).toEqual(['late']);
+  });
+
+  it('has no invoices and nothing charged or received for an empty account', () => {
+    expect(customerAccount({ sales: [], payments: [], allocations: [], today: TODAY })).toEqual({
+      balanceCents: 0,
+      purchasesCents: 0,
+      receivedCents: 0,
+      refundedCents: 0,
+      collectibleCents: 0,
+      writtenOffCents: 0,
+      creditCents: 0,
+      overdueCents: 0,
+      invoices: [],
+      openInvoices: [],
+      oldestOpenDate: null,
+    });
+  });
+
   it('refuses allocations that a payment cannot cover or that are not payments', () => {
     const base = { sales: [sale('a', 1000)], today: TODAY };
     expect(() =>
@@ -206,6 +274,12 @@ describe('customerAccount (SPEC §4.1, §13)', () => {
           });
           const account = customerAccount({ sales, payments, allocations, today: TODAY });
           const live = sales.filter((s) => !s.voided);
+          // What was charged less what was received is the balance, and each invoice is listed once.
+          expect(account.purchasesCents - account.receivedCents).toBe(account.balanceCents);
+          expect(account.invoices).toHaveLength(live.length);
+          expect(account.invoices.reduce((sum, invoice) => sum + invoice.totalCents, 0)).toBe(
+            account.purchasesCents,
+          );
           expect(account.balanceCents).toBe(
             live.reduce((sum, s) => sum + s.totalCents, 0) -
               paid.reduce((sum, a) => sum + a, 0) +

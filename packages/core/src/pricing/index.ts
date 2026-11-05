@@ -89,3 +89,112 @@ export function computeSaleLine(input: SaleLineInput): SaleLine {
     costing,
   };
 }
+
+/** What a product is sold by on a sale line: meters (quantity in cm) or pieces. */
+export type SaleUnit = 'meter' | 'piece';
+
+/** A line priced per unit (negotiated, the usual case), or a ready piece sold whole at its price. */
+export type BatchLinePrice = { perUnitCents: number } | { wholePieceCents: number };
+
+export interface BatchSaleLineInput {
+  unit: SaleUnit;
+  /** cm for a meter line, pieces for a piece line. */
+  quantity: number;
+  price: BatchLinePrice;
+  /** The product's normal price per unit at the time of sale; kept for negotiation analysis. */
+  refPriceCents: number;
+  /** The lowest price per unit the product may be sold at; 0 = no minimum. */
+  minPriceCents: number;
+  /** What the batch's ledger says this consumption costs (SPEC §2.4). */
+  costCents: number;
+}
+
+export interface BatchSaleLine {
+  unit: SaleUnit;
+  quantity: number;
+  /** sale_line.actual_price_cents; for a whole piece, the equivalent per metre (rounded). */
+  actualPriceCents: number;
+  refPriceCents: number;
+  lineTotalCents: number;
+  lineCostCents: number;
+  /** line total − line cost (SPEC §3, §7); negative when sold under cost. */
+  profitCents: number;
+  /** Sold under the product's minimum price: a cashier may never; the owner may, confirming. */
+  belowMin: boolean;
+  warnings: PriceWarning[];
+  /** Sold under cost: the user must confirm explicitly and the API rejects it otherwise. */
+  requiresConfirmation: boolean;
+}
+
+/**
+ * Whether a price is under the product's minimum (SPEC §3), judged exactly: per unit against the
+ * minimum per unit; a whole piece (sold in meters) against the minimum for its length. 0 = no
+ * minimum. A cashier may never sell below it; the owner may after an explicit confirmation.
+ */
+export function isBelowMinimum(input: {
+  quantity: number;
+  price: BatchLinePrice;
+  minPriceCents: number;
+}): boolean {
+  const { quantity, price, minPriceCents } = input;
+  assertInteger(quantity, 'quantity', 1);
+  assertInteger(minPriceCents, 'minPriceCents', 0);
+  if ('perUnitCents' in price) {
+    assertInteger(price.perUnitCents, 'perUnitCents', 0);
+    return price.perUnitCents < minPriceCents;
+  }
+  assertInteger(price.wholePieceCents, 'wholePieceCents', 0);
+  return (
+    BigInt(price.wholePieceCents) * BigInt(CM_PER_METER) < BigInt(minPriceCents) * BigInt(quantity)
+  );
+}
+
+/**
+ * Prices one sale line of a batch (SPEC §3, §4, T5, T11), the cost coming from the product ledger:
+ * - per meter: round(price × cm ÷ 100) half up; per piece: price × pieces;
+ * - whole piece (a ready piece sold whole, in meters): the piece price as the line total.
+ * Under the minimum is judged exactly (a whole piece against the minimum for its length).
+ */
+export function computeBatchSaleLine(input: BatchSaleLineInput): BatchSaleLine {
+  const { unit, quantity, price, refPriceCents, minPriceCents, costCents } = input;
+  assertInteger(quantity, 'quantity', 1);
+  assertInteger(refPriceCents, 'refPriceCents', 0);
+  assertInteger(minPriceCents, 'minPriceCents', 0);
+  assertInteger(costCents, 'costCents', 0);
+
+  let lineTotalCents: number;
+  let actualPriceCents: number;
+  let belowMin: boolean;
+  if ('perUnitCents' in price) {
+    assertInteger(price.perUnitCents, 'perUnitCents', 0);
+    actualPriceCents = price.perUnitCents;
+    lineTotalCents =
+      unit === 'meter'
+        ? mulDivRoundHalfUp(price.perUnitCents, quantity, CM_PER_METER)
+        : price.perUnitCents * quantity;
+    belowMin = isBelowMinimum({ quantity, price, minPriceCents });
+  } else {
+    if (unit !== 'meter') throw new RangeError('only a length is sold as a whole piece');
+    assertInteger(price.wholePieceCents, 'wholePieceCents', 0);
+    lineTotalCents = price.wholePieceCents;
+    actualPriceCents = mulDivRoundHalfUp(price.wholePieceCents, CM_PER_METER, quantity);
+    belowMin = isBelowMinimum({ quantity, price, minPriceCents });
+  }
+
+  const profitCents = lineTotalCents - costCents;
+  const warnings: PriceWarning[] = [];
+  if (belowMin) warnings.push('below_min_price');
+  if (profitCents < 0) warnings.push('below_cost');
+  return {
+    unit,
+    quantity,
+    actualPriceCents,
+    refPriceCents,
+    lineTotalCents,
+    lineCostCents: costCents,
+    profitCents,
+    belowMin,
+    warnings,
+    requiresConfirmation: profitCents < 0,
+  };
+}

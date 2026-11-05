@@ -2,5 +2,4 @@
 export { CustomerDialog } from './customer-dialog';
 export { CustomerScreen } from './customer-screen';
 export { CustomersScreen } from './customers-screen';
-export { DebtsScreen } from './debts-screen';
 export { PaymentDialog } from './payment-dialog';

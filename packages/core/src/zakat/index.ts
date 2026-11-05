@@ -41,6 +41,11 @@ export interface ZakatGoodsItem {
   refPricePerMeterCents: number;
   /** Its stock value at cost (unallocatedCostCents). */
   costCents: number;
+  /**
+   * Its worth at the selling price, when a price per meter does not apply (pieces): what the
+   * app worked out as pieces × the product's price per piece. Used instead of the length's.
+   */
+  marketCents?: number;
 }
 
 /** What a customer owes on the hawl date (customerBalance, when positive). */
@@ -102,9 +107,12 @@ export function computeZakat(
     assertInteger(item.remainingCm, `remainingCm of ${item.rollId}`, 0);
     assertInteger(item.refPricePerMeterCents, `refPricePerMeterCents of ${item.rollId}`, 0);
     assertInteger(item.costCents, `costCents of ${item.rollId}`, 0);
+    if (item.marketCents !== undefined)
+      assertInteger(item.marketCents, `marketCents of ${item.rollId}`, 0);
     const valueCents =
       settings.goodsValuation === 'market'
-        ? mulDivRoundHalfUp(item.refPricePerMeterCents, item.remainingCm, CM_PER_METER)
+        ? (item.marketCents ??
+          mulDivRoundHalfUp(item.refPricePerMeterCents, item.remainingCm, CM_PER_METER))
         : item.costCents;
     return { rollId: item.rollId, valueCents };
   });

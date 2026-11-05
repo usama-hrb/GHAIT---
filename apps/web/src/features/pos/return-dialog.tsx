@@ -11,7 +11,7 @@ import {
   useRepositories,
   ValidationError,
 } from '@/local-db';
-import { Meters, Money, MeterInput, MoneyInput } from '@/shared/format';
+import { CountInput, Money, MeterInput, MoneyInput, Quantity } from '@/shared/format';
 import { shopToday } from '@/shared/lib/dates';
 import { Button } from '@/shared/ui/button';
 import { Checkbox } from '@/shared/ui/checkbox';
@@ -64,13 +64,13 @@ export function ReturnDialog({
   const [busy, setBusy] = useState(false);
 
   const returnedBefore = (lineId: string) =>
-    view.figures.lines.find((entry) => entry.lineId === lineId)?.returnedCm ?? 0;
+    view.figures.lines.find((entry) => entry.lineId === lineId)?.returnedQuantity ?? 0;
 
   const picked = useMemo(
     () =>
       view.lines.flatMap(({ line }) => {
-        const returnedCm = lengths[line.id];
-        return returnedCm && returnedCm > 0 ? [{ lineId: line.id, returnedCm }] : [];
+        const quantity = lengths[line.id];
+        return quantity && quantity > 0 ? [{ lineId: line.id, quantity }] : [];
       }),
     [view.lines, lengths],
   );
@@ -123,10 +123,10 @@ export function ReturnDialog({
             repositories.sales
               .giveBack(input)
               .then(async () => {
-                // "Restore to the roll" is the default; a remnant is marked by hand (SPEC §4).
+                // "Restore to the batch" is the default; a remnant is marked by hand (SPEC §4).
                 for (const { line } of view.lines) {
                   if (remnants[line.id] && lengths[line.id]) {
-                    await repositories.inventory.setRemnant(line.rollId, true);
+                    await repositories.stock.setRemnant(line.batchId, true);
                   }
                 }
                 toast.success(t.saved, { description: messages.forms.saved });
@@ -145,32 +145,34 @@ export function ReturnDialog({
             <DialogDescription>{t.description}</DialogDescription>
           </DialogHeader>
           <FieldGroup>
-            {view.lines.map(({ line, fabric, variant, roll }) => {
-              const left = line.soldCm - returnedBefore(line.id);
+            {view.lines.map(({ line, product, batch }) => {
+              const left = line.quantity - returnedBefore(line.id);
+              const Input = line.unit === 'meter' ? MeterInput : CountInput;
               return (
                 <Field key={line.id}>
                   <FieldLabel htmlFor={`${id}-${line.id}`}>
-                    {fabric?.name} · {variant?.colorName}
+                    {product?.name}
                     <span className="ms-2 text-xs font-normal text-muted-foreground">
-                      {t.soldOf} <Meters cm={line.soldCm} />
+                      {t.soldOf} <Quantity unit={line.unit} amount={line.quantity} />
                       {returnedBefore(line.id) > 0 && (
                         <>
                           {' · '}
-                          {t.alreadyReturned} <Meters cm={returnedBefore(line.id)} />
+                          {t.alreadyReturned}{' '}
+                          <Quantity unit={line.unit} amount={returnedBefore(line.id)} />
                         </>
                       )}
                     </span>
                   </FieldLabel>
-                  <MeterInput
+                  <Input
                     id={`${id}-${line.id}`}
-                    aria-label={`${t.length} ${fabric?.name ?? ''} ${variant?.colorName ?? ''}`}
+                    aria-label={`${t.length} ${product?.name ?? ''}`}
                     value={lengths[line.id] ?? null}
                     disabled={left === 0}
                     onValueChange={(next) => {
                       setLengths((current) => ({ ...current, [line.id]: next }));
                     }}
                   />
-                  {roll && (lengths[line.id] ?? 0) > 0 && (
+                  {batch && line.unit === 'meter' && (lengths[line.id] ?? 0) > 0 && (
                     <label className="flex items-center gap-2 text-sm">
                       <Checkbox
                         checked={remnants[line.id] ?? false}

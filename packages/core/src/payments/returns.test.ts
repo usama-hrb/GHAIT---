@@ -28,19 +28,20 @@ describe('shareOfLineCents (RT1)', () => {
         fc.integer({ min: 0, max: 10_000_000 }),
         fc.integer({ min: 1, max: 100_000 }),
         fc.array(fc.integer({ min: 0, max: 100_000 }), { maxLength: 6 }),
-        (amount, soldCm, cuts) => {
+        (amount, soldQuantity, cuts) => {
           let returned = 0;
           let taken = 0;
           for (const cut of cuts) {
-            const next = Math.min(soldCm, returned + cut);
+            const next = Math.min(soldQuantity, returned + cut);
             const share =
-              shareOfLineCents(amount, soldCm, next) - shareOfLineCents(amount, soldCm, returned);
+              shareOfLineCents(amount, soldQuantity, next) -
+              shareOfLineCents(amount, soldQuantity, returned);
             expect(share).toBeGreaterThanOrEqual(0);
             taken += share;
             returned = next;
           }
-          expect(taken).toBe(shareOfLineCents(amount, soldCm, returned));
-          expect(shareOfLineCents(amount, soldCm, soldCm)).toBe(amount);
+          expect(taken).toBe(shareOfLineCents(amount, soldQuantity, returned));
+          expect(shareOfLineCents(amount, soldQuantity, soldQuantity)).toBe(amount);
         },
       ),
     );
@@ -48,10 +49,10 @@ describe('shareOfLineCents (RT1)', () => {
 });
 
 describe('saleTotalAfterReturns / returnCreditCents (RT2)', () => {
-  const line = (lineTotalCents: number, soldCm: number, returnedCm = 0) => ({
+  const line = (lineTotalCents: number, soldQuantity: number, returnedQuantity = 0) => ({
     lineTotalCents,
-    soldCm,
-    returnedCm,
+    soldQuantity,
+    returnedQuantity,
   });
 
   it('is the invoice total when nothing was returned', () => {
@@ -63,7 +64,10 @@ describe('saleTotalAfterReturns / returnCreditCents (RT2)', () => {
   it('credits the proportional price of what comes back', () => {
     // 2.5 m at 20 dh: returning 1 m gives back 20 dh.
     expect(
-      returnCreditCents({ lines: [{ ...line(5000, 250), returningCm: 100 }], discountCents: 0 }),
+      returnCreditCents({
+        lines: [{ ...line(5000, 250), returningQuantity: 100 }],
+        discountCents: 0,
+      }),
     ).toBe(2000);
   });
 
@@ -71,7 +75,7 @@ describe('saleTotalAfterReturns / returnCreditCents (RT2)', () => {
     // 100 dh of cloth, 10 dh off: paid 90. Half back = 45.
     expect(
       returnCreditCents({
-        lines: [{ ...line(10_000, 400), returningCm: 200 }],
+        lines: [{ ...line(10_000, 400), returningQuantity: 200 }],
         discountCents: 1000,
       }),
     ).toBe(4500);
@@ -79,19 +83,19 @@ describe('saleTotalAfterReturns / returnCreditCents (RT2)', () => {
 
   it('returning everything credits the whole invoice, discount included', () => {
     const lines = [
-      { ...line(5000, 250), returningCm: 250 },
-      { ...line(3001, 100), returningCm: 100 },
+      { ...line(5000, 250), returningQuantity: 250 },
+      { ...line(3001, 100), returningQuantity: 100 },
     ];
     expect(returnCreditCents({ lines, discountCents: 501 })).toBe(7500);
   });
 
   it('a second return credits only what is new', () => {
     const first = returnCreditCents({
-      lines: [{ ...line(5000, 250), returningCm: 100 }],
+      lines: [{ ...line(5000, 250), returningQuantity: 100 }],
       discountCents: 0,
     });
     const second = returnCreditCents({
-      lines: [{ ...line(5000, 250, 100), returningCm: 150 }],
+      lines: [{ ...line(5000, 250, 100), returningQuantity: 150 }],
       discountCents: 0,
     });
     expect(first + second).toBe(5000);
@@ -109,7 +113,7 @@ describe('saleTotalAfterReturns / returnCreditCents (RT2)', () => {
         fc.array(
           fc.record({
             lineTotalCents: fc.integer({ min: 0, max: 1_000_000 }),
-            soldCm: fc.integer({ min: 1, max: 5000 }),
+            soldQuantity: fc.integer({ min: 1, max: 5000 }),
             fraction: fc.double({ min: 0, max: 1, noNaN: true }),
           }),
           { minLength: 1, maxLength: 4 },
@@ -120,7 +124,7 @@ describe('saleTotalAfterReturns / returnCreditCents (RT2)', () => {
           const discountCents = Math.floor(linesCents * discountFraction);
           let previous = saleTotalAfterReturns({
             discountCents,
-            lines: rows.map((row) => ({ ...row, returnedCm: 0 })),
+            lines: rows.map((row) => ({ ...row, returnedQuantity: 0 })),
           });
           expect(previous).toBe(linesCents - discountCents);
           for (const step of [0.25, 0.5, 0.75, 1]) {
@@ -128,7 +132,10 @@ describe('saleTotalAfterReturns / returnCreditCents (RT2)', () => {
               discountCents,
               lines: rows.map((row) => ({
                 ...row,
-                returnedCm: Math.min(row.soldCm, Math.floor(row.soldCm * row.fraction * step)),
+                returnedQuantity: Math.min(
+                  row.soldQuantity,
+                  Math.floor(row.soldQuantity * row.fraction * step),
+                ),
               })),
             });
             expect(total).toBeLessThanOrEqual(previous);
@@ -137,7 +144,7 @@ describe('saleTotalAfterReturns / returnCreditCents (RT2)', () => {
           }
           const all = saleTotalAfterReturns({
             discountCents,
-            lines: rows.map((row) => ({ ...row, returnedCm: row.soldCm })),
+            lines: rows.map((row) => ({ ...row, returnedQuantity: row.soldQuantity })),
           });
           expect(all).toBe(0);
         },

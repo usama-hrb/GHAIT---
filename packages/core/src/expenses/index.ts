@@ -92,6 +92,15 @@ export interface Reminder {
   daysLeft: number;
 }
 
+/** The months already billed from a template, as "templateId YYYY-MM" (voided expenses do not count). */
+function createdFrom(expenses: readonly ExpenseItem[]): Set<string> {
+  return new Set(
+    expenses
+      .filter((expense) => !expense.voided && expense.recurringId !== null)
+      .map((expense) => `${String(expense.recurringId)} ${monthOf(expense.date)}`),
+  );
+}
+
 /**
  * Bills to create from their templates (SPEC §5 "يذكّر قبل الموعد", E2): for each active
  * template, this month's and last month's, unless an expense was already created from it for
@@ -107,11 +116,7 @@ export function recurringReminders(input: {
   assertInteger(input.leadDays, 'leadDays', 0);
   const today = utc(input.today);
   const thisMonth = monthOf(input.today);
-  const created = new Set(
-    input.expenses
-      .filter((expense) => !expense.voided && expense.recurringId !== null)
-      .map((expense) => `${String(expense.recurringId)} ${monthOf(expense.date)}`),
-  );
+  const created = createdFrom(input.expenses);
   const reminders: Reminder[] = [];
   for (const template of input.templates) {
     if (!template.active) continue;
@@ -134,6 +139,53 @@ export function recurringReminders(input: {
   );
 }
 
+/** When a template's next bill is due, and how soon that is. */
+export interface NextDue {
+  /** The month of the bill (YYYY-MM). */
+  month: string;
+  dueDate: string;
+  /** overdue: passed; due: today; upcoming: within the reminder days; later: further off. */
+  status: 'overdue' | 'due' | 'upcoming' | 'later';
+  /** Days until the due date (negative when overdue). */
+  daysLeft: number;
+}
+
+/**
+ * The next bill of one template (E5): the first month, from last month on, whose due date is not
+ * before the template was set up and that has no expense created from it. Last month's bill, if
+ * it was never created, is the next one (overdue). Null for a paused template, or when the next
+ * twelve months are all created already. It is what the reminders (E2) start from, without the
+ * reminder-days cut-off.
+ */
+export function nextRecurringDue(input: {
+  template: RecurringTemplate;
+  expenses: readonly ExpenseItem[];
+  /** The shop's date, YYYY-MM-DD. */
+  today: string;
+  leadDays: number;
+}): NextDue | null {
+  assertInteger(input.leadDays, 'leadDays', 0);
+  if (!input.template.active) return null;
+  const today = utc(input.today);
+  const created = createdFrom(input.expenses);
+  let month = previousMonth(monthOf(input.today));
+  for (let ahead = 0; ahead < 14; ahead++, month = nextMonth(month)) {
+    const dueDate = dueDateIn(month, input.template.dayOfMonth);
+    if (dueDate < input.template.since || created.has(`${input.template.id} ${month}`)) continue;
+    const daysLeft = Math.round((utc(dueDate) - today) / DAY_MS);
+    const status =
+      daysLeft < 0
+        ? 'overdue'
+        : daysLeft === 0
+          ? 'due'
+          : daysLeft <= input.leadDays
+            ? 'upcoming'
+            : 'later';
+    return { month, dueDate, status, daysLeft };
+  }
+  return null;
+}
+
 /**
  * Expenses paid between two dates, inclusive (SPEC §5, S6): what the settlement takes off a
  * period's profit. Unpaid and voided expenses count in no period.
@@ -152,6 +204,20 @@ export function paidExpensesCents(
   return total;
 }
 
+/**
+ * How an expense counts in a month (S6, E4): `paid` — paid within it (by its paid date), `unpaid` —
+ * not paid yet and dated on or before its end (a bill still to pay, whatever its month), `other` —
+ * neither: it counts in the month it is paid in, or in a later month.
+ */
+export type ExpenseStanding = 'paid' | 'unpaid' | 'other';
+
+export function expenseStanding(expense: ExpenseItem, month: string): ExpenseStanding {
+  const { start, end } = monthBounds(month);
+  if (expense.voided) return 'other';
+  if (expense.paidDate === null) return expense.date <= end ? 'unpaid' : 'other';
+  return expense.paidDate >= start && expense.paidDate <= end ? 'paid' : 'other';
+}
+
 export interface MonthExpenses {
   /** Paid in the month (by paid date): what the month's settlement deducts. */
   paidCents: number;
@@ -160,6 +226,12 @@ export interface MonthExpenses {
   /** Not paid yet, whatever their date, up to the month's end: bills still to pay. */
   unpaidCents: number;
   unpaidCount: number;
+  /** Paid in the month plus still unpaid (E4): what the month's expenses come to. */
+  totalCents: number;
+  /** How many expenses were paid in the month. */
+  paidCount: number;
+  /** The expenses that make up `totalCents`: paid in the month and still unpaid. */
+  entryCount: number;
 }
 
 /** A month's expense totals (BUILD_PROMPTS 4.1). */
@@ -168,23 +240,27 @@ export function monthlyExpenses(expenses: readonly ExpenseItem[], month: string)
   const paidByCategory: Record<string, number> = {};
   let unpaidCents = 0;
   let unpaidCount = 0;
+  let paidCount = 0;
   for (const expense of expenses) {
     assertInteger(expense.amountCents, 'amountCents', 1);
-    if (expense.voided) continue;
-    if (expense.paidDate === null) {
-      if (expense.date <= end) {
-        unpaidCents += expense.amountCents;
-        unpaidCount += 1;
-      }
-    } else if (expense.paidDate >= start && expense.paidDate <= end) {
+    const standing = expenseStanding(expense, month);
+    if (standing === 'unpaid') {
+      unpaidCents += expense.amountCents;
+      unpaidCount += 1;
+    } else if (standing === 'paid') {
       paidByCategory[expense.category] =
         (paidByCategory[expense.category] ?? 0) + expense.amountCents;
+      paidCount += 1;
     }
   }
+  const paidCents = paidExpensesCents(expenses, start, end);
   return {
-    paidCents: paidExpensesCents(expenses, start, end),
+    paidCents,
     paidByCategory,
     unpaidCents,
     unpaidCount,
+    totalCents: paidCents + unpaidCents,
+    paidCount,
+    entryCount: paidCount + unpaidCount,
   };
 }

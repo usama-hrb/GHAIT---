@@ -29,11 +29,10 @@ import {
 } from '@/shared/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
 import { DiamondBullet } from './diamond-bullet';
-import { Logo } from './logo';
+import { BrandMark, type BrandIdentity } from './brand-mark';
 import { groupNav } from './nav-groups';
 import { NavPalette } from './nav-palette';
 import { SearchTrigger } from './search-trigger';
-import { SignOutButton } from '@/features/sync';
 
 export interface AppShellNavItem {
   href: string;
@@ -151,7 +150,9 @@ export function AppShell({
   title,
   status,
   actions,
+  signOut,
   account,
+  brand,
   onSearch,
   activeHref,
   children,
@@ -161,7 +162,14 @@ export function AppShell({
   /** Usually <ConnectivityStatus pendingCount={…} />. */
   status?: ReactNode;
   actions?: ReactNode;
+  /** The sign-out control at the foot of the sidebar (shared cannot import the feature that owns it). */
+  signOut?: ReactNode;
   account?: AppShellAccount;
+  /**
+   * The shop's own name and logo (ADR 0017); "loading" while the device reads them. Without it the
+   * built-in brand mark and the app's name show.
+   */
+  brand?: BrandIdentity | 'loading';
   /** Replaces the built-in page search (the sidebar's field and the header's button). */
   onSearch?: () => void;
   /** Defaults to the current path. */
@@ -172,6 +180,10 @@ export function AppShell({
   const current = activeHref ?? pathname;
   const side = useDirection() === 'rtl' ? 'right' : 'left';
   const [searchOpen, setSearchOpen] = useState(false);
+  const who = [account?.name, account?.detail].filter(Boolean).join(' · ');
+  const loadingBrand = brand === 'loading';
+  const identity: BrandIdentity =
+    brand === undefined || brand === 'loading' ? { name: messages.app.name, logoSrc: null } : brand;
 
   return (
     <SidebarProvider className="shop-sidebar" style={SIDEBAR_SIZES}>
@@ -185,14 +197,15 @@ export function AppShell({
       <Sidebar side={side} collapsible="icon">
         <SidebarHeader className="gap-3 p-3">
           <div className="flex items-center gap-3 rounded-xl border bg-background p-2 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:border-transparent group-data-[collapsible=icon]:bg-transparent group-data-[collapsible=icon]:p-0">
-            <Logo variant="mark" className="h-10 rounded-lg" priority />
+            <BrandMark
+              logoSrc={identity.logoSrc}
+              loading={loadingBrand}
+              className="h-10"
+              priority
+            />
             <div className="grid min-w-0 flex-1 leading-tight group-data-[collapsible=icon]:hidden">
-              <span className="truncate font-heading text-sm font-semibold">
-                {account?.name ?? messages.app.name}
-              </span>
-              {account?.detail && (
-                <span className="truncate text-xs text-muted-foreground">{account.detail}</span>
-              )}
+              <span className="truncate font-heading text-sm font-semibold">{identity.name}</span>
+              {who && <span className="truncate text-xs text-muted-foreground">{who}</span>}
             </div>
           </div>
           <SearchField
@@ -224,14 +237,19 @@ export function AppShell({
           </nav>
         </SidebarContent>
         <SidebarFooter className="gap-2 border-t border-dotted border-sidebar-border p-3">
-          <SignOutButton />
+          {signOut}
         </SidebarFooter>
       </Sidebar>
 
       <SidebarInset>
         <header className="sticky top-0 z-20 flex h-14 items-center gap-2 border-b bg-background/95 px-3 backdrop-blur md:px-4">
           <SidebarTrigger className="hidden md:inline-flex" />
-          <Logo variant="mark" className="h-8 md:hidden" />
+          <BrandMark
+            logoSrc={identity.logoSrc}
+            loading={loadingBrand}
+            alt={identity.name}
+            className="h-8 md:hidden"
+          />
           {title !== undefined && (
             <h1 className="truncate font-heading text-lg font-semibold">{title}</h1>
           )}

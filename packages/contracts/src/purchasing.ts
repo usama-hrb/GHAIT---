@@ -4,6 +4,7 @@ import { recordBaseSchema } from './catalog.js';
 import { amountCentsSchema, idSchema, isoDateSchema, optionalTextSchema } from './common.js';
 import { firstDifference } from './diff.js';
 import type { ValidationIssue } from './errors.js';
+import { storedProductBatchSchema } from './stock.js';
 
 /** SPEC §2.3: by the metre (assortments), ready piece, or by weight. */
 export const PURCHASE_METHODS = ['meter', 'piece', 'kg'] as const;
@@ -339,8 +340,9 @@ export const storedRollSchema = rollSchema.extend(withServerSeq);
 export type StoredPurchase = z.output<typeof storedPurchaseSchema>;
 export type StoredRoll = z.output<typeof storedRollSchema>;
 
+/** GET /purchases/:id: the purchase and the batches it brought in (ADR 0012). */
 export const purchaseDetailSchema = z.object({
   purchase: storedPurchaseSchema,
-  rolls: z.array(storedRollSchema),
+  batches: z.array(storedProductBatchSchema),
 });
 export type PurchaseDetail = z.output<typeof purchaseDetailSchema>;

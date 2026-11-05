@@ -28,6 +28,8 @@ describe('expenses (SPEC §5)', () => {
       paidDate: null,
       note: null,
       recurringExpenseId: null,
+      employeeId: null,
+      salaryMonth: null,
     });
     expect(
       expenseInputSchema.safeParse({ date: '2026-10-05', category: 'rent', amountCents: 0 })

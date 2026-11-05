@@ -7,12 +7,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { CustomerDialog } from '@/features/customers';
 import { messages } from '@/i18n';
-import { useCanSeeCosts, useLiveQuery, useRepositories, ValidationError } from '@/local-db';
+import { useLiveQuery, useRepositories, ValidationError } from '@/local-db';
 import { EmptyState, LoadingState, OfflineNotice } from '@/shared/brand';
 import { Money } from '@/shared/format';
 import { useMediaQuery } from '@/shared/hooks/use-media-query';
 import { shopToday } from '@/shared/lib/dates';
-import { useAppNavigation } from '@/shared/lib/navigation';
 import { Button } from '@/shared/ui/button';
 import {
   Drawer,
@@ -23,8 +22,14 @@ import {
 } from '@/shared/ui/drawer';
 import { useSidebar } from '@/shared/ui/sidebar';
 import { BillPanel } from './bill-panel';
-import { type CartItem, pricedItemsOf, saleInputOf } from './cart';
-import { CatalogPanel } from './catalog-panel';
+import {
+  type CartItem,
+  itemQuantity,
+  needsCostConfirmationAtPayment,
+  pricedItemsOf,
+  saleInputOf,
+} from './cart';
+import { CatalogPanel, isSellable } from './catalog-panel';
 import { CheckoutDialog } from './checkout-dialog';
 import { DiscountDialog } from './discount-dialog';
 import { LineDialog } from './line-dialog';
@@ -56,20 +61,17 @@ function useFoldedMenu() {
 }
 
 /**
- * The POS (SPEC §4, §14.5, BUILD_PROMPTS 3.4), laid out for a touch till: the colours that can be
+ * The POS (SPEC §4, §14.5, BUILD_PROMPTS 3.4), laid out for a touch till: the products that can be
  * sold as tiles, the bill at the side, and number keypads (inside the length, price, payment and
  * discount dialogs) so nothing needs the system keyboard. Every figure comes from @fabric/core
  * through the sales repository; everything is saved on the device first.
  */
 export function PosScreen() {
   const repositories = useRepositories();
-  const navigation = useAppNavigation();
-  // A cashier sees no cost or profit (SPEC §11); the owner and the partner do.
-  const seesCosts = useCanSeeCosts();
   const wide = useMediaQuery(WIDE);
   useFoldedMenu();
 
-  const stock = useLiveQuery(() => repositories.inventory.overview(), [repositories]);
+  const stock = useLiveQuery(() => repositories.productInventory.overview(), [repositories]);
   const customers = useLiveQuery(() => repositories.customers.list(), [repositories]);
   const photos = useLiveQuery(() => repositories.photos.sources(), [repositories]);
 
@@ -77,13 +79,11 @@ export function PosScreen() {
   const [discount, setDiscount] = useState<number | null>(null);
   const [customerId, setCustomerId] = useState<string | null>(null);
   const [picking, setPicking] = useState<{
-    fabricId: string;
-    variantId: string;
+    productId: string;
     editing: CartItem | null;
   } | null>(null);
   const [discounting, setDiscounting] = useState(false);
   const [paying, setPaying] = useState(false);
-  const [completedSaleId, setCompletedSaleId] = useState<string | null>(null);
   const [checkoutMode, setCheckoutMode] = useState<'full' | 'credit'>('full');
   const [addingCustomer, setAddingCustomer] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -106,8 +106,7 @@ export function PosScreen() {
   const inBill = useMemo(() => {
     const map = new Map<string, number>();
     for (const item of cart) {
-      const cm = item.lines.reduce((sum, line) => sum + line.soldCm, 0);
-      map.set(item.variant.id, (map.get(item.variant.id) ?? 0) + cm);
+      map.set(item.product.id, (map.get(item.product.id) ?? 0) + itemQuantity(item));
     }
     return map;
   }, [cart]);
@@ -119,14 +118,14 @@ export function PosScreen() {
   if (stock === undefined || customers === undefined || photos === undefined) {
     return <LoadingState />;
   }
-  if (cart.length === 0 && !stock.fabrics.some((entry) => entry.remainingCm > 0)) {
+  if (cart.length === 0 && !stock.products.some(isSellable)) {
     return (
       <EmptyState
         icon={PackageIcon}
         title={t.noStock}
         action={
           <Button asChild>
-            <Link href="/purchases/new">{t.newPurchase}</Link>
+            <Link href="/inventory">{t.addStock}</Link>
           </Button>
         }
       />
@@ -137,11 +136,14 @@ export function PosScreen() {
   const issue = priced?.issues.find(
     (found) => found.message !== 'sale_credit_needs_customer',
   )?.message;
-  const pickedStock = picking
-    ? stock.fabrics.find((entry) => entry.fabric.id === picking.fabricId)
+  const picked = picking
+    ? stock.products.find((entry) => entry.id === picking.productId)
     : undefined;
 
   const complete = (input: NewSaleInput) => {
+    // A tap flushes its render before the next one: while a sale is saving, Pay is disabled and a
+    // second tap that still arrives makes no second sale.
+    if (saving) return;
     setSaving(true);
     repositories.sales
       .create(input)
@@ -154,10 +156,7 @@ export function PosScreen() {
         setDiscount(null);
         setCustomerId(null);
 
-        toast.success(t.saved, {
-          description: messages.forms.saved,
-          duration: 450,
-        });
+        toast.success(t.saved, { description: messages.forms.saved, duration: 2000 });
       })
       .catch((error: unknown) => {
         setSaving(false);
@@ -174,11 +173,16 @@ export function PosScreen() {
     setPaying(true);
   };
 
-  const payFull = () => {
-    if (!base || total === null) return;
+  // A line under its cost was confirmed where it was typed: paying asks only for what no line
+  // could (a line nobody confirmed, a discount that takes the invoice under its cost).
+  const belowCost = priced?.requiresConfirmation === true;
+  const asksCost = needsCostConfirmationAtPayment(items, priced?.split ?? null);
 
-    // Below-cost sales still require explicit confirmation.
-    if (priced?.requiresConfirmation) {
+  const payFull = () => {
+    if (!base || total === null || saving) return;
+
+    if (asksCost) {
+      setCheckoutMode('full');
       setPaying(true);
       return;
     }
@@ -188,7 +192,8 @@ export function PosScreen() {
       customerId,
       paidCents: total,
       dueDate: null,
-      confirmedBelowCost: false,
+      // The owner's confirmations on the lines stand for the sale; the server checks it again.
+      confirmedBelowCost: belowCost,
       note: null,
     });
   };
@@ -203,7 +208,7 @@ export function PosScreen() {
     <BillPanel
       items={items}
       priced={priced}
-      seesCosts={seesCosts}
+      saving={saving}
       photos={photos}
       customers={customers}
       customerId={customerId}
@@ -217,7 +222,7 @@ export function PosScreen() {
       })}
       onEdit={(item) => {
         setBillOpen(false);
-        setPicking({ fabricId: item.fabric.id, variantId: item.variant.id, editing: item });
+        setPicking({ productId: item.product.id, editing: item });
       }}
       onRemove={(item) => {
         setCart((current) => current.filter((entry) => entry.key !== item.key));
@@ -245,11 +250,11 @@ export function PosScreen() {
 
       <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
         <CatalogPanel
-          fabrics={stock.fabrics}
+          products={stock.products}
           photos={photos}
           inBill={inBill}
-          onPick={(fabricId, variantId) => {
-            setPicking({ fabricId, variantId, editing: null });
+          onPick={(productId) => {
+            setPicking({ productId, editing: null });
           }}
         />
         {wide && <div className="min-h-0">{bill}</div>}
@@ -288,15 +293,13 @@ export function PosScreen() {
         </>
       )}
 
-      {picking && pickedStock && (
+      {picking && picked && (
         <LineDialog
-          key={picking.editing?.key ?? `${picking.variantId}:${String(cart.length)}`}
-          fabricStock={pickedStock}
-          variantId={picking.variantId}
-          photo={photos.get(picking.variantId)}
+          key={picking.editing?.key ?? `${picking.productId}:${String(cart.length)}`}
+          product={picked}
+          photo={photos.get(picking.productId)}
           others={others}
           editing={picking.editing}
-          seesCosts={seesCosts}
           onSubmit={(item) => {
             setCart((current) =>
               current.some((entry) => entry.key === item.key)
@@ -332,7 +335,8 @@ export function PosScreen() {
           onAddCustomer={() => {
             setAddingCustomer(true);
           }}
-          requiresConfirmation={priced?.requiresConfirmation === true}
+          belowCost={belowCost}
+          asksConfirmation={asksCost}
           saving={saving}
           onComplete={complete}
           onClose={() => {

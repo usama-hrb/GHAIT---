@@ -9,7 +9,7 @@ import {
 } from '@fabric/core';
 import { z } from 'zod';
 import { cashFlowsOf } from './cash-counts.js';
-import { type Fabric, recordBaseSchema, type Supplier, type Variant } from './catalog.js';
+import { recordBaseSchema, type Supplier } from './catalog.js';
 import type { Customer } from './customers.js';
 import { idSchema, isoDateSchema } from './common.js';
 import type { ValidationIssue } from './errors.js';
@@ -17,7 +17,9 @@ import type { IntegrityRecords } from './integrity.js';
 import { syncOrder } from './order.js';
 import { type Partner, type PartnerDraw, partnerDrawSchema } from './partners.js';
 import { worthBySaleOf } from './receivables.js';
+import type { Product } from './products.js';
 import { periodBasisOf } from './settlements.js';
+import { availableIn } from './stock.js';
 import { supplierAccountOf } from './supplier-payments.js';
 
 const cents = z.int();
@@ -39,11 +41,16 @@ export type MetalPrice = z.output<typeof metalPriceSchema>;
 export const zakatBreakdownSchema = z.object({
   goods: z.array(
     z.object({
+      /** The batch's id; for stock migrated from rolls it is the roll's id, so saved reports still read. */
       rollId: idSchema,
-      /** "R-A0012 · روزا · أحمر". */
+      /** "B-A0012 · Rosa". */
       label: z.string(),
       remainingCm: z.int(),
+      /** Pieces on hand, for stock counted in pieces (reports saved before ADR 0012 have none). */
+      remainingPieces: z.int().default(0),
       refPricePerMeterCents: cents,
+      /** What the goods sell for in all, where that is not meters × price (pieces, weight awaiting a measurement). */
+      marketCents: cents.optional(),
       costCents: cents,
       valueCents: cents,
     }),
@@ -125,8 +132,7 @@ const issue = (path: (string | number)[], message: string): ValidationIssue => (
 
 /** What a zakat report reads: the books, plus names and prices for its items. */
 export interface ZakatRecords extends IntegrityRecords {
-  fabrics: readonly Fabric[];
-  variants: readonly Variant[];
+  products: readonly Product[];
   customers: readonly Customer[];
   suppliers: readonly Supplier[];
 }
@@ -136,7 +142,7 @@ const live = <T extends { voidedAt: string | null }>(records: readonly T[]): T[]
 
 /**
  * The shop's position for zakat (SPEC §10, BUILD_PROMPTS 5.1), from the records as they are:
- * each roll with what is left, its reference price and its stock value at cost (Z1); the money
+ * each batch with what is left, its reference price and its stock value at cost (Z1); the money
  * (cashBalanceCents, I5); what each customer still owes, written-off debts apart as doubtful
  * (Z5); and the money held for customers as debts due (Z2).
  */
@@ -148,21 +154,32 @@ export function zakatPositionOf(records: ZakatRecords): {
   supplierDebts: ZakatBreakdown['supplierDebts'];
 } {
   const basis = periodBasisOf(records);
-  const variants = new Map(records.variants.map((variant) => [variant.id, variant]));
-  const fabrics = new Map(records.fabrics.map((fabric) => [fabric.id, fabric]));
+  const products = new Map(records.products.map((product) => [product.id, product]));
   const names = new Map(records.customers.map((customer) => [customer.id, customer.name]));
 
-  const goods = records.rolls.flatMap((roll) => {
-    const ledger = basis.ledgers.get(roll.id);
-    if (!ledger || ledger.remainingCm <= 0) return [];
-    const variant = variants.get(roll.variantId);
-    const fabric = variant ? fabrics.get(variant.fabricId) : undefined;
+  const goods = records.batches.flatMap((batch) => {
+    const ledger = basis.ledgers.get(batch.id);
+    if (!ledger) return [];
+    const meters = availableIn(ledger, 'meter');
+    const pieces = availableIn(ledger, 'piece');
+    // Weight still waiting for its length has no meters to price: it is valued at its cost.
+    const waiting = ledger.awaitingMeasurement !== null;
+    if (meters <= 0 && pieces <= 0 && !waiting) return [];
+    const product = products.get(batch.productId);
+    const marketCents =
+      pieces > 0
+        ? pieces * (product?.pricePerPieceCents ?? 0)
+        : meters <= 0
+          ? ledger.unallocatedCostCents
+          : undefined;
     return [
       {
-        rollId: roll.id,
-        label: [roll.shortCode, fabric?.name, variant?.colorName].filter(Boolean).join(' · '),
-        remainingCm: ledger.remainingCm,
-        refPricePerMeterCents: fabric?.refPricePerMeterCents ?? 0,
+        rollId: batch.id,
+        label: [batch.code, product?.name].filter(Boolean).join(' · '),
+        remainingCm: Math.max(0, meters),
+        remainingPieces: Math.max(0, pieces),
+        refPricePerMeterCents: product?.pricePerMeterCents ?? 0,
+        ...(marketCents === undefined ? {} : { marketCents }),
         costCents: ledger.unallocatedCostCents,
         valueCents: 0,
       },
@@ -254,12 +271,15 @@ function resultOf(
   return computeZakat(
     {
       hawlCompleted,
-      goods: position.goods.map(({ rollId, remainingCm, refPricePerMeterCents, costCents }) => ({
-        rollId,
-        remainingCm,
-        refPricePerMeterCents,
-        costCents,
-      })),
+      goods: position.goods.map(
+        ({ rollId, remainingCm, refPricePerMeterCents, marketCents, costCents }) => ({
+          rollId,
+          remainingCm,
+          refPricePerMeterCents,
+          ...(marketCents === undefined ? {} : { marketCents }),
+          costCents,
+        }),
+      ),
       cashCents: Math.max(0, position.cashCents),
       receivables: position.receivables.map(({ customerId, amountCents, doubtful }) => ({
         customerId,

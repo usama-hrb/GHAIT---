@@ -7,11 +7,14 @@ import { type SyncedRow, type SyncHandler, SyncRejection } from '../sync/index.j
 type PhotoRow = typeof schema.photo.$inferSelect;
 
 function photoOf(row: PhotoRow): SyncedRow<Photo> {
+  // A picture made before products belongs to the colour that became its product (same id).
+  const productId = row.productId ?? row.variantId;
+  if (productId === null) throw new Error(`photo ${row.id} belongs to no product`);
   return {
     serverSeq: row.serverSeq,
     record: {
       ...baseOf(row),
-      variantId: row.variantId,
+      productId,
       contentType: 'image/jpeg',
       width: row.width,
       height: row.height,
@@ -21,9 +24,9 @@ function photoOf(row: PhotoRow): SyncedRow<Photo> {
   };
 }
 
-const FIELDS = ['variantId', 'contentType', 'width', 'height', 'byteLength', 'data'] as const;
+const FIELDS = ['productId', 'contentType', 'width', 'height', 'byteLength', 'data'] as const;
 
-/** Photos of colours (ADR 0009): created once, then only voided; their image never reaches a log. */
+/** Photos of products (ADR 0009, ADR 0012): created once, then only voided; their image never reaches a log. */
 @Injectable()
 export class PhotoRepository implements SyncHandler<'photo'> {
   readonly entity = 'photo' as const;
@@ -50,7 +53,7 @@ export class PhotoRepository implements SyncHandler<'photo'> {
         createdAt: new Date(record.createdAt),
         updatedAt: new Date(record.updatedAt),
         deviceId: record.deviceId,
-        variantId: record.variantId,
+        productId: record.productId,
         contentType: record.contentType,
         width: record.width,
         height: record.height,

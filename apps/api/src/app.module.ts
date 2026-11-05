@@ -21,12 +21,14 @@ import { PhotosModule } from './modules/photos/index.js';
 import { CustomersModule } from './modules/customers/index.js';
 import { DataModule } from './modules/data/index.js';
 import { DevicesModule } from './modules/devices/index.js';
+import { EmployeesModule } from './modules/employees/index.js';
 import { ExpensesModule } from './modules/expenses/index.js';
 import { HealthModule } from './modules/health/index.js';
 import { PartnersModule } from './modules/partners/index.js';
 import { IntegrityModule } from './modules/integrity/index.js';
 import { InventoryModule } from './modules/inventory/index.js';
 import { PurchasingModule } from './modules/purchasing/index.js';
+import { StockModule } from './modules/stock/index.js';
 import { ReceivablesModule } from './modules/receivables/index.js';
 import { SalesModule } from './modules/sales/index.js';
 import { SettingsModule } from './modules/settings/index.js';
@@ -51,11 +53,13 @@ export class AppModule implements NestModule {
         PhotosModule,
         DevicesModule,
         InventoryModule,
+        StockModule,
         PurchasingModule,
         ReceivablesModule,
         SalesModule,
         CustomersModule,
         ExpensesModule,
+        EmployeesModule,
         PartnersModule,
         SettlementsModule,
         IntegrityModule,

@@ -13,7 +13,7 @@ import {
 import { baseColumns } from './columns.js';
 import { zakatReport } from './zakat.js';
 
-/** SPEC §13 `partner`: the owner and the partner (SPEC §6). */
+/** SPEC §13 `partner`: the owner and the partners (SPEC §6, S17). */
 export const partner = pgTable(
   'partner',
   {
@@ -21,6 +21,11 @@ export const partner = pgTable(
     name: text().notNull(),
     ownershipBp: integer().notNull(),
     isOwner: boolean().notNull(),
+    phone: text(),
+    /** Their role in the shop ("silent partner", "manager"): free text, for the directory. */
+    title: text(),
+    startDate: date({ mode: 'string' }),
+    notes: text(),
   },
   (table) => [check('partner_ownership_valid', sql`${table.ownershipBp} BETWEEN 0 AND 10000`)],
 );

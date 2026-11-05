@@ -16,11 +16,23 @@ const expenseFields = z.object({
   note: optionalTextSchema(500).default(null),
   /** The recurring template it was created from (BUILD_PROMPTS 4.1). */
   recurringExpenseId: idSchema.nullable().default(null),
+  /**
+   * The employee this pays and the month it is for (YYYY-MM): both set, or neither. A salary is an
+   * ordinary expense, counted by its paid date like any other (PY1, checkSalaryPayment).
+   */
+  employeeId: idSchema.nullable().default(null),
+  salaryMonth: z
+    .string()
+    .regex(/^\d{4}-(0[1-9]|1[0-2])$/)
+    .nullable()
+    .default(null),
 });
 
 /** SPEC §13 `expense`: mutable (edited, or voided with a reason; never deleted). */
 export const expenseInputSchema = expenseFields;
 export type ExpenseInput = z.input<typeof expenseInputSchema>;
+/** An expense's fields as stored (every default filled in). */
+export type ExpenseFields = z.output<typeof expenseInputSchema>;
 export const expenseSchema = recordBaseSchema.extend(expenseFields.shape);
 export type Expense = z.output<typeof expenseSchema>;
 export const storedExpenseSchema = expenseSchema.extend({ serverSeq: z.int().positive() });

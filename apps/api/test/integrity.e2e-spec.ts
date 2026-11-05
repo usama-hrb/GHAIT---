@@ -1,18 +1,15 @@
 import {
   auditActorsSchema,
   auditListResponseSchema,
-  buildPurchaseAggregate,
+  type BatchHistory,
+  buildBatchMove,
   buildSaleAggregate,
-  buildStockMove,
   CASH_COUNT_ISSUES,
   errorResponseSchema,
   HEADERS,
   integrityReportSchema,
-  newPurchaseSchema,
+  newBatchActionSchema,
   newSaleSchema,
-  newStockMoveSchema,
-  rollCode,
-  rollDetailSchema,
   settlementPreviewSchema,
   shopDate,
   storedCashAdjustmentSchema,
@@ -22,6 +19,7 @@ import {
 } from '@fabric/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestApp, OWNER, type Session, type TestApp } from './support/app.js';
+import { stockKit } from './support/stock.js';
 
 const dh = (amount: number) => amount * 100;
 
@@ -30,15 +28,16 @@ describe('the integrity check, cash counts and the audit log (BUILD_PROMPTS 4.4)
   let session: Session;
   const owner = crypto.randomUUID();
   const partner = crypto.randomUUID();
-  const variantId = crypto.randomUUID();
+  let kit: ReturnType<typeof stockKit>;
   let clock = Date.UTC(2026, 7, 1, 10, 0);
   const tick = () => new Date((clock += 60_000)).toISOString();
-  let rollId = '';
+  let batchId = '';
   let expenseId = '';
 
   beforeAll(async () => {
     t = await createTestApp();
     session = await t.login();
+    kit = stockKit(t, () => session, push);
   });
 
   afterAll(async () => {
@@ -75,27 +74,26 @@ describe('the integrity check, cash counts and the audit log (BUILD_PROMPTS 4.4)
   const report = async () =>
     integrityReportSchema.parse((await as(t.http().get('/integrity')).expect(200)).body);
 
-  /** A sale of 10 m at 20 dh on the roll; `paidCents` at the counter. */
+  /** A sale of 10 m at 20 dh on the batch; `paidCents` at the counter. */
   async function sell(date: string, paidCents: number, customerId: string | null) {
-    const detail = rollDetailSchema.parse(
-      (await as(t.http().get(`/rolls/${rollId}`)).expect(200)).body,
-    );
+    const history = await kit.history(batchId);
     const built = buildSaleAggregate(
       newSaleSchema.parse({
         date,
         customerId,
         lines: [
           {
-            rollId,
-            soldCm: 1000,
-            price: { perMeterCents: 2000 },
-            refPricePerMeterCents: 2000,
-            minPricePerMeterCents: 1000,
+            batchId,
+            unit: 'meter',
+            quantity: 1000,
+            price: { perUnitCents: 2000 },
+            refPriceCents: 2000,
+            minPriceCents: 1000,
           },
         ],
         paidCents,
       }),
-      new Map([[rollId, { roll: detail.roll, moves: detail.moves }]]),
+      new Map<string, BatchHistory>([[batchId, history]]),
       {
         saleId: crypto.randomUUID(),
         lineIds: [crypto.randomUUID()],
@@ -123,31 +121,11 @@ describe('the integrity check, cash counts and the audit log (BUILD_PROMPTS 4.4)
         .send({ partnerId, kind: 'contribution', amountCents: dh(1000), date: '2026-08-01' })
         .expect(200);
     }
-    const fabricId = crypto.randomUUID();
-    await as(t.http().put(`/fabrics/${fabricId}`))
-      .send({ name: 'روزا', refPricePerMeterCents: 2000, minPricePerMeterCents: 1000 })
-      .expect(200);
-    await as(t.http().put(`/variants/${variantId}`))
-      .send({ fabricId, colorName: 'أحمر' })
-      .expect(200);
-    // T12's roll: 50 m at 16 dh, paid.
-    const purchase = buildPurchaseAggregate(
-      newPurchaseSchema.parse({
-        method: 'meter',
-        date: '2026-08-02',
-        pricePerMeterCents: 1600,
-        rolls: [{ variantId, lengthCm: 5000 }],
-      }),
-      {
-        purchaseId: crypto.randomUUID(),
-        rollIds: [crypto.randomUUID()],
-        moveIds: [crypto.randomUUID()],
-        shortCodes: [rollCode('A', 1)],
-      },
-      { deviceId: 'desk', now: tick() },
-    );
-    await push(op('purchase', purchase.purchase.id, purchase));
-    rollId = purchase.rolls[0]?.id ?? '';
+    const productId = await kit.product({ minPricePerMeterCents: 1000 });
+    // T12's batch: 50 m at 16 dh, paid.
+    batchId = (
+      await kit.buy({ productId, date: '2026-08-02', quantity: 5000, totalCostCents: 80_000 })
+    ).id;
 
     await sell('2026-08-05', dh(200), null); // cash
     const customer = crypto.randomUUID();
@@ -162,22 +140,21 @@ describe('the integrity check, cash counts and the audit log (BUILD_PROMPTS 4.4)
     await as(t.http().put(`/expenses/${expenseId}`))
       .send({ date: '2026-08-12', category: 'rent', amountCents: dh(10), paidDate: '2026-08-12' })
       .expect(200);
-    const detail = rollDetailSchema.parse(
-      (await as(t.http().get(`/rolls/${rollId}`)).expect(200)).body,
-    );
-    const loss = buildStockMove(
-      newStockMoveSchema.parse({
+    const stock = await kit.detail(batchId);
+    const loss = buildBatchMove(
+      newBatchActionSchema.parse({
         type: 'loss',
-        rollId,
+        batchId,
         date: '2026-08-15',
-        lengthCm: 30,
+        quantity: 30,
         reason: 'تلف',
       }),
-      detail.ledger,
-      { id: crypto.randomUUID(), deviceId: 'desk', now: tick() },
+      stock.batch,
+      stock.ledger,
+      { id: crypto.randomUUID(), deviceId: 'desk', now: tick(), actor: null },
     );
     if (!loss.ok) throw new Error('a loss');
-    await push(op('stock_move', loss.move.id, loss.move));
+    await push(op('product_stock_move', loss.move.id, loss.move));
     await as(t.http().put(`/partner-draws/${crypto.randomUUID()}`))
       .send({ partnerId: owner, amountCents: dh(20), date: '2026-08-20', reason: 'مصروف شخصي' })
       .expect(200);

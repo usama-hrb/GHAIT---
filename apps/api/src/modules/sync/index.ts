@@ -6,5 +6,6 @@ export {
   type SyncHandler,
   SyncRegistry,
   SyncRejection,
+  type VoidGuard,
 } from './sync.registry.js';
 export { SyncService } from './sync.service.js';

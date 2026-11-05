@@ -5,8 +5,7 @@ import {
   negotiation,
   profitByMonth,
   receivablesAgeing,
-  salesByColor,
-  salesByFabric,
+  salesByProduct,
   slowMoving,
   stockValue,
 } from '@fabric/contracts';
@@ -35,11 +34,10 @@ export class ReportsRepository {
     const labels = new Map(categories.map((category) => [category.key, category.label]));
     return {
       profit: profitByMonth(records, range),
-      colors: salesByColor(records, range),
-      fabrics: salesByFabric(records, range),
+      products: salesByProduct(records, range),
       slow: slowMoving(records, today),
       byCustomer: negotiation(records, range, 'customer'),
-      byFabric: negotiation(records, range, 'fabric'),
+      byProduct: negotiation(records, range, 'product'),
       expenses: expensesByCategory(records, range).map((row) => ({
         ...row,
         label: labels.get(row.category) ?? row.category,

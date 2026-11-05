@@ -1,9 +1,9 @@
 import { cashBalanceCents } from '@fabric/core';
 import { cashCountFieldsOf, cashFlowsOf } from './cash-counts.js';
 import type { IntegrityRecords } from './integrity.js';
-import type { Roll, StockMove } from './purchasing.js';
 import { buildSaleReturn, type SaleReturn, type SaleReturnRecords } from './returns.js';
 import type { Sale, SaleLine } from './sales.js';
+import type { ProductBatch, ProductStockMove } from './stock.js';
 import { buildSettlement, previewSettlement } from './settlements.js';
 
 /**
@@ -19,6 +19,9 @@ export const base = (date: string) => ({
   deviceId: 'desk',
   voidedAt: null,
 });
+/** A partner with no contact details, title, start date or notes. */
+export const NO_CONTACT = { phone: null, title: null, startDate: null, notes: null } as const;
+
 export const OWNER = crypto.randomUUID();
 export const PARTNER = crypto.randomUUID();
 
@@ -28,7 +31,7 @@ type Mutable<T> = { -readonly [K in keyof T]: T[K] extends readonly (infer U)[] 
 
 export class Shop {
   records: Mutable<IntegrityRecords> = {
-    rolls: [],
+    batches: [],
     stockMoves: [],
     sales: [],
     saleLines: [],
@@ -40,8 +43,22 @@ export class Shop {
     settlements: [],
     splitRules: [],
     partners: [
-      { ...base('2026-09-01'), id: OWNER, name: 'أنا', ownershipBp: 5000, isOwner: true },
-      { ...base('2026-09-01'), id: PARTNER, name: 'شريكي', ownershipBp: 5000, isOwner: false },
+      {
+        ...base('2026-09-01'),
+        ...NO_CONTACT,
+        id: OWNER,
+        name: 'أنا',
+        ownershipBp: 5000,
+        isOwner: true,
+      },
+      {
+        ...base('2026-09-01'),
+        ...NO_CONTACT,
+        id: PARTNER,
+        name: 'شريكي',
+        ownershipBp: 5000,
+        isOwner: false,
+      },
     ],
     payments: [],
     purchases: [],
@@ -53,16 +70,18 @@ export class Shop {
   };
 
   /**
-   * One roll bought on `date`, paid in full unless `credit` says how much of it is left owing
-   * to `credit.supplierId` (SP1).
+   * One batch bought on `date`, paid in full unless `credit` says how much of it is left owing
+   * to `credit.supplierId` (SP1). Bought by the meter; with `lengthEstimated`, bought by weight
+   * (1 kg) and converted at `lengthCm` until it is measured.
    */
-  roll(
+  batch(
     costCents: number,
     lengthCm: number,
     lengthEstimated = false,
     date = '2026-09-01',
     credit?: { supplierId: string; owedCents: number },
-  ): Roll {
+    productId: string = crypto.randomUUID(),
+  ): ProductBatch {
     const purchaseId = crypto.randomUUID();
     this.records.purchases.push({
       ...base(date),
@@ -77,46 +96,57 @@ export class Shop {
       paidCents: costCents - (credit?.owedCents ?? 0),
       notes: null,
     });
-    const roll: Roll = {
+    const batch: ProductBatch = {
       ...base(date),
       id: crypto.randomUUID(),
-      shortCode: 'R-A0001',
-      variantId: crypto.randomUUID(),
+      code: 'B-A0001',
+      productId,
       purchaseId,
-      lengthCmInitial: lengthCm,
+      purchaseDate: date,
+      unit: lengthEstimated ? 'kg' : 'meter',
+      receivedQuantity: lengthEstimated ? 1000 : lengthCm,
       costTotalCents: costCents,
-      lengthEstimated,
+      conversion: lengthEstimated ? { weightG: 1000, lengthCm, source: 'estimated' } : null,
       status: 'active',
     };
-    this.records.rolls.push(roll);
-    this.move(roll, 'purchase', lengthCm, date);
-    return roll;
+    this.records.batches.push(batch);
+    this.move(batch, 'purchase', batch.receivedQuantity, date, null, batch.unit);
+    return batch;
   }
 
   move(
-    roll: Roll,
-    type: StockMove['type'],
-    deltaCm: number,
+    batch: ProductBatch,
+    type: ProductStockMove['type'],
+    delta: number,
     date: string,
     refId: string | null = null,
+    unit: ProductStockMove['unit'] = 'meter',
   ) {
     const move = {
       ...base(date),
       id: crypto.randomUUID(),
-      rollId: roll.id,
+      batchId: batch.id,
       type,
-      deltaCm,
+      unit,
+      delta,
       refId,
       date,
       note: null,
+      actor: null,
       serverSeq: ++seq,
     };
     this.records.stockMoves.push(move);
     return move;
   }
 
-  /** A sale of `soldCm` on one roll for `totalCents`; `paidCents` at the counter. */
-  sale(roll: Roll, date: string, soldCm: number, totalCents: number, paidCents = totalCents): Sale {
+  /** A sale of `soldCm` on one batch for `totalCents`; `paidCents` at the counter. */
+  sale(
+    batch: ProductBatch,
+    date: string,
+    soldCm: number,
+    totalCents: number,
+    paidCents = totalCents,
+  ): Sale {
     const sale: Sale = {
       ...base(date),
       id: crypto.randomUUID(),
@@ -132,17 +162,19 @@ export class Shop {
       ...base(date),
       id: crypto.randomUUID(),
       saleId: sale.id,
-      rollId: roll.id,
-      soldCm,
-      refPricePerMeterCents: 0,
-      minPricePerMeterCents: 0,
-      actualPricePerMeterCents: 0,
+      batchId: batch.id,
+      unit: 'meter',
+      quantity: soldCm,
+      refPriceCents: 0,
+      minPriceCents: 0,
+      actualPriceCents: 0,
       wholePiece: false,
       lineTotalCents: totalCents,
+      minOverrideBy: null,
     };
     this.records.sales.push(sale);
     this.records.saleLines.push(line);
-    this.move(roll, 'sale', -soldCm, date, line.id);
+    this.move(batch, 'sale', -soldCm, date, line.id);
     if (paidCents > 0) this.pay(sale, date, paidCents);
     return sale;
   }
@@ -211,10 +243,10 @@ export class Shop {
   }
 
   /**
-   * The customer gives back `returnedCm` of the sale's first line (RT1); `refundCents` of what
+   * The customer gives back `returnedQuantity` of the sale's first line (RT1); `refundCents` of what
    * they had paid is handed back in cash. Built with the same function the app uses.
    */
-  giveBack(sale: Sale, date: string, returnedCm: number, refundCents = 0): SaleReturn {
+  giveBack(sale: Sale, date: string, returnedQuantity: number, refundCents = 0): SaleReturn {
     const records = this.returnRecordsOf(sale);
     const first = records.lines[0];
     if (!first) throw new Error('a sale with no line');
@@ -223,7 +255,7 @@ export class Shop {
         saleId: sale.id,
         date,
         reason: 'مرتجع',
-        lines: [{ lineId: first.id, returnedCm }],
+        lines: [{ lineId: first.id, quantity: returnedQuantity }],
         refundCents,
       },
       records,
@@ -255,6 +287,8 @@ export class Shop {
       amountCents,
       paidDate,
       note: null,
+      employeeId: null,
+      salaryMonth: null,
       recurringExpenseId: null,
     });
   }

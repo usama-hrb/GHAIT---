@@ -17,10 +17,12 @@ export {
   type SettlementLine,
   type SettlementLineKey,
 } from './compute.js';
-export { ownerAndPartner, type PartnerOwnership, splitByOwnership } from './ownership.js';
+export { type PartnerOwnership, participantsOf, splitByOwnership } from './ownership.js';
 export {
   assertIsoDate,
   DEFAULT_SPLIT_WEIGHTS,
+  type PartnerWeight,
+  partnerWeightsFor,
   type ProfitShares,
   type ProfitSplitRule,
   splitNetProfit,

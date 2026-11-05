@@ -3,14 +3,24 @@
 import {
   formatLengthMeters,
   formatMoneyAmount,
+  isBelowMinimum,
   parseLengthInput,
   parseMoneyInput,
+  parseScaledDecimal,
 } from '@fabric/core';
 import { TriangleAlertIcon } from 'lucide-react';
-import { type PointerEvent, useId, useMemo, useState } from 'react';
+import { type KeyboardEvent, type PointerEvent, useId, useMemo, useState } from 'react';
 import { messages } from '@/i18n';
-import { type FabricStock, type RollChoice, useLiveQuery, useRepositories } from '@/local-db';
 import {
+  type BatchChoice,
+  type ProductStockView,
+  useLiveQuery,
+  useRepositories,
+  useSession,
+} from '@/local-db';
+import {
+  COUNT_PAD,
+  CountInput,
   Keypad,
   LENGTH_PAD,
   MeterInput,
@@ -18,12 +28,12 @@ import {
   Money,
   MoneyInput,
   moneyPad,
+  Quantity,
   useMoneyUnit,
   usePadFields,
 } from '@/shared/format';
 import { ProductPhoto } from '@/shared/brand';
 import { shopToday } from '@/shared/lib/dates';
-import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import {
@@ -40,12 +50,16 @@ import { Switch } from '@/shared/ui/switch';
 import {
   AUTO,
   type CartItem,
-  itemLengthCm,
+  type CartUnit,
+  heldByBill,
   itemPrice,
+  itemQuantity,
   pricedItemOf,
+  priceKeyOf,
   type SaleLineInput,
   withoutCode,
 } from './cart';
+import { Authorization, ConfirmSwitch } from './authorization';
 
 const t = messages.pos;
 
@@ -54,136 +68,213 @@ const keepFocus = (event: PointerEvent<HTMLElement>) => {
   event.preventDefault();
 };
 
-/** Lengths a customer often asks for, in metres: one tap fills the field. */
+/** Lengths a customer often asks for, in metres, and counts of pieces: one tap fills the field. */
 const QUICK_LENGTHS = [2.5, 3] as const;
+const QUICK_PIECES = [1, 2, 5] as const;
+
+const quantityOf = (unit: CartUnit, text: string): number | null => {
+  const parsed = unit === 'meter' ? parseLengthInput(text) : parseScaledDecimal(text, 0);
+  return parsed.ok && parsed.value > 0 ? parsed.value : null;
+};
 
 /**
- * Adds a colour to the bill, or changes a line already on it: the length and the price are
- * typed on the keypad (tap a field to type in it), the app proposes the roll(s) and shows the
- * line's total and warnings as they stand.
+ * Adds a product to the bill, or changes a line already on it: the quantity and the price are
+ * typed on the keypad (tap a field to type in it), the app proposes the batch(es) and shows the
+ * line's total as it stands. Under the product's minimum price a cashier cannot go on; the owner
+ * can, after one explicit confirmation that is recorded on the line (ADR 0012). Under the line's
+ * cost the owner confirms too, apart. Both are asked here, where the price is typed, and each is
+ * tied to the price it was given for: change the price and it asks again. The payment does not ask
+ * for them a second time (`needsCostConfirmationAtPayment`).
  */
 export function LineDialog({
-  fabricStock,
-  variantId,
+  product,
   photo,
   others,
   editing,
-  seesCosts,
   onSubmit,
   onClose,
 }: {
-  fabricStock: FabricStock;
-  variantId: string;
-  /** The colour's picture (a data: URL), if it has one. */
+  product: ProductStockView;
+  /** The product's picture (a data: URL), if it has one. */
   photo: string | undefined;
-  /** The rest of the bill: it holds some of the rolls and is costed first. */
+  /** The rest of the bill: it holds some of the batches and is costed first. */
   others: readonly CartItem[];
-  /** The line being changed (its own length is free for the proposal). */
+  /** The line being changed (its own quantity is free for the proposal). */
   editing: CartItem | null;
-  seesCosts: boolean;
   onSubmit: (item: CartItem) => void;
   onClose: () => void;
 }) {
   const id = useId();
   const repositories = useRepositories();
-  const { unit } = useMoneyUnit();
-  const { fabric } = fabricStock;
-  const color = fabricStock.colors.find((entry) => entry.variant.id === variantId);
-  const variant = color?.variant;
+  const { unit: moneyUnit } = useMoneyUnit();
+  const { user } = useSession();
+  const owner = user?.role === 'owner' ? user.username : null;
+
+  const sellsMeter = product.sellingUnits.includes('meter') && product.availableCm > 0;
+  const sellsPiece = product.sellingUnits.includes('piece') && product.availablePieces > 0;
+  const [saleUnit, setSaleUnit] = useState<CartUnit>(
+    editing?.unit ?? (sellsMeter ? 'meter' : 'piece'),
+  );
+  const normalOf = (unit: CartUnit) =>
+    (unit === 'meter' ? product.pricePerMeterCents : product.pricePerPieceCents) ?? 0;
+  const minOf = (unit: CartUnit) =>
+    (unit === 'meter' ? product.minPricePerMeterCents : product.minPricePerPieceCents) ?? 0;
+  const normalCents = normalOf(saleUnit);
+  const minCents = minOf(saleUnit);
 
   const editedPrice = editing ? itemPrice(editing) : undefined;
-  const format = (cents: number) => formatMoneyAmount(cents, unit, { grouping: false });
-  const pad = usePadFields<'length' | 'price' | 'piece'>(
+  const format = (cents: number) => formatMoneyAmount(cents, moneyUnit, { grouping: false });
+  const rules = {
+    qty: saleUnit === 'meter' ? LENGTH_PAD : COUNT_PAD,
+    price: moneyPad(moneyUnit),
+    whole: moneyPad(moneyUnit),
+  };
+  const pad = usePadFields<'qty' | 'price' | 'whole'>(
     {
-      length: editing ? formatLengthMeters(itemLengthCm(editing), { grouping: false }) : '',
+      qty: editing
+        ? editing.unit === 'meter'
+          ? formatLengthMeters(itemQuantity(editing), { grouping: false })
+          : String(itemQuantity(editing))
+        : '',
       price: format(
-        editedPrice && 'perMeterCents' in editedPrice
-          ? editedPrice.perMeterCents
-          : fabric.refPricePerMeterCents,
+        editedPrice && 'perUnitCents' in editedPrice
+          ? editedPrice.perUnitCents
+          : normalOf(editing?.unit ?? saleUnit),
       ),
-      piece: format(
+      whole: format(
         editedPrice && 'wholePieceCents' in editedPrice
           ? editedPrice.wholePieceCents
-          : (fabric.piecePriceCents ?? 0),
+          : (product.pricePerPieceCents ?? 0),
       ),
     },
-    { length: LENGTH_PAD, price: moneyPad(unit), piece: moneyPad(unit) },
-    editedPrice && 'wholePieceCents' in editedPrice ? 'piece' : 'length',
+    rules,
+    editedPrice && 'wholePieceCents' in editedPrice ? 'whole' : 'qty',
   );
-  const [rollChoice, setRollChoice] = useState(editing?.rollChoice ?? AUTO);
+  const [batchChoice, setBatchChoice] = useState(editing?.batchChoice ?? AUTO);
   const [wholePiece, setWholePiece] = useState(
     editedPrice !== undefined && 'wholePieceCents' in editedPrice,
   );
-
-  const lengthParsed = parseLengthInput(pad.texts.length);
-  const lengthCm = lengthParsed.ok ? lengthParsed.value : null;
-  const priceParsed = parseMoneyInput(pad.texts.price, unit);
-  const pricePerMeter = priceParsed.ok ? priceParsed.value : null;
-  const pieceParsed = parseMoneyInput(pad.texts.piece, unit);
-  const piecePrice = pieceParsed.ok ? pieceParsed.value : null;
-
-  /** cm of each roll the rest of the bill already holds, so this line is proposed what is left. */
-  const taken = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const line of others.flatMap((entry) => entry.lines)) {
-      map.set(line.rollId, (map.get(line.rollId) ?? 0) + line.soldCm);
-    }
-    return map;
-  }, [others]);
-
-  const rolls = useLiveQuery(
-    () => repositories.sales.rollsOfColor(variantId),
-    [repositories, variantId],
+  const [minConfirmed, setMinConfirmed] = useState(
+    editing?.lines.some((line) => line.minOverrideBy !== null) ?? false,
   );
-  const chosen = rolls?.find((choice) => choice.roll.id === rollChoice);
+  const [costConfirmed, setCostConfirmed] = useState(editing?.belowCostConfirmed ?? false);
+
+  const quantity = quantityOf(saleUnit, pad.texts.qty);
+  const priceParsed = parseMoneyInput(pad.texts.price, moneyUnit);
+  const unitPrice = priceParsed.ok ? priceParsed.value : null;
+  const wholeParsed = parseMoneyInput(pad.texts.whole, moneyUnit);
+  const wholePrice = wholeParsed.ok ? wholeParsed.value : null;
+
+  /** What the rest of the bill already holds of each batch, so this line is proposed what is left. */
+  const taken = useMemo(() => heldByBill(others, saleUnit), [others, saleUnit]);
+
+  const allBatches = useLiveQuery(
+    () => repositories.sales.batchesOfProduct(product.id),
+    [repositories, product.id],
+  );
+  const leftOf = (choice: BatchChoice) =>
+    saleUnit === 'meter' ? choice.remainingCm : choice.remainingPieces;
+  const batches = allBatches?.filter((choice) => leftOf(choice) > 0);
+  const chosen = batches?.find((choice) => choice.batch.id === batchChoice);
   const canSellWhole =
-    fabric.sellableAsPiece &&
+    saleUnit === 'meter' &&
+    product.sellingUnits.includes('piece') &&
+    product.pricePerPieceCents != null &&
     chosen !== undefined &&
     chosen.untouched &&
-    !taken.has(chosen.roll.id);
+    !taken.has(chosen.batch.id);
   const piece = wholePiece && canSellWhole;
-  const selling = piece ? chosen.ledger.remainingCm : lengthCm;
+  const selling = piece ? chosen.remainingCm : quantity;
 
   const proposal = useLiveQuery(async () => {
     if (selling === null || selling <= 0) return null;
     if (chosen) {
-      const left = chosen.ledger.remainingCm - (taken.get(chosen.roll.id) ?? 0);
+      const left = leftOf(chosen) - (taken.get(chosen.batch.id) ?? 0);
       return left >= selling
-        ? { takes: [{ rollId: chosen.roll.id, cm: selling, choice: chosen }], shortCm: 0 }
-        : { takes: [], shortCm: selling, tooShort: true };
+        ? { takes: [{ choice: chosen, quantity: selling }], shortfall: 0 }
+        : { takes: [], shortfall: selling, tooShort: true as const };
     }
-    return repositories.sales.propose(variantId, selling, taken);
-  }, [repositories, variantId, selling, chosen, taken]);
+    const found = await repositories.sales.propose(product.id, saleUnit, selling, taken);
+    return {
+      takes: found.takes.map(({ take, choice }) => ({
+        choice,
+        quantity:
+          take.quantity.unit === 'meter'
+            ? take.quantity.centimeters
+            : take.quantity.unit === 'piece'
+              ? take.quantity.pieces
+              : 0,
+      })),
+      shortfall: found.shortfall,
+    };
+  }, [repositories, product.id, saleUnit, selling, chosen, taken]);
 
-  const priceCents = piece ? piecePrice : pricePerMeter;
+  const priceCents = piece ? wholePrice : unitPrice;
+  const price: SaleLineInput['price'] | null =
+    priceCents === null
+      ? null
+      : piece
+        ? { wholePieceCents: priceCents }
+        : { perUnitCents: priceCents };
+  // A confirmation is for the price it was given at: another price (typed, a quick button, the
+  // whole piece, another unit) drops both, and asks again.
+  const priceKey = price === null ? null : priceKeyOf(saleUnit, price);
+  const [confirmedAt, setConfirmedAt] = useState(priceKey);
+  if (priceKey !== confirmedAt) {
+    setConfirmedAt(priceKey);
+    setMinConfirmed(false);
+    setCostConfirmed(false);
+  }
+  const shortfall = proposal?.shortfall ?? 0;
+  const proposed = proposal && shortfall === 0 && proposal.takes.length > 0 ? proposal : null;
+
+  // Under the product's minimum price: the cashier stops here, the owner confirms (ADR 0012).
+  const below =
+    proposed !== null &&
+    price !== null &&
+    isBelowMinimum({
+      quantity: proposed.takes.reduce((sum, take) => sum + take.quantity, 0),
+      price,
+      minPriceCents: minCents,
+    });
+  const overrideBy = below && owner !== null && minConfirmed ? owner : null;
+
   const item = useMemo((): CartItem | null => {
-    if (
-      !variant ||
-      !proposal ||
-      proposal.shortCm > 0 ||
-      proposal.takes.length === 0 ||
-      priceCents === null
-    ) {
-      return null;
-    }
-    const price: SaleLineInput['price'] = piece
-      ? { wholePieceCents: priceCents }
-      : { perMeterCents: priceCents };
+    if (!proposed || price === null) return null;
     return {
       key: editing?.key ?? crypto.randomUUID(),
-      fabric,
-      variant,
-      rollChoice,
-      lines: proposal.takes.map((take) => ({
-        rollId: take.rollId,
-        rollCode: take.choice.roll.shortCode,
-        soldCm: take.cm,
+      product: { id: product.id, name: product.name },
+      unit: saleUnit,
+      batchChoice,
+      belowCostConfirmed: owner !== null && costConfirmed,
+      lines: proposed.takes.map((take) => ({
+        batchId: take.choice.batch.id,
+        batchCode: take.choice.batch.code,
+        unit: saleUnit,
+        quantity: take.quantity,
         price,
-        refPricePerMeterCents: fabric.refPricePerMeterCents,
-        minPricePerMeterCents: fabric.minPricePerMeterCents,
+        refPriceCents: normalCents,
+        minPriceCents: minCents,
+        minOverrideBy: overrideBy,
       })),
     };
-  }, [fabric, variant, proposal, priceCents, piece, rollChoice, editing]);
+    // `price` is a fresh object each render: the cents it holds are what matter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps, @eslint-react/exhaustive-deps -- see above
+  }, [
+    product.id,
+    product.name,
+    saleUnit,
+    batchChoice,
+    proposed,
+    priceCents,
+    piece,
+    normalCents,
+    minCents,
+    overrideBy,
+    owner,
+    costConfirmed,
+    editing,
+  ]);
 
   // The line priced after the rest of the bill, so its cost and warnings are the real ones.
   const priced = useLiveQuery(async () => {
@@ -209,14 +300,21 @@ export function LineDialog({
     }
   }, [repositories, item, others]);
 
-  if (!variant) return null;
+  // The line is priced after each change; what it said for the last one is not an answer for this
+  // one. Until it answers, it cannot be added: a cost confirmation asked late would be asked twice.
+  const pricing =
+    item !== null && (priced === undefined || (priced !== null && priced.item !== item));
+  // Under the line's cost (the owner's costs only: a cashier's device has none).
+  const belowCost = priced?.belowCost === true;
+  const blocked =
+    pricing || (below && overrideBy === null) || (belowCost && !(owner !== null && costConfirmed));
 
   const handleSubmit = () => {
-    if (!item) return;
+    if (!item || blocked) return;
     onSubmit(item);
   };
 
-  const field = (name: 'length' | 'price' | 'piece') => ({
+  const field = (name: 'qty' | 'price' | 'whole') => ({
     keypad: true,
     large: true,
     text: pad.texts[name],
@@ -228,10 +326,33 @@ export function LineDialog({
     },
   });
   /** A quick button fills a field and moves the typing there (the keyboard too). */
-  const fill = (name: 'length' | 'price' | 'piece', text: string) => {
+  const fill = (name: 'qty' | 'price' | 'whole', text: string) => {
     pad.fill(name, text);
     document.getElementById(`${id}-${name}`)?.focus();
   };
+  const changeUnit = (next: CartUnit) => {
+    setSaleUnit(next);
+    setBatchChoice(AUTO);
+    setWholePiece(false);
+    pad.fill('qty', '');
+    pad.fill('price', format(normalOf(next)));
+  };
+
+  const onEnter = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.repeat) return;
+    // Enter on a button, switch or list presses that control; it submits from the fields.
+    if (
+      event.target instanceof HTMLElement &&
+      event.target.closest('button, [role="switch"], [role="combobox"]')
+    ) {
+      return;
+    }
+    event.preventDefault();
+    handleSubmit();
+  };
+
+  const needsMinimum = below;
+  const needsCost = belowCost && owner !== null;
 
   return (
     <Dialog
@@ -240,67 +361,116 @@ export function LineDialog({
         if (!open) onClose();
       }}
     >
+      {/* One height whatever the line shows: the body scrolls, the footer stays. */}
       <DialogContent
-        className="flex max-h-[calc(100svh-2rem)] flex-col gap-3 overflow-hidden sm:max-w-xl md:max-w-3xl"
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' && !event.nativeEvent.isComposing && !event.repeat) {
-            event.preventDefault();
-            handleSubmit();
-          }
-        }}
+        className="flex h-[min(46rem,calc(100svh-2rem))] flex-col gap-3 overflow-hidden sm:max-w-xl md:max-w-3xl"
+        onKeyDown={onEnter}
       >
-        {' '}
-        <DialogHeader className="flex-row items-center gap-3 pe-10">
-          <ProductPhoto src={photo} className="size-14 rounded-lg" />
-          <div className="grid min-w-0 gap-1">
-            <DialogTitle>
-              {fabric.name} · {variant.colorName}
-            </DialogTitle>
-            <DialogDescription>
-              {t.available}: <Meters cm={color.remainingCm} /> · {t.reference}:{' '}
-              <Money cents={fabric.refPricePerMeterCents} />
+        <DialogHeader className="shrink-0 flex-row items-center gap-3 pe-10">
+          <ProductPhoto src={photo} className="size-12 shrink-0 rounded-lg" />
+          <div className="grid min-w-0 gap-0.5">
+            <DialogTitle className="truncate">{product.name}</DialogTitle>
+            <DialogDescription className="text-sm">
+              {t.available}: {product.availableCm > 0 && <Meters cm={product.availableCm} />}
+              {product.availableCm > 0 && product.availablePieces > 0 && ' · '}
+              {product.availablePieces > 0 && (
+                <Quantity unit="piece" amount={product.availablePieces} />
+              )}{' '}
+              · {t.reference}: <Money cents={normalCents} />
             </DialogDescription>
           </div>
         </DialogHeader>
+
         <div className="-mx-4 min-h-0 flex-1 overflow-y-auto px-4">
-          {/* Fields, then the keypad, then the details; side by side from md up. */}
-          <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_17rem] md:grid-rows-[auto_1fr]">
-            <FieldGroup>
+          {/* Fields, then the keypad; side by side from md up. */}
+          <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_17rem]">
+            <FieldGroup className="gap-3">
+              {sellsMeter && sellsPiece && (
+                <Field>
+                  <FieldLabel>{t.fields.soldBy}</FieldLabel>
+                  <div role="group" aria-label={t.fields.soldBy} className="flex gap-2">
+                    {(['meter', 'piece'] as const).map((choice) => (
+                      <Button
+                        key={choice}
+                        type="button"
+                        variant={saleUnit === choice ? 'default' : 'outline'}
+                        aria-pressed={saleUnit === choice}
+                        className="touch-manipulation pointer-coarse:h-11"
+                        onClick={() => {
+                          changeUnit(choice);
+                        }}
+                      >
+                        {messages.productStock.units[choice]}
+                      </Button>
+                    ))}
+                  </div>
+                </Field>
+              )}
               {piece ? (
                 <Field>
-                  <FieldLabel htmlFor={`${id}-piece`}>{t.fields.piecePrice}</FieldLabel>
-                  <MoneyInput id={`${id}-piece`} value={piecePrice} {...field('piece')} />
+                  <FieldLabel htmlFor={`${id}-whole`}>{t.fields.piecePrice}</FieldLabel>
+                  <MoneyInput id={`${id}-whole`} value={wholePrice} {...field('whole')} />
                 </Field>
               ) : (
                 <>
                   <Field>
-                    <FieldLabel htmlFor={`${id}-length`}>{t.fields.length}</FieldLabel>
-                    <MeterInput id={`${id}-length`} value={lengthCm} {...field('length')} />
+                    <FieldLabel htmlFor={`${id}-qty`}>
+                      {saleUnit === 'meter' ? t.fields.length : t.fields.quantity}
+                    </FieldLabel>
+                    {saleUnit === 'meter' ? (
+                      <MeterInput id={`${id}-qty`} value={quantity} {...field('qty')} />
+                    ) : (
+                      <CountInput id={`${id}-qty`} value={quantity} {...field('qty')} />
+                    )}
                     <div
                       role="group"
                       aria-label={t.line.quickLength}
                       className="flex flex-wrap gap-2"
                       onPointerDown={keepFocus}
                     >
-                      {QUICK_LENGTHS.map((meters) => (
+                      {(saleUnit === 'meter' ? QUICK_LENGTHS : QUICK_PIECES).map((amount) => (
                         <Button
-                          key={meters}
+                          key={amount}
                           type="button"
                           variant="outline"
                           size="sm"
                           className="touch-manipulation pointer-coarse:h-11 pointer-coarse:px-4"
                           onClick={() => {
-                            fill('length', String(meters));
+                            fill('qty', String(amount));
                           }}
                         >
-                          {meters} {messages.units.meter}
+                          {amount}{' '}
+                          {saleUnit === 'meter' ? messages.units.meter : messages.units.piece}
                         </Button>
                       ))}
                     </div>
+                    {proposal && proposal.shortfall > 0 && (
+                      <p role="alert" className="flex items-start gap-2 text-sm text-destructive">
+                        <TriangleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
+                        <span>
+                          {'tooShort' in proposal ? (
+                            t.batchTooShort
+                          ) : (
+                            <>
+                              {t.notEnough}{' '}
+                              <Quantity
+                                unit={saleUnit}
+                                amount={proposal.takes.reduce(
+                                  (sum, take) => sum + take.quantity,
+                                  0,
+                                )}
+                              />
+                            </>
+                          )}
+                        </span>
+                      </p>
+                    )}
                   </Field>
                   <Field>
-                    <FieldLabel htmlFor={`${id}-price`}>{t.fields.pricePerMeter}</FieldLabel>
-                    <MoneyInput id={`${id}-price`} value={pricePerMeter} {...field('price')} />
+                    <FieldLabel htmlFor={`${id}-price`}>
+                      {saleUnit === 'meter' ? t.fields.pricePerMeter : t.fields.pricePerPiece}
+                    </FieldLabel>
+                    <MoneyInput id={`${id}-price`} value={unitPrice} {...field('price')} />
                     <div
                       role="group"
                       aria-label={t.line.quickPrice}
@@ -309,8 +479,8 @@ export function LineDialog({
                     >
                       {(
                         [
-                          [t.line.referencePrice, fabric.refPricePerMeterCents],
-                          [t.line.lowestPrice, fabric.minPricePerMeterCents],
+                          [t.line.referencePrice, normalCents],
+                          [t.line.lowestPrice, minCents],
                         ] as const
                       ).map(([label, cents]) => (
                         <Button
@@ -330,130 +500,128 @@ export function LineDialog({
                   </Field>
                 </>
               )}
-            </FieldGroup>
 
-            <Keypad
-              onPress={pad.press}
-              className="md:col-start-2 md:row-span-2 md:row-start-1 md:self-start"
-            />
-
-            <div className="grid content-start gap-3">
-              <FieldGroup>
-                {rolls && rolls.length > 0 && (
-                  <Field>
-                    <FieldLabel htmlFor={`${id}-roll`}>{t.fields.roll}</FieldLabel>
-                    <Select
-                      value={rollChoice}
-                      onValueChange={(next) => {
-                        setRollChoice(next);
-                        setWholePiece(false);
-                      }}
-                    >
-                      <SelectTrigger id={`${id}-roll`}>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value={AUTO}>{t.fields.rollAuto}</SelectItem>
-                        {rolls.map((choice) => (
-                          <SelectItem key={choice.roll.id} value={choice.roll.id}>
-                            <RollLabel choice={choice} taken={taken.get(choice.roll.id) ?? 0} />
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </Field>
-                )}
-
-                {canSellWhole && (
-                  <Field orientation="horizontal">
-                    <Switch
-                      id={`${id}-whole`}
-                      checked={wholePiece}
-                      onCheckedChange={(checked) => {
-                        setWholePiece(checked);
-                        if (checked) pad.activate('piece');
-                      }}
-                    />
-                    <FieldLabel htmlFor={`${id}-whole`}>{t.fields.wholePiece}</FieldLabel>
-                  </Field>
-                )}
-              </FieldGroup>
-
-              {proposal && proposal.takes.length > 0 && (
-                <div className="grid gap-1 text-sm" role="status">
-                  <span className="text-muted-foreground">
-                    {t.splitAcross(proposal.takes.length)}
-                  </span>
-                  <ul className="flex flex-wrap gap-2">
-                    {proposal.takes.map((take) => (
-                      <li key={take.rollId}>
-                        <Badge variant="secondary">
-                          <bdi dir="ltr" data-num>
-                            {take.choice.roll.shortCode}
-                          </bdi>
-                          · <Meters cm={take.cm} />
-                        </Badge>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {proposal && proposal.shortCm > 0 && (
-                <Alert variant="destructive">
-                  <TriangleAlertIcon aria-hidden />
-                  <AlertDescription>
-                    {'tooShort' in proposal ? (
-                      t.rollTooShort
-                    ) : (
-                      <>
-                        {t.notEnough}{' '}
-                        <Meters cm={proposal.takes.reduce((sum, take) => sum + take.cm, 0)} />
-                      </>
-                    )}
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              {priced && (
-                <div className="grid gap-1.5 rounded-lg bg-muted p-3" role="status">
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="text-muted-foreground">{t.line.lineTotal}</span>
-                    <span className="text-2xl font-semibold">
-                      <Money cents={priced.totalCents} />
-                    </span>
-                  </div>
-                  {priced.warnings.length > 0 && (
-                    <div className="flex flex-wrap gap-1">
-                      {priced.warnings.map((warning) => (
-                        <Badge
-                          key={warning}
-                          variant={warning === 'below_cost' ? 'destructive' : 'warning'}
-                        >
-                          {t.warnings[warning]}
-                        </Badge>
+              {batches && batches.length > 0 && (
+                <Field>
+                  <FieldLabel htmlFor={`${id}-batch`}>{t.fields.batch}</FieldLabel>
+                  <Select
+                    value={batchChoice}
+                    onValueChange={(next) => {
+                      setBatchChoice(next);
+                      setWholePiece(false);
+                    }}
+                  >
+                    <SelectTrigger id={`${id}-batch`} className="pointer-coarse:h-11">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={AUTO}>{t.fields.batchAuto}</SelectItem>
+                      {batches.map((choice) => (
+                        <SelectItem key={choice.batch.id} value={choice.batch.id}>
+                          <BatchLabel
+                            choice={choice}
+                            unit={saleUnit}
+                            taken={taken.get(choice.batch.id) ?? 0}
+                          />
+                        </SelectItem>
                       ))}
+                    </SelectContent>
+                  </Select>
+                  {proposed && (
+                    <div className="flex flex-wrap items-center gap-1.5" role="status">
+                      <span className="text-xs text-muted-foreground">
+                        {t.splitAcross(proposed.takes.length)}
+                      </span>
+                      <ul className="flex flex-wrap gap-1.5">
+                        {proposed.takes.map((take) => (
+                          <li key={take.choice.batch.id}>
+                            <Badge variant="secondary">
+                              <bdi dir="ltr" data-num>
+                                {take.choice.batch.code}
+                              </bdi>
+                              · <Quantity unit={saleUnit} amount={take.quantity} />
+                            </Badge>
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   )}
-                  {seesCosts && (
-                    <span className="text-sm text-muted-foreground">
-                      {t.profit}:{' '}
-                      <Money
-                        cents={priced.profitCents}
-                        tone={priced.profitCents < 0 ? 'loss' : 'profit'}
-                      />
-                      {priced.provisional && ` · ${t.provisional}`}
-                    </span>
-                  )}
-                </div>
+                </Field>
               )}
-            </div>
+
+              {canSellWhole && (
+                <Field orientation="horizontal">
+                  <Switch
+                    id={`${id}-whole-switch`}
+                    checked={wholePiece}
+                    onCheckedChange={(checked) => {
+                      setWholePiece(checked);
+                      if (checked) pad.activate('whole');
+                    }}
+                  />
+                  <FieldLabel htmlFor={`${id}-whole-switch`}>{t.fields.wholePiece}</FieldLabel>
+                </Field>
+              )}
+            </FieldGroup>
+
+            <Keypad onPress={pad.press} className="md:self-start" />
           </div>
         </div>
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={onClose}>
+
+        {/* What needs the owner, next to the button it blocks: asked once, here. */}
+        {(needsMinimum || needsCost) && (
+          <div className="grid shrink-0 gap-2">
+            {needsMinimum && (
+              <Authorization
+                title={t.minimum.title}
+                detail={
+                  <>
+                    {t.minimum.price}: <Money cents={minCents} />
+                  </>
+                }
+              >
+                {owner === null ? (
+                  <p className="text-sm">{t.minimum.cashier}</p>
+                ) : (
+                  <ConfirmSwitch
+                    id={`${id}-confirm-minimum`}
+                    checked={minConfirmed}
+                    onChange={setMinConfirmed}
+                    label={t.minimum.confirm}
+                  />
+                )}
+              </Authorization>
+            )}
+            {needsCost && (
+              <Authorization title={t.belowCostTitle}>
+                <ConfirmSwitch
+                  id={`${id}-confirm-cost`}
+                  checked={costConfirmed}
+                  onChange={setCostConfirmed}
+                  label={t.confirmBelowCost}
+                />
+              </Authorization>
+            )}
+          </div>
+        )}
+
+        <DialogFooter className="shrink-0 flex-row items-center gap-3 sm:justify-end">
+          <div className="me-auto grid min-w-24 gap-0.5" role="status">
+            <span className="text-xs text-muted-foreground">{t.line.lineTotal}</span>
+            <span className="text-xl leading-none font-semibold">
+              {priced ? <Money cents={priced.totalCents} /> : '—'}
+            </span>
+          </div>
+          <Button type="button" variant="outline" className="pointer-coarse:h-12" onClick={onClose}>
             {messages.forms.cancel}
           </Button>
-          <Button type="button" variant="accent" disabled={!item} onClick={handleSubmit}>
+          <Button
+            type="button"
+            variant="accent"
+            className="pointer-coarse:h-12 pointer-coarse:px-6"
+            disabled={!item || blocked}
+            onClick={handleSubmit}
+          >
             {editing ? t.line.update : t.addLine}
           </Button>
         </DialogFooter>
@@ -462,20 +630,29 @@ export function LineDialog({
   );
 }
 
-/** "R-A0001 · 49.7 m" (what is left after the rest of the bill). */
-function RollLabel({ choice, taken }: { choice: RollChoice; taken: number }) {
+/** "B-A0001 · 49.7 m" (what is left after the rest of the bill). */
+function BatchLabel({
+  choice,
+  unit,
+  taken,
+}: {
+  choice: BatchChoice;
+  unit: CartUnit;
+  taken: number;
+}) {
+  const left = (unit === 'meter' ? choice.remainingCm : choice.remainingPieces) - taken;
   return (
     <span className="flex gap-2">
       <bdi dir="ltr" data-num>
-        {choice.roll.shortCode}
+        {choice.batch.code}
       </bdi>
       <span className="text-muted-foreground">
-        <Meters cm={choice.ledger.remainingCm - taken} />
+        <Quantity unit={unit} amount={left} />
       </span>
       {choice.state === 'remnant' && (
         <Badge variant="secondary">{messages.inventory.states.remnant}</Badge>
       )}
-      {choice.ledger.lengthEstimated && (
+      {choice.ledger.measurementStatus === 'estimated' && (
         <Badge variant="warning">{messages.purchasing.estimated}</Badge>
       )}
     </span>

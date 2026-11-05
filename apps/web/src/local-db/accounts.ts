@@ -43,6 +43,8 @@ export interface CustomerAccountView {
 export interface CustomerSummary {
   customer: Local<Customer>;
   account: CustomerAccount;
+  /** The day of their latest sale or payment (YYYY-MM-DD); null before the first. */
+  lastActivity: string | null;
 }
 
 const newestFirst = <R extends { date: string; createdAt: string }>(a: R, b: R) =>
@@ -123,8 +125,16 @@ export class AccountsRepository {
         const paid = payments.filter((payment) => payment.customerId === customer.id);
         const paymentIds = new Set(paid.map((payment) => payment.id));
         const saleIds = new Set(own.map((sale) => sale.id));
+        const days = [
+          ...own.filter((sale) => sale.voidedAt === null).map((sale) => sale.date),
+          ...paid.map((payment) => payment.date),
+        ];
         return {
           customer,
+          lastActivity: days.reduce<string | null>(
+            (latest, day) => (latest === null || day > latest ? day : latest),
+            null,
+          ),
           account: customerAccountOf(
             {
               sales: own,

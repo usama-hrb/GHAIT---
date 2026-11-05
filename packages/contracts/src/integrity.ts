@@ -24,6 +24,7 @@ import {
   type SettlementRecords,
   type SettlementShare,
 } from './settlements.js';
+import { netCostsOf } from './stock.js';
 import { supplierAccountOf, type SupplierPayment } from './supplier-payments.js';
 import { worthBySaleOf } from './receivables.js';
 
@@ -47,7 +48,7 @@ const live = <T extends { voidedAt: string | null }>(records: readonly T[]): T[]
 /**
  * The integrity check's amounts (SPEC §9, BUILD_PROMPTS 4.4), each from the records alone:
  * - cash: the money the records say the shop has, cash counts included (cashBalanceCents);
- * - stock at cost: each roll's cost less what its sales and losses took, frozen costs kept;
+ * - stock at cost: each batch's cost less what its sales and losses took, frozen costs kept;
  * - capital still in customers' debts, and the credits held for them: money paid in and neither
  *   applied to a live invoice nor refunded (P6, P14), plus any invoice paid beyond its total (I1);
  * - capital (retained profit included), the partners' undrawn shares less their draws;
@@ -114,11 +115,11 @@ export function integrityStateOf(records: IntegrityRecords): IntegrityState {
   return {
     cashCents: cashBalanceCents(cashFlowsOf(records)),
     stockAtCostCents: stockAtCostCents(
-      records.rolls.map((roll) => ({
-        costTotalCents: roll.costTotalCents,
-        allocatedCostsCents: (basis.ledgers.get(roll.id)?.costs ?? []).map(
-          (cost) => cost.costCents,
-        ),
+      records.batches.map((batch) => ({
+        costTotalCents: batch.costTotalCents,
+        allocatedCostsCents: netCostsOf(
+          basis.ledgers.get(batch.id) ?? { costs: [], returns: [] },
+        ).map((cost) => cost.costCents),
       })),
     ),
     unrecoveredCapitalCents: receivables.unrecoveredCapitalCents,

@@ -1,0 +1,366 @@
+'use client';
+
+import {
+  newProductPurchaseSchema,
+  PRODUCT_UNITS,
+  previewProductPurchase,
+  type ProductUnit,
+} from '@fabric/contracts';
+import {
+  meterPurchaseCostCents,
+  piecePurchaseCostCents,
+  weightPurchaseCostCents,
+} from '@fabric/core';
+import { InfoIcon } from 'lucide-react';
+import { useId, useMemo } from 'react';
+import { messages } from '@/i18n';
+import { type StockPurchase, useLiveQuery, useRepositories } from '@/local-db';
+import { CountInput, MeterInput, Meters, Money, MoneyInput, WeightInput } from '@/shared/format';
+import { shopToday } from '@/shared/lib/dates';
+import { Alert, AlertDescription } from '@/shared/ui/alert';
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/shared/ui/field';
+import { RadioGroup, RadioGroupItem } from '@/shared/ui/radio-group';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
+import { Switch } from '@/shared/ui/switch';
+
+const t = messages.productStock;
+
+/** What the purchase form holds while it is being filled in. */
+export interface StockDraft {
+  unit: ProductUnit;
+  /** In g, cm or pieces, by `unit`. */
+  quantity: number | null;
+  /**
+   * What one unit cost, as typed: a metre, a kilo or a piece, by `unit`. The cost of the whole
+   * purchase is worked out from it and the quantity, never typed.
+   */
+  unitCostCents: number | null;
+  /** A weight only: how much cloth it makes is known. */
+  conversionKnown: boolean;
+  weightG: number | null;
+  lengthCm: number | null;
+  source: 'estimated' | 'measured';
+  supplierId: string | null;
+  paidCents: number | null;
+}
+
+export const emptyStockDraft = (unit: ProductUnit = 'meter'): StockDraft => ({
+  unit,
+  quantity: null,
+  unitCostCents: null,
+  conversionKnown: false,
+  weightG: null,
+  lengthCm: null,
+  source: 'measured',
+  supplierId: null,
+  paidCents: null,
+});
+
+/** The key a missing cost is reported under (the form shows it under the cost field). */
+export const COST_FIELD = 'unitCostCents';
+
+/** The cost has not been typed yet. */
+export const isCostMissing = (draft: StockDraft) => draft.unitCostCents === null;
+
+/**
+ * The cost of the whole purchase, or null while it cannot be known. Every unit is bought at a
+ * price per unit: the total is that price times the quantity, worked out by core (SPEC §2.3,
+ * PB19, PB21): rounded half up for a length and a weight, exact for pieces.
+ */
+export function totalCostOf(draft: StockDraft): number | null {
+  if (draft.unitCostCents === null || draft.quantity === null || draft.quantity < 1) return null;
+  switch (draft.unit) {
+    case 'meter':
+      return meterPurchaseCostCents(draft.unitCostCents, draft.quantity);
+    case 'kg':
+      return weightPurchaseCostCents(draft.unitCostCents, draft.quantity);
+    case 'piece':
+      return piecePurchaseCostCents(draft.unitCostCents, draft.quantity);
+  }
+}
+
+/** The purchase the draft stands for, or null while it is incomplete. */
+export function stockPurchaseOf(draft: StockDraft): StockPurchase | null {
+  const totalCostCents = totalCostOf(draft);
+  if (draft.quantity === null || draft.quantity < 1 || totalCostCents === null) return null;
+  const base = {
+    unit: draft.unit,
+    quantity: draft.quantity,
+    totalCostCents,
+    supplierId: draft.supplierId,
+    paidCents: draft.paidCents,
+  };
+  if (draft.unit !== 'kg' || !draft.conversionKnown) return base;
+  if (draft.weightG === null || draft.lengthCm === null) return null;
+  return {
+    ...base,
+    conversion: { weightG: draft.weightG, lengthCm: draft.lengthCm, source: draft.source },
+  };
+}
+
+/** A uuid that stands for the product while a purchase is only previewed. */
+const PREVIEW_PRODUCT = '00000000-0000-4000-8000-000000000000';
+
+/** What the purchase would bring in, as the ledger reads it (core), before anything is saved. */
+export function previewOfDraft(draft: StockDraft) {
+  const stock = stockPurchaseOf(draft);
+  if (!stock) return null;
+  const parsed = newProductPurchaseSchema.safeParse({
+    date: shopToday(),
+    productId: PREVIEW_PRODUCT,
+    unit: stock.unit,
+    quantity: stock.quantity,
+    totalCostCents: stock.totalCostCents,
+    conversion: stock.conversion ?? null,
+  });
+  if (!parsed.success) return null;
+  try {
+    return previewProductPurchase(parsed.data);
+  } catch {
+    return null;
+  }
+}
+
+/** The preview of the purchase being typed. */
+function StockPreview({ draft, showTotal }: { draft: StockDraft; showTotal: boolean }) {
+  const ledger = useMemo(() => previewOfDraft(draft), [draft]);
+  if (!ledger) return null;
+
+  const meters = ledger.available.meter;
+  const centimeters = meters?.unit === 'meter' ? meters.centimeters : 0;
+  const perMeter = ledger.costPerUnitCents.meter;
+  // The purchase is bought at the unit price typed above: what the preview adds is the total.
+  const total = showTotal ? totalCostOf(draft) : null;
+  const perPiece = ledger.costPerUnitCents.piece;
+  return (
+    <div className="grid gap-1 rounded-lg bg-muted p-3 text-sm" role="status">
+      <span className="text-muted-foreground">{t.stock.preview.title}</span>
+      {ledger.measurementStatus === 'pending' ? (
+        <span className="font-medium">{t.stock.preview.awaiting}</span>
+      ) : centimeters > 0 ? (
+        <>
+          <span className="text-lg font-semibold">
+            <Meters cm={centimeters} /> {t.stock.preview.meters}
+          </span>
+          {total !== null ? (
+            <span className="text-muted-foreground">
+              {t.stock.preview.totalCost}: <Money cents={total} />
+            </span>
+          ) : (
+            perMeter !== undefined && (
+              <span className="text-muted-foreground">
+                {t.stock.preview.costPerMeter}: <Money cents={perMeter} />
+              </span>
+            )
+          )}
+        </>
+      ) : (
+        perPiece !== undefined && (
+          <span className="text-muted-foreground">
+            {t.stock.preview.costPerPiece}: <Money cents={perPiece} />
+          </span>
+        )
+      )}
+    </div>
+  );
+}
+
+/**
+ * The stock of a purchase: what it was bought in and how much, what it cost, and for a weight how
+ * much cloth it makes (or that this is not known yet: it then waits for a measurement and no
+ * meters are made up). The same fields create a product's first stock and restock it.
+ */
+export function StockFields({
+  draft,
+  onChange,
+  errors,
+  showPayment = false,
+  showTotal = true,
+  units = PRODUCT_UNITS,
+}: {
+  draft: StockDraft;
+  onChange: (patch: Partial<StockDraft>) => void;
+  errors: Readonly<Record<string, string>>;
+  /** Restocking also records the supplier and what was paid now. */
+  showPayment?: boolean;
+  /** The preview names the total of a length bought: off where the screen shows the total itself. */
+  showTotal?: boolean;
+  units?: readonly ProductUnit[];
+}) {
+  const id = useId();
+  const repositories = useRepositories();
+  const suppliers = useLiveQuery(() => repositories.suppliers.list(), [repositories]);
+  const costError = errors[COST_FIELD] ?? errors.totalCostCents;
+  const quantityProps = {
+    id: `${id}-quantity`,
+    value: draft.quantity,
+    onValueChange: (quantity: number | null) => {
+      onChange({ quantity });
+    },
+  };
+
+  return (
+    <FieldGroup>
+      <Field>
+        <FieldLabel>{t.stock.unit}</FieldLabel>
+        <RadioGroup
+          value={draft.unit}
+          aria-label={t.stock.unit}
+          className="flex flex-wrap gap-x-6 gap-y-2"
+          onValueChange={(value) => {
+            const next = PRODUCT_UNITS.find((unit) => unit === value);
+            // Another unit is another quantity and another price: the old figures would mean
+            // something else (a price per metre is not a price per kilo).
+            if (next) onChange({ unit: next, quantity: null, unitCostCents: null });
+          }}
+        >
+          {units.map((unit) => (
+            <Field key={unit} orientation="horizontal" className="w-auto">
+              <RadioGroupItem value={unit} id={`${id}-unit-${unit}`} />
+              <FieldLabel htmlFor={`${id}-unit-${unit}`}>{t.units[unit]}</FieldLabel>
+            </Field>
+          ))}
+        </RadioGroup>
+      </Field>
+
+      {/* Two columns when the form has the room, whatever the screen: it sits in a dialog or a side panel. */}
+      <div className="@container">
+        <div className="grid gap-4 @xs:grid-cols-2">
+          <Field data-invalid={errors.quantity ? true : undefined}>
+            <FieldLabel htmlFor={`${id}-quantity`}>{t.stock.quantity[draft.unit]}</FieldLabel>
+            {draft.unit === 'kg' ? (
+              <WeightInput {...quantityProps} />
+            ) : draft.unit === 'meter' ? (
+              <MeterInput {...quantityProps} />
+            ) : (
+              <CountInput {...quantityProps} />
+            )}
+            {errors.quantity && <FieldError>{errors.quantity}</FieldError>}
+          </Field>
+          <Field data-invalid={costError ? true : undefined}>
+            <FieldLabel htmlFor={`${id}-cost`}>{t.stock.unitCost[draft.unit]}</FieldLabel>
+            <MoneyInput
+              id={`${id}-cost`}
+              value={draft.unitCostCents}
+              onValueChange={(unitCostCents) => {
+                onChange({ unitCostCents });
+              }}
+            />
+            <FieldDescription>{t.stock.unitCostHint}</FieldDescription>
+            {costError && <FieldError>{costError}</FieldError>}
+          </Field>
+        </div>
+      </div>
+
+      {draft.unit === 'kg' && (
+        <>
+          <Field orientation="horizontal">
+            <Switch
+              id={`${id}-known`}
+              checked={draft.conversionKnown}
+              onCheckedChange={(conversionKnown) => {
+                onChange({ conversionKnown });
+              }}
+            />
+            <FieldLabel htmlFor={`${id}-known`}>{t.stock.conversionToggle}</FieldLabel>
+          </Field>
+          {draft.conversionKnown ? (
+            <>
+              <div className="grid grid-cols-[1fr_auto_1fr] items-end gap-2">
+                <Field>
+                  <FieldLabel htmlFor={`${id}-weight`}>{t.form.weight}</FieldLabel>
+                  <WeightInput
+                    id={`${id}-weight`}
+                    value={draft.weightG}
+                    onValueChange={(weightG) => {
+                      onChange({ weightG });
+                    }}
+                  />
+                </Field>
+                <span aria-hidden className="pb-2 text-muted-foreground">
+                  =
+                </span>
+                <Field>
+                  <FieldLabel htmlFor={`${id}-length`}>{t.form.length}</FieldLabel>
+                  <MeterInput
+                    id={`${id}-length`}
+                    value={draft.lengthCm}
+                    onValueChange={(lengthCm) => {
+                      onChange({ lengthCm });
+                    }}
+                  />
+                </Field>
+              </div>
+              {errors.conversion && <FieldError>{errors.conversion}</FieldError>}
+              <RadioGroup
+                value={draft.source}
+                aria-label={t.form.source}
+                className="flex flex-wrap gap-x-6 gap-y-2"
+                onValueChange={(value) => {
+                  onChange({ source: value === 'estimated' ? 'estimated' : 'measured' });
+                }}
+              >
+                <Field orientation="horizontal" className="w-auto">
+                  <RadioGroupItem value="measured" id={`${id}-measured`} />
+                  <FieldLabel htmlFor={`${id}-measured`}>{t.form.measured}</FieldLabel>
+                </Field>
+                <Field orientation="horizontal" className="w-auto">
+                  <RadioGroupItem value="estimated" id={`${id}-estimated`} />
+                  <FieldLabel htmlFor={`${id}-estimated`}>{t.form.estimated}</FieldLabel>
+                </Field>
+              </RadioGroup>
+            </>
+          ) : (
+            <Alert>
+              <InfoIcon aria-hidden />
+              <AlertDescription>{t.stock.unknownNote}</AlertDescription>
+            </Alert>
+          )}
+        </>
+      )}
+
+      <StockPreview draft={draft} showTotal={showTotal} />
+
+      {showPayment && (
+        <div className="@container">
+          <div className="grid gap-4 @md:grid-cols-2">
+            <Field data-invalid={errors.supplierId ? true : undefined}>
+              <FieldLabel htmlFor={`${id}-supplier`}>{t.stock.supplier}</FieldLabel>
+              <Select
+                value={draft.supplierId ?? 'none'}
+                onValueChange={(value) => {
+                  onChange({ supplierId: value === 'none' ? null : value });
+                }}
+              >
+                <SelectTrigger id={`${id}-supplier`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">{t.stock.noSupplier}</SelectItem>
+                  {suppliers?.map((supplier) => (
+                    <SelectItem key={supplier.id} value={supplier.id}>
+                      {supplier.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {errors.supplierId && <FieldError>{errors.supplierId}</FieldError>}
+            </Field>
+            <Field data-invalid={errors.paidCents ? true : undefined}>
+              <FieldLabel htmlFor={`${id}-paid`}>{t.stock.paid}</FieldLabel>
+              <MoneyInput
+                id={`${id}-paid`}
+                value={draft.paidCents}
+                onValueChange={(paidCents) => {
+                  onChange({ paidCents });
+                }}
+              />
+              <FieldDescription>{t.stock.paidHint}</FieldDescription>
+              {errors.paidCents && <FieldError>{errors.paidCents}</FieldError>}
+            </Field>
+          </div>
+        </div>
+      )}
+    </FieldGroup>
+  );
+}

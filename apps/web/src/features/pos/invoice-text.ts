@@ -13,12 +13,15 @@ export function invoiceText(view: SaleView, shopName: string, unit: MoneyUnit): 
   const language = getLanguage();
   const money = (cents: number) => formatMoney(cents, unit, language);
   const { sale, figures } = view;
-  const lines = view.lines.map(({ line, fabric, variant }) => {
-    const item = [fabric?.name, variant?.colorName].filter(Boolean).join(' ');
+  const lines = view.lines.map(({ line, product }) => {
+    const amount =
+      line.unit === 'meter'
+        ? formatLength(line.quantity, language)
+        : `${String(line.quantity)} ${messages.units.piece}`;
     const quantity = line.wholePiece
-      ? `${t.wholePiece} (${formatLength(line.soldCm, language)})`
-      : `${formatLength(line.soldCm, language)} × ${money(line.actualPricePerMeterCents)}`;
-    return `• ${item}: ${quantity} = ${money(line.lineTotalCents)}`;
+      ? `${t.wholePiece} (${amount})`
+      : `${amount} × ${money(line.actualPriceCents)}`;
+    return `• ${product?.name ?? ''}: ${quantity} = ${money(line.lineTotalCents)}`;
   });
   const totals = [
     ...(figures.discountCents > 0

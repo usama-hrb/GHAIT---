@@ -1,0 +1,1 @@
+ALTER TABLE "product" ADD CONSTRAINT "product_selling_units_valid" CHECK ("product"."selling_units" <@ ARRAY['meter', 'piece']::product_unit[]);

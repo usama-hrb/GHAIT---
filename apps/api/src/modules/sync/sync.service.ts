@@ -226,6 +226,7 @@ export class SyncService implements OnModuleInit {
     let written: SyncedRow<AnyRecord>;
     try {
       await this.assertOpen(entity, handler, current.record);
+      await this.registry.assertCanVoid(entity, id);
       written = await handler.markVoided(
         id,
         new Date(),
@@ -526,6 +527,7 @@ export class SyncService implements OnModuleInit {
     // Already voided (here or on another device): nothing changes.
     if ((current.record as AnyRecord).voidedAt !== null) return applied(current.serverSeq);
     await this.assertOpen(op.entity, handler, current.record);
+    await this.registry.assertCanVoid(op.entity, op.entityId);
     const written = await handler.markVoided(op.entityId, new Date(op.clientTs), op.deviceId);
     await this.audit.record({
       entity: op.entity,

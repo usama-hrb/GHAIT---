@@ -1,7 +1,9 @@
 import {
-  type FabricFields,
-  fabricInputSchema,
   idSchema,
+  type ProductInput,
+  productInputSchema,
+  type StoredProduct,
+  storedProductSchema,
   type StoredFabric,
   storedFabricSchema,
   type StoredSupplier,
@@ -10,8 +12,6 @@ import {
   storedVariantSchema,
   type SupplierInput,
   supplierInputSchema,
-  type VariantInput,
-  variantInputSchema,
   type VoidRequest,
   voidRequestSchema,
 } from '@fabric/contracts';
@@ -46,26 +46,6 @@ export class CatalogController {
     return this.catalog.getFabric(id);
   }
 
-  /** Creates the fabric with this (client-generated) id, or updates it. */
-  @Put('fabrics/:id')
-  @ZodResponse(storedFabricSchema)
-  putFabric(
-    @ZodParam('id', idSchema) id: string,
-    @ZodBody(fabricInputSchema) body: FabricFields,
-  ): Promise<StoredFabric> {
-    return this.catalog.putFabric(id, body);
-  }
-
-  @Post('fabrics/:id/void')
-  @HttpCode(200)
-  @ZodResponse(storedFabricSchema)
-  voidFabric(
-    @ZodParam('id', idSchema) id: string,
-    @ZodBody(voidRequestSchema) body: VoidRequest,
-  ): Promise<StoredFabric> {
-    return this.catalog.void('fabric', id, body.reason) as Promise<StoredFabric>;
-  }
-
   @Get('fabrics/:id/variants')
   @ZodResponse(z.array(storedVariantSchema))
   listVariants(
@@ -75,23 +55,35 @@ export class CatalogController {
     return this.catalog.listVariants(id, query.includeVoided);
   }
 
-  @Put('variants/:id')
-  @ZodResponse(storedVariantSchema)
-  putVariant(
-    @ZodParam('id', idSchema) id: string,
-    @ZodBody(variantInputSchema) body: VariantInput,
-  ): Promise<StoredVariant> {
-    return this.catalog.putVariant(id, body);
+  @Get('products')
+  @ZodResponse(z.array(storedProductSchema))
+  listProducts(@ZodQuery(listQuerySchema) query: ListQuery): Promise<StoredProduct[]> {
+    return this.catalog.listProducts(query.includeVoided);
   }
 
-  @Post('variants/:id/void')
+  @Get('products/:id')
+  @ZodResponse(storedProductSchema)
+  getProduct(@ZodParam('id', idSchema) id: string): Promise<StoredProduct> {
+    return this.catalog.getProduct(id);
+  }
+
+  @Put('products/:id')
+  @ZodResponse(storedProductSchema)
+  putProduct(
+    @ZodParam('id', idSchema) id: string,
+    @ZodBody(productInputSchema) body: ProductInput,
+  ): Promise<StoredProduct> {
+    return this.catalog.putProduct(id, body);
+  }
+
+  @Post('products/:id/void')
   @HttpCode(200)
-  @ZodResponse(storedVariantSchema)
-  voidVariant(
+  @ZodResponse(storedProductSchema)
+  voidProduct(
     @ZodParam('id', idSchema) id: string,
     @ZodBody(voidRequestSchema) body: VoidRequest,
-  ): Promise<StoredVariant> {
-    return this.catalog.void('variant', id, body.reason) as Promise<StoredVariant>;
+  ): Promise<StoredProduct> {
+    return this.catalog.void('product', id, body.reason) as Promise<StoredProduct>;
   }
 
   @Get('suppliers')

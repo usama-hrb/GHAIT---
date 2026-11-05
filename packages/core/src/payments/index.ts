@@ -19,6 +19,13 @@ export {
   paymentParts,
 } from './allocation.js';
 export { amountDueCents, customerBalance, unrecoveredCapitalCents } from './balance.js';
+export {
+  type LedgerSale,
+  type PaymentState,
+  paymentState,
+  type SalesLedger,
+  salesLedger,
+} from './sales-ledger.js';
 export { type SaleAmounts, type SaleSplit, splitSaleCapitalProfit } from './split.js';
 export {
   type InvoiceLine,

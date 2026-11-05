@@ -5,6 +5,8 @@ import {
   cashFlowsOf,
   checkCapitalMove,
   checkCapitalMoveVoid,
+  checkPartnerSet,
+  checkPartnerWrite,
   checkUnchanged,
   newCapitalMoveSchema,
   PARTNER_ISSUES,
@@ -49,6 +51,104 @@ const draw = (
   date: '2026-10-05',
   reason: 'مصروف شخصي',
   zakatReportId: null,
+});
+
+describe('partner records (S4, S17)', () => {
+  const who = (
+    id: string,
+    isOwner: boolean,
+    ownershipBp: number,
+    voidedAt: string | null = null,
+  ) => ({
+    id,
+    isOwner,
+    ownershipBp,
+    voidedAt,
+  });
+  const second = crypto.randomUUID();
+  const third = crypto.randomUUID();
+
+  it('any number of partners, adding up to at most 100%', () => {
+    const others = [who(owner, true, 4000), who(partner, false, 4000)];
+    expect(checkPartnerWrite(who(third, false, 2000), undefined, others)).toEqual([]);
+    expect(checkPartnerWrite(who(third, false, 2001), undefined, others)).toEqual([
+      expect.objectContaining({ message: PARTNER_ISSUES.ownershipOver }),
+    ]);
+    // Changing a partner counts their new part, not the old one.
+    expect(checkPartnerWrite(who(partner, false, 6000), { isOwner: false }, others)).toEqual([]);
+    expect(checkPartnerWrite(who(partner, false, 6001), { isOwner: false }, others)).toEqual([
+      expect.objectContaining({ message: PARTNER_ISSUES.ownershipOver }),
+    ]);
+    // The total may be short while a change is made record by record.
+    expect(checkPartnerWrite(who(partner, false, 0), { isOwner: false }, others)).toEqual([]);
+  });
+
+  it('there is one owner, and it stays the owner', () => {
+    const others = [who(owner, true, 5000), who(partner, false, 5000)];
+    expect(checkPartnerWrite(who(second, true, 0), undefined, others)).toEqual([
+      expect.objectContaining({ message: PARTNER_ISSUES.secondOwner }),
+    ]);
+    expect(checkPartnerWrite(who(partner, true, 5000), { isOwner: false }, others)).toEqual([
+      expect.objectContaining({ message: PARTNER_ISSUES.ownerFixed }),
+    ]);
+    expect(checkPartnerWrite(who(owner, false, 5000), { isOwner: true }, others)).toEqual([
+      expect.objectContaining({ message: PARTNER_ISSUES.ownerFixed }),
+    ]);
+    expect(checkPartnerWrite(who(owner, true, 4000), { isOwner: true }, others)).toEqual([]);
+    // The first owner of an empty shop; a voided owner is no owner.
+    expect(checkPartnerWrite(who(owner, true, 5000), undefined, [])).toEqual([]);
+    const gone = [who(second, true, 0, '2026-10-02T09:00:00.000Z')];
+    expect(checkPartnerWrite(who(owner, true, 5000), undefined, gone)).toEqual([]);
+  });
+
+  it('a voided record, or a partner already voided, never adds to the total', () => {
+    const others = [who(owner, true, 5000), who(partner, false, 5000, '2026-10-02T09:00:00.000Z')];
+    expect(checkPartnerWrite(who(second, false, 5000), undefined, others)).toEqual([]);
+    const full = [who(owner, true, 5000), who(partner, false, 5000)];
+    expect(
+      checkPartnerWrite(who(second, false, 9000, '2026-10-02T09:00:00.000Z'), undefined, full),
+    ).toEqual([]);
+  });
+});
+
+describe('the table of participants saved whole (S4)', () => {
+  const row = (isOwner: boolean, ownershipBp: number, voidedAt: string | null = null) => ({
+    isOwner,
+    ownershipBp,
+    voidedAt,
+  });
+  const message = (issues: ReturnType<typeof checkPartnerSet>) => issues.map((i) => i.message);
+
+  it('one owner and parts adding up to exactly 100% is a whole shop', () => {
+    expect(checkPartnerSet([row(true, 5000), row(false, 3000), row(false, 2000)])).toEqual([]);
+    expect(checkPartnerSet([row(true, 10_000)])).toEqual([]);
+  });
+
+  it('more or less than 100% is refused, and so is a table without exactly one owner', () => {
+    expect(message(checkPartnerSet([row(true, 5000), row(false, 5001)]))).toEqual([
+      PARTNER_ISSUES.ownershipOver,
+    ]);
+    expect(message(checkPartnerSet([row(true, 5000), row(false, 4999)]))).toEqual([
+      PARTNER_ISSUES.ownershipShort,
+    ]);
+    expect(message(checkPartnerSet([row(false, 5000), row(false, 5000)]))).toEqual([
+      PARTNER_ISSUES.noOwner,
+    ]);
+    expect(message(checkPartnerSet([row(true, 5000), row(true, 5000)]))).toEqual([
+      PARTNER_ISSUES.secondOwner,
+    ]);
+    expect(message(checkPartnerSet([]))).toEqual([PARTNER_ISSUES.noOwner]);
+  });
+
+  it('a voided record is not part of the shop', () => {
+    expect(
+      checkPartnerSet([
+        row(true, 5000),
+        row(false, 5000),
+        row(false, 2000, '2026-10-02T09:00:00.000Z'),
+      ]),
+    ).toEqual([]);
+  });
 });
 
 describe('partners (SPEC §6, §8.4)', () => {
@@ -173,6 +273,8 @@ describe('partners (SPEC §6, §8.4)', () => {
           paidDate: '2026-10-01',
           note: null,
           recurringExpenseId: null,
+          employeeId: null,
+          salaryMonth: null,
         },
         {
           ...base,
@@ -183,6 +285,8 @@ describe('partners (SPEC §6, §8.4)', () => {
           paidDate: null,
           note: null,
           recurringExpenseId: null,
+          employeeId: null,
+          salaryMonth: null,
         },
       ],
       capitalMoves,

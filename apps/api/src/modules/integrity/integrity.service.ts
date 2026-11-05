@@ -73,7 +73,7 @@ export class IntegrityService implements OnModuleInit {
     const read = <E extends SyncEntity>(entity: E) => this.sync.readAll(entity);
     const records = <R>(rows: SyncedRow<R>[]) => rows.map((row) => row.record);
     const [
-      rolls,
+      batches,
       stockMoves,
       sales,
       saleLines,
@@ -93,8 +93,8 @@ export class IntegrityService implements OnModuleInit {
       draws,
       settlementShares,
     ] = await Promise.all([
-      read('roll'),
-      read('stock_move'),
+      read('product_batch'),
+      read('product_stock_move'),
       read('sale'),
       read('sale_line'),
       read('sale_return'),
@@ -114,7 +114,7 @@ export class IntegrityService implements OnModuleInit {
       read('settlement_share'),
     ]);
     return {
-      rolls: records(rolls),
+      batches: records(batches),
       stockMoves: stockMoves.map(stored),
       sales: records(sales),
       saleLines: records(saleLines),

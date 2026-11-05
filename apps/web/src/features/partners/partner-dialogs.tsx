@@ -23,22 +23,20 @@ import {
 import { Field, FieldError, FieldGroup, FieldLabel } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
 import { PeriodLockHint, useLockedThrough } from '@/features/settlements';
+import { failureText } from './people-errors';
 
 const t = messages.partners;
 
-/** The two partners and their ownership (SPEC §6): set up once, edited together. */
-export function PartnersForm({
-  current,
-  onSaved,
-}: {
-  current?: { owner: PartnerView; partner: PartnerView };
-  onSaved?: () => void;
-}) {
+/**
+ * The first run (SPEC §6): the owner and the first partner, with the owner's percentage. More
+ * partners are added later from the list, each with their own percentage (S4, S17).
+ */
+export function PartnersSetupForm({ onSaved }: { onSaved?: () => void }) {
   const id = useId();
   const repositories = useRepositories();
-  const [ownerName, setOwnerName] = useState(current?.owner.partner.name ?? '');
-  const [partnerName, setPartnerName] = useState(current?.partner.partner.name ?? '');
-  const [share, setShare] = useState(String((current?.owner.partner.ownershipBp ?? 5000) / 100));
+  const [ownerName, setOwnerName] = useState('');
+  const [partnerName, setPartnerName] = useState('');
+  const [share, setShare] = useState('50');
   const [attempted, setAttempted] = useState(false);
   const [busy, setBusy] = useState(false);
   const parsed = parseScaledDecimal(share, 2);
@@ -54,18 +52,16 @@ export function PartnersForm({
         if (ownerName.trim() === '' || partnerName.trim() === '' || ownerBp === null) return;
         setBusy(true);
         repositories.partners
-          .saveBoth({
-            owner: { id: current?.owner.partner.id, name: ownerName, ownershipBp: ownerBp },
-            partner: { id: current?.partner.partner.id, name: partnerName },
-          })
+          .saveAll([
+            { name: ownerName.trim(), ownershipBp: ownerBp, isOwner: true },
+            { name: partnerName.trim(), ownershipBp: 10_000 - ownerBp, isOwner: false },
+          ])
           .then(() => {
             toast.success(t.saved, { description: messages.forms.saved });
             onSaved?.();
           })
           .catch((error: unknown) => {
-            toast.error(
-              isPeriodLocked(error) ? messages.forms.periodLocked : messages.forms.invalid,
-            );
+            toast.error(failureText(error));
           })
           .finally(() => {
             setBusy(false);
@@ -101,6 +97,7 @@ export function PartnersForm({
             id={`${id}-share`}
             inputMode="decimal"
             dir="ltr"
+            className="text-start"
             value={share}
             onChange={(event) => {
               setShare(event.target.value);

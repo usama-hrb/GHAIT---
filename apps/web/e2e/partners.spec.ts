@@ -9,7 +9,7 @@ test('partners: set up, a contribution, a draw offline beyond the share (confirm
   await waitForAppShell(page);
 
   // Set up once: the owner and the partner, 50/50.
-  await page.goto('/partners');
+  await page.goto('/settings/partners');
   await page.getByLabel('اسم المالك').fill('أنا');
   await page.getByLabel('اسم الشريك').fill('شريكي');
   await expect(page.getByText('حصة الشريك: 50%')).toBeVisible();
@@ -40,7 +40,7 @@ test('partners: set up, a contribution, a draw offline beyond the share (confirm
   await expect(connectivity(page)).toContainText(/معلّق/);
 
   // The partner's account, from the records only.
-  await page.goto(`/partners/view?id=${partnerId}`);
+  await page.goto(`/settings/partners/view?id=${partnerId}`);
   await expect(page.getByRole('heading', { name: 'شريكي' })).toBeVisible();
   await expect(page.getByRole('definition').first()).toContainText('50,000');
   await expect(page.getByRole('region', { name: 'السحوبات من الأرباح' })).toContainText(

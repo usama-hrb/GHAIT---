@@ -2,8 +2,8 @@ import {
   idSchema,
   type NewSupplierPayment,
   newSupplierPaymentSchema,
-  type PurchaseAggregate,
-  purchaseAggregateSchema,
+  type ProductPurchaseAggregate,
+  productPurchaseAggregateSchema,
   type PurchaseDetail,
   purchaseDetailSchema,
   type StoredPurchase,
@@ -30,12 +30,14 @@ export class PurchasingController {
   constructor(private readonly purchasing: PurchasingService) {}
 
   /**
-   * Creates a purchase with its rolls and moves, built with @fabric/contracts
-   * buildPurchaseAggregate (the web app pushes the same thing through sync). Re-checked with core.
+   * Creates a purchase with its batch and receipt, built with @fabric/contracts
+   * buildProductPurchase (the web app pushes the same thing through sync). Re-checked with core.
    */
   @Post()
   @ZodResponse(purchaseDetailSchema, 201)
-  create(@ZodBody(purchaseAggregateSchema) body: PurchaseAggregate): Promise<PurchaseDetail> {
+  create(
+    @ZodBody(productPurchaseAggregateSchema) body: ProductPurchaseAggregate,
+  ): Promise<PurchaseDetail> {
     return this.purchasing.create(body);
   }
 

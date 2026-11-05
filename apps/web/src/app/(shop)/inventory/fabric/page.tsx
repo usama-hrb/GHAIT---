@@ -1,15 +1,10 @@
-import type { Metadata } from 'next';
-import { Suspense } from 'react';
-import { FabricEditorScreen } from '@/features/catalog';
-import { messages } from '@/i18n';
+import { RedirectTo } from '@/shared/lib/redirect';
 
-export const metadata: Metadata = { title: messages.catalog.editFabric };
-
-/** /inventory/fabric?id=<uuid>: one page for every fabric, so it is cached once for offline. */
-export default function FabricPage() {
-  return (
-    <Suspense>
-      <FabricEditorScreen />
-    </Suspense>
-  );
+/**
+ * Gone since ADR 0012: stock is managed in the Inventory, by product. Kept so old links and
+ * bookmarks land there (the page redirects on the client, so the
+ * service worker's copy of it works offline too).
+ */
+export default function Page() {
+  return <RedirectTo href="/inventory" />;
 }

@@ -16,7 +16,7 @@ const base = {
   updatedAt: '2026-10-31T10:00:00.000Z',
   deviceId: 'desk',
   voidedAt: null,
-  variantId: '9d6a7c52-1e0d-4c9b-8a39-0d9c2f6b7e44',
+  productId: '9d6a7c52-1e0d-4c9b-8a39-0d9c2f6b7e44',
   contentType: 'image/jpeg',
   width: 480,
   height: 480,

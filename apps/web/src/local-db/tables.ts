@@ -3,13 +3,13 @@ import {
   type CustomerInput,
   customerInputSchema,
   customerSchema,
-  type Fabric,
-  type FabricInput,
+  type Product,
+  type ProductBatch,
+  type ProductInput,
+  productInputSchema,
+  productSchema,
   periodDatesOf,
-  type Roll,
-  rollSchema,
-  fabricInputSchema,
-  fabricSchema,
+  productBatchSchema,
   SETTINGS,
   type SettingKey,
   settingInEffect,
@@ -19,10 +19,6 @@ import {
   supplierInputSchema,
   supplierSchema,
   type SyncEntity,
-  type Variant,
-  type VariantInput,
-  variantInputSchema,
-  variantSchema,
   voidPayloadSchema,
 } from '@fabric/contracts';
 import type { Table } from 'dexie';
@@ -50,13 +46,14 @@ export class SyncedTable<R extends Base> {
   constructor(
     protected readonly store: LocalStore,
     tableName:
-      | 'fabrics'
-      | 'variants'
+      | 'products'
       | 'suppliers'
-      | 'rolls'
+      | 'productBatches'
       | 'customers'
       | 'expenses'
       | 'recurringExpenses'
+      | 'employees'
+      | 'employeeSalaries'
       | 'partners'
       | 'capitalMoves'
       | 'partnerDraws'
@@ -151,51 +148,6 @@ export class SyncedTable<R extends Base> {
 
 const byName = <T extends { name: string }>(a: T, b: T) => a.name.localeCompare(b.name, 'ar');
 
-export class FabricsRepository extends SyncedTable<Fabric> {
-  constructor(store: LocalStore) {
-    super(store, 'fabrics', 'fabric', fabricSchema);
-  }
-
-  /** Live fabrics (not voided) matching the search, by name. */
-  async list(search = ''): Promise<Local<Fabric>[]> {
-    const fabrics = await this.table.filter((fabric) => fabric.voidedAt === null).toArray();
-    return fabrics
-      .filter((fabric) => matchesSearch(search, [fabric.name, fabric.type, ...fabric.tags]))
-      .sort(byName);
-  }
-
-  async save(input: FabricInput, id?: string): Promise<string> {
-    return this.write(parseOrThrow(fabricInputSchema, input), id);
-  }
-}
-
-export class VariantsRepository extends SyncedTable<Variant> {
-  constructor(store: LocalStore) {
-    super(store, 'variants', 'variant', variantSchema);
-  }
-
-  async listByFabric(fabricId: string): Promise<Local<Variant>[]> {
-    const variants = await this.table.where('fabricId').equals(fabricId).toArray();
-    return variants
-      .filter((variant) => variant.voidedAt === null)
-      .sort((a, b) => a.colorName.localeCompare(b.colorName, 'ar'));
-  }
-
-  /** Live colours per fabric id. */
-  async countByFabric(): Promise<Map<string, number>> {
-    const counts = new Map<string, number>();
-    await this.table.each((variant) => {
-      if (variant.voidedAt === null)
-        counts.set(variant.fabricId, (counts.get(variant.fabricId) ?? 0) + 1);
-    });
-    return counts;
-  }
-
-  async save(input: VariantInput, id?: string): Promise<string> {
-    return this.write(parseOrThrow(variantInputSchema, input), id);
-  }
-}
-
 export class SuppliersRepository extends SyncedTable<Supplier> {
   constructor(store: LocalStore) {
     super(store, 'suppliers', 'supplier', supplierSchema);
@@ -231,26 +183,28 @@ export class CustomersRepository extends SyncedTable<Customer> {
 }
 
 /**
- * Rolls are created with their purchase (PurchasesRepository); afterwards only their remnant
- * mark changes, as an upsert op (the server refuses any other change: checkRollUpdate).
+ * Batches are created with their purchase; afterwards only their remnant mark changes, as an
+ * upsert op (the server refuses any other change: checkBatchUpdate).
  */
-export class RollsTable extends SyncedTable<Roll> {
+export class BatchesTable extends SyncedTable<ProductBatch> {
   constructor(store: LocalStore) {
-    super(store, 'rolls', 'roll', rollSchema);
+    super(store, 'productBatches', 'product_batch', productBatchSchema);
   }
 
   async setStatus(id: string, status: 'active' | 'remnant'): Promise<void> {
-    const roll = await this.get(id);
-    if (!roll) throw new Error(`No roll ${id}`);
-    if (roll.status === status) return;
+    const batch = await this.get(id);
+    if (!batch) throw new Error(`No batch ${id}`);
+    if (batch.status === status) return;
     await this.write(
       {
-        shortCode: roll.shortCode,
-        variantId: roll.variantId,
-        purchaseId: roll.purchaseId,
-        lengthCmInitial: roll.lengthCmInitial,
-        costTotalCents: roll.costTotalCents,
-        lengthEstimated: roll.lengthEstimated,
+        code: batch.code,
+        productId: batch.productId,
+        purchaseId: batch.purchaseId,
+        purchaseDate: batch.purchaseDate,
+        unit: batch.unit,
+        receivedQuantity: batch.receivedQuantity,
+        costTotalCents: batch.costTotalCents,
+        conversion: batch.conversion,
         status,
       },
       id,
@@ -258,9 +212,28 @@ export class RollsTable extends SyncedTable<Roll> {
   }
 }
 
-/** Settings as pulled from the server (changed through the API; offline writes come later). */
+export class ProductsRepository extends SyncedTable<Product> {
+  constructor(store: LocalStore) {
+    super(store, 'products', 'product', productSchema);
+  }
+
+  async list(search = ''): Promise<Local<Product>[]> {
+    const products = await this.table.filter((product) => product.voidedAt === null).toArray();
+    return products
+      .filter((product) =>
+        matchesSearch(search, [product.name, product.sku, product.description, ...product.tags]),
+      )
+      .sort(byName);
+  }
+
+  async save(input: ProductInput, id?: string): Promise<string> {
+    return this.write(parseOrThrow(productInputSchema, input), id);
+  }
+}
+
+/** Settings as pulled from the server (a change goes through the API: ShopSettingsRepository). */
 export class SettingsRepository {
-  constructor(private readonly store: LocalStore) {}
+  constructor(protected readonly store: LocalStore) {}
 
   /** The value in effect on `day` (YYYY-MM-DD), else the default (settingInEffect, as the API). */
   async get<K extends SettingKey>(key: K, day: string): Promise<SettingValue<K>> {

@@ -14,7 +14,7 @@ function t13(): Shop {
   const shop = new Shop();
   shop.contribute(OWNER, dh(1000));
   shop.contribute(PARTNER, dh(1000));
-  const roll = shop.roll(dh(800), 5000); // 50 m at 16 dh (T12's roll)
+  const roll = shop.batch(dh(800), 5000); // 50 m at 16 dh (T12's roll)
   shop.sale(roll, '2026-09-05', 1000, dh(200)); // cash
   const credit = shop.sale(roll, '2026-09-06', 1000, dh(200), 0);
   shop.pay(credit, '2026-09-10', dh(100));
@@ -68,11 +68,11 @@ describe('the integrity check from the records (SPEC §9, BUILD_PROMPTS 4.4)', (
     expect(integrityReportOf(shop.records)).toMatchObject({ ok: false, diffCents: -500 });
   });
 
-  it('a roll whose cost no longer matches its purchase shows its difference too', () => {
+  it('a batch whose cost no longer matches its purchase shows its difference too', () => {
     const shop = t13();
-    shop.records.rolls = shop.records.rolls.map((roll) => ({
-      ...roll,
-      costTotalCents: roll.costTotalCents + 77,
+    shop.records.batches = shop.records.batches.map((batch) => ({
+      ...batch,
+      costTotalCents: batch.costTotalCents + 77,
     }));
     expect(integrityReportOf(shop.records).diffCents).toBe(77);
   });
@@ -104,8 +104,8 @@ describe('the integrity check from the records (SPEC §9, BUILD_PROMPTS 4.4)', (
 
   it('money held for customers: an overpayment, a refund, a voided sale paid in cash', () => {
     const shop = t13();
-    const [roll] = shop.records.rolls;
-    if (!roll) throw new Error('a roll');
+    const [roll] = shop.records.batches;
+    if (!roll) throw new Error('a batch');
     const sale = shop.sale(roll, '2026-09-21', 1000, dh(200), 0);
     shop.pay(sale, '2026-09-22', dh(250), dh(200)); // 50 dh left as credit (P6)
     expect(integrityStateOf(shop.records).customerCreditsCents).toBe(dh(50));

@@ -56,6 +56,16 @@ export interface PeriodGuard {
   assertOpen(dates: readonly (string | null)[]): Promise<void>;
 }
 
+/**
+ * Refuses the cancellation of a record whose rules live in another module (a product cannot be
+ * cancelled while it holds stock, and stock is the stock module's). Runs in the void's own
+ * transaction, for a device's void op and for the REST route alike.
+ */
+export interface VoidGuard {
+  /** Throws SyncRejection when the record may not be cancelled now. */
+  assertCanVoid(id: string): Promise<void>;
+}
+
 /** A pushed op the server refuses; recorded as `rejected`, so a replay answers the same. */
 export class SyncRejection extends Error {
   constructor(
@@ -71,6 +81,7 @@ export class SyncRejection extends Error {
 export class SyncRegistry {
   private readonly handlers = new Map<SyncEntity, SyncHandler>();
   private guard: PeriodGuard | undefined;
+  private readonly voidGuards = new Map<SyncEntity, VoidGuard[]>();
 
   setPeriodGuard(guard: PeriodGuard): void {
     if (this.guard) throw new Error('Two period guards registered');
@@ -79,6 +90,15 @@ export class SyncRegistry {
 
   periodGuard(): PeriodGuard | undefined {
     return this.guard;
+  }
+
+  addVoidGuard(entity: SyncEntity, guard: VoidGuard): void {
+    this.voidGuards.set(entity, [...(this.voidGuards.get(entity) ?? []), guard]);
+  }
+
+  /** Throws SyncRejection when a module's rules refuse the cancellation of this record. */
+  async assertCanVoid(entity: SyncEntity, id: string): Promise<void> {
+    for (const guard of this.voidGuards.get(entity) ?? []) await guard.assertCanVoid(id);
   }
 
   register(handler: SyncHandler): void {

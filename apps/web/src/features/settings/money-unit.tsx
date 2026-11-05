@@ -7,7 +7,8 @@ import { shopToday } from '@/shared/lib/dates';
 
 /**
  * The money_display_unit setting (SPEC §0.2), as pulled from the server: rial until a setting
- * says otherwise. Changing it from the app comes with the settings screen.
+ * says otherwise. It is changed in Settings > Currency (RegionalScreen), which saves it on the
+ * server; this device then receives it like every other.
  */
 export function SettingsMoneyUnitProvider({ children }: { children: ReactNode }) {
   const repositories = useRepositories();

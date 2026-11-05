@@ -1,6 +1,6 @@
-import type { Fabric, Supplier, Variant } from '@fabric/contracts';
+import type { Fabric, Product, Supplier, Variant } from '@fabric/contracts';
 import { Injectable } from '@nestjs/common';
-import { and, asc, eq, gt, isNull } from 'drizzle-orm';
+import { and, asc, eq, gt, inArray, isNull } from 'drizzle-orm';
 import { schema, TransactionHost } from '../../database/index.js';
 import type { SyncedRow, SyncHandler } from '../sync/index.js';
 
@@ -29,21 +29,6 @@ function writeColumns(record: { updatedAt: string; deviceId: string }) {
 
 type FabricRow = typeof schema.fabric.$inferSelect;
 
-function fabricFields(record: Fabric) {
-  return {
-    name: record.name,
-    type: record.type,
-    defaultSupplierId: record.defaultSupplierId,
-    refPricePerMeterCents: record.refPricePerMeterCents,
-    minPricePerMeterCents: record.minPricePerMeterCents,
-    estCmPerKg: record.estCmPerKg,
-    sellableAsPiece: record.sellableAsPiece,
-    piecePriceCents: record.piecePriceCents,
-    tags: record.tags,
-    notes: record.notes,
-  };
-}
-
 function fabricOf(row: FabricRow): SyncedRow<Fabric> {
   return {
     serverSeq: row.serverSeq,
@@ -63,6 +48,7 @@ function fabricOf(row: FabricRow): SyncedRow<Fabric> {
   };
 }
 
+/** Fabrics are history since ADR 0012 (the product replaced them): read, never written. */
 @Injectable()
 export class FabricRepository implements SyncHandler<'fabric'> {
   readonly entity = 'fabric' as const;
@@ -72,27 +58,6 @@ export class FabricRepository implements SyncHandler<'fabric'> {
   async find(id: string): Promise<SyncedRow<Fabric> | undefined> {
     const [row] = await this.tx.db.select().from(schema.fabric).where(eq(schema.fabric.id, id));
     return row && fabricOf(row);
-  }
-
-  async write(record: Fabric): Promise<SyncedRow<Fabric>> {
-    const fields = { ...fabricFields(record), ...writeColumns(record) };
-    const [row] = await this.tx.db
-      .insert(schema.fabric)
-      .values({ id: record.id, createdAt: new Date(record.createdAt), ...fields })
-      .onConflictDoUpdate({ target: schema.fabric.id, set: fields })
-      .returning();
-    if (!row) throw new Error('write returned no row');
-    return fabricOf(row);
-  }
-
-  async markVoided(id: string, at: Date, deviceId: string): Promise<SyncedRow<Fabric>> {
-    const [row] = await this.tx.db
-      .update(schema.fabric)
-      .set({ voidedAt: at, updatedAt: at, deviceId })
-      .where(eq(schema.fabric.id, id))
-      .returning();
-    if (!row) throw new Error(`no fabric ${id}`);
-    return fabricOf(row);
   }
 
   async pull(since: number, limit: number): Promise<SyncedRow<Fabric>[]> {
@@ -129,6 +94,7 @@ function variantOf(row: VariantRow): SyncedRow<Variant> {
   };
 }
 
+/** Colours are history since ADR 0012: read, never written. */
 @Injectable()
 export class VariantRepository implements SyncHandler<'variant'> {
   readonly entity = 'variant' as const;
@@ -138,32 +104,6 @@ export class VariantRepository implements SyncHandler<'variant'> {
   async find(id: string): Promise<SyncedRow<Variant> | undefined> {
     const [row] = await this.tx.db.select().from(schema.variant).where(eq(schema.variant.id, id));
     return row && variantOf(row);
-  }
-
-  async write(record: Variant): Promise<SyncedRow<Variant>> {
-    const fields = {
-      fabricId: record.fabricId,
-      colorName: record.colorName,
-      lowStockThresholdCm: record.lowStockThresholdCm,
-      ...writeColumns(record),
-    };
-    const [row] = await this.tx.db
-      .insert(schema.variant)
-      .values({ id: record.id, createdAt: new Date(record.createdAt), ...fields })
-      .onConflictDoUpdate({ target: schema.variant.id, set: fields })
-      .returning();
-    if (!row) throw new Error('write returned no row');
-    return variantOf(row);
-  }
-
-  async markVoided(id: string, at: Date, deviceId: string): Promise<SyncedRow<Variant>> {
-    const [row] = await this.tx.db
-      .update(schema.variant)
-      .set({ voidedAt: at, updatedAt: at, deviceId })
-      .where(eq(schema.variant.id, id))
-      .returning();
-    if (!row) throw new Error(`no variant ${id}`);
-    return variantOf(row);
   }
 
   async pull(since: number, limit: number): Promise<SyncedRow<Variant>[]> {
@@ -188,6 +128,117 @@ export class VariantRepository implements SyncHandler<'variant'> {
       )
       .orderBy(asc(schema.variant.colorName));
     return rows.map(variantOf);
+  }
+}
+
+type ProductRow = typeof schema.product.$inferSelect;
+
+function productOf(row: ProductRow): SyncedRow<Product> {
+  const conversion =
+    row.kgToMeterWeightG !== null && row.kgToMeterLengthCm !== null && row.kgToMeterSource !== null
+      ? {
+          weightG: row.kgToMeterWeightG,
+          lengthCm: row.kgToMeterLengthCm,
+          source: row.kgToMeterSource,
+        }
+      : null;
+  return {
+    serverSeq: row.serverSeq,
+    record: {
+      ...baseOf(row),
+      name: row.name,
+      sku: row.sku,
+      description: row.description,
+      tags: row.tags,
+      purchaseUnits: row.purchaseUnits,
+      sellingUnits: row.sellingUnits,
+      kgToMeterConversion: conversion,
+      pricePerMeterCents: row.pricePerMeterCents,
+      minPricePerMeterCents: row.minPricePerMeterCents,
+      pricePerPieceCents: row.pricePerPieceCents,
+      minPricePerPieceCents: row.minPricePerPieceCents,
+      lowStockThreshold: row.lowStockThreshold,
+      active: row.active,
+    },
+  };
+}
+
+@Injectable()
+export class ProductRepository implements SyncHandler<'product'> {
+  readonly entity = 'product' as const;
+
+  constructor(private readonly tx: TransactionHost) {}
+
+  async find(id: string): Promise<SyncedRow<Product> | undefined> {
+    const [row] = await this.tx.db.select().from(schema.product).where(eq(schema.product.id, id));
+    return row && productOf(row);
+  }
+
+  async write(record: Product): Promise<SyncedRow<Product>> {
+    const conversion = record.kgToMeterConversion;
+    const fields = {
+      name: record.name,
+      sku: record.sku,
+      description: record.description,
+      tags: record.tags,
+      purchaseUnits: record.purchaseUnits,
+      sellingUnits: record.sellingUnits,
+      kgToMeterWeightG: conversion?.weightG ?? null,
+      kgToMeterLengthCm: conversion?.lengthCm ?? null,
+      kgToMeterSource: conversion?.source ?? null,
+      pricePerMeterCents: record.pricePerMeterCents,
+      minPricePerMeterCents: record.minPricePerMeterCents,
+      pricePerPieceCents: record.pricePerPieceCents,
+      minPricePerPieceCents: record.minPricePerPieceCents,
+      lowStockThreshold: record.lowStockThreshold,
+      active: record.active,
+      ...writeColumns(record),
+    };
+    const [row] = await this.tx.db
+      .insert(schema.product)
+      .values({ id: record.id, createdAt: new Date(record.createdAt), ...fields })
+      .onConflictDoUpdate({ target: schema.product.id, set: fields })
+      .returning();
+    if (!row) throw new Error('write returned no row');
+    return productOf(row);
+  }
+
+  async markVoided(id: string, at: Date, deviceId: string): Promise<SyncedRow<Product>> {
+    const [row] = await this.tx.db
+      .update(schema.product)
+      .set({ voidedAt: at, updatedAt: at, deviceId, active: false })
+      .where(eq(schema.product.id, id))
+      .returning();
+    if (!row) throw new Error(`no product ${id}`);
+    return productOf(row);
+  }
+
+  async pull(since: number, limit: number): Promise<SyncedRow<Product>[]> {
+    const rows = await this.tx.db
+      .select()
+      .from(schema.product)
+      .where(gt(schema.product.serverSeq, since))
+      .orderBy(asc(schema.product.serverSeq))
+      .limit(limit);
+    return rows.map(productOf);
+  }
+
+  async findMany(ids: readonly string[]): Promise<SyncedRow<Product>[]> {
+    if (ids.length === 0) return [];
+    const rows = await this.tx.db
+      .select()
+      .from(schema.product)
+      .where(inArray(schema.product.id, [...ids]));
+    return rows.map(productOf);
+  }
+
+  async list(includeVoided: boolean): Promise<SyncedRow<Product>[]> {
+    const rows = await this.tx.db
+      .select()
+      .from(schema.product)
+      .where(includeVoided ? undefined : isNull(schema.product.voidedAt))
+      .orderBy(asc(schema.product.name));
+    return rows.map(productOf);
   }
 }
 

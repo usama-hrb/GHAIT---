@@ -1,312 +1,296 @@
 'use client';
 
 import type { Expense, RecurringExpense } from '@fabric/contracts';
-import { monthOf, nextMonth, previousMonth } from '@fabric/core';
-import { ChevronLeftIcon, ChevronRightIcon, PlusIcon, ReceiptIcon } from 'lucide-react';
-import { useState } from 'react';
+import { monthOf } from '@fabric/core';
+import { PlusIcon, ReceiptIcon, SearchIcon } from 'lucide-react';
+import { useSearchParams } from 'next/navigation';
+import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
+import { useLockedThrough } from '@/features/settlements';
 import { messages } from '@/i18n';
-import { type Local, useLiveQuery, useRepositories } from '@/local-db';
+import { isPeriodLocked, type Local, useLiveQuery, useRepositories, useSession } from '@/local-db';
 import { EmptyState, LoadingState, OfflineNotice, VoidDialog } from '@/shared/brand';
-import { DateText, Money } from '@/shared/format';
+import { Money } from '@/shared/format';
 import { shopToday } from '@/shared/lib/dates';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
+import { Input } from '@/shared/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/shared/ui/tabs';
 import { categoryName } from './category-name';
-import { ExpenseDialog, RecurringDialog } from './expense-dialogs';
-import { ExpenseReminders } from './reminders';
-import { isLockedOn, LockedBadge, useLockedThrough } from '@/features/settlements';
+import { ExpenseDialog } from './expense-dialog';
+import { ExpenseTable } from './expense-table';
+import {
+  dueSoonCount,
+  filterByStatus,
+  searchRows,
+  type StatusFilter,
+  statusFilterOf,
+  statusCounts,
+} from './expense-view';
+import { MonthNavigator } from './month-nav';
+import { FromTemplateDialog, RecurringDialog, type BillToCreate } from './recurring-dialog';
+import { RecurringPanel } from './recurring-panel';
 
 const t = messages.expenses;
+const STATUSES = ['all', 'paid', 'unpaid'] as const satisfies readonly StatusFilter[];
+/** The category filter's "every category" (a Select item cannot be empty). */
+const EVERY_CATEGORY = '*';
 
 /**
- * Expenses (SPEC §5, BUILD_PROMPTS 4.1): a month's bills and what was paid in it, the recurring
- * templates and their reminders. Everything is saved on the device first.
+ * Expenses (SPEC §5, BUILD_PROMPTS 4.1): the month's bills and what was paid in it, and the monthly
+ * templates with when each is next due. Everything is saved on the device first; every total and
+ * date here comes from @fabric/core through the repository.
  */
 export function ExpensesScreen() {
   const repositories = useRepositories();
-  const [month, setMonth] = useState(() => monthOf(shopToday()));
+  const isOwner = useSession().user?.role === 'owner';
+  const lockedThrough = useLockedThrough();
+  const today = shopToday();
+  const [month, setMonth] = useState(() => monthOf(today));
+  const [search, setSearch] = useState('');
+  // The Home links here with ?status=unpaid: the list opens on the unpaid ones.
+  const requested = useSearchParams().get('status');
+  const [status, setStatus] = useState<StatusFilter>(() => statusFilterOf(requested));
+  const [category, setCategory] = useState<string | null>(null);
   const [editing, setEditing] = useState<Local<Expense> | 'new' | null>(null);
   const [editingTemplate, setEditingTemplate] = useState<Local<RecurringExpense> | 'new' | null>(
     null,
   );
+  const [creating, setCreating] = useState<BillToCreate | null>(null);
   const [voiding, setVoiding] = useState<{ kind: 'expense' | 'template'; id: string } | null>(null);
-  const lockedThrough = useLockedThrough();
+
   const data = useLiveQuery(async () => {
-    const [view, categories, templates] = await Promise.all([
+    const [view, categories, bills] = await Promise.all([
       repositories.expenses.month(month),
       repositories.expenses.categories(),
-      repositories.expenses.recurring(),
+      repositories.expenses.recurringBills(),
     ]);
-    return { view, categories, templates };
+    return { view, categories, bills };
   }, [repositories, month]);
 
-  if (data === undefined) return <LoadingState />;
-  const { view, categories, templates } = data;
-  const label = (key: string) => {
-    const category = categories.find((found) => found.key === key);
-    return category ? categoryName(category) : key;
+  const categories = useMemo(() => data?.categories ?? [], [data]);
+  const categoryLabel = useMemo(
+    () => (key: string) => {
+      const found = categories.find((candidate) => candidate.key === key);
+      return found ? categoryName(found) : key;
+    },
+    [categories],
+  );
+  const rows = useMemo(() => data?.view.rows ?? [], [data]);
+  const found = useMemo(
+    () => searchRows(rows, { search, category }, categoryLabel),
+    [rows, search, category, categoryLabel],
+  );
+  const counts = useMemo(() => statusCounts(found), [found]);
+  const shown = useMemo(() => filterByStatus(found, status), [found, status]);
+
+  const markPaid = (expense: Local<Expense>) => {
+    repositories.expenses.setPaid(expense.id, shopToday()).then(
+      () => toast.success(t.markedPaid, { description: messages.forms.saved }),
+      (error: unknown) =>
+        toast.error(isPeriodLocked(error) ? messages.forms.periodLocked : t.form.failed),
+    );
   };
 
+  const toggleTemplate = (template: Local<RecurringExpense>) => {
+    void repositories.expenses.saveTemplate(
+      {
+        name: template.name,
+        category: template.category,
+        amountCents: template.amountCents,
+        dayOfMonth: template.dayOfMonth,
+        active: !template.active,
+      },
+      template.id,
+    );
+  };
+
+  const filtering = search.trim() !== '' || status !== 'all' || category !== null;
+  const resetFilters = () => {
+    setSearch('');
+    setStatus('all');
+    setCategory(null);
+  };
+  const addExpense = () => {
+    setEditing('new');
+  };
+
+  const dueSoon = dueSoonCount(data?.bills ?? []);
+  const view = data?.view;
+  const totals = view?.totals;
+
   return (
-    <div className="mx-auto grid w-full max-w-4xl gap-4">
+    <div className="mx-auto grid w-full max-w-6xl gap-4">
       <OfflineNotice />
+      <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+        <div className="grid gap-0.5">
+          <h2 className="font-heading text-xl font-semibold">{t.title}</h2>
+          <p className="text-sm text-muted-foreground">{t.description}</p>
+        </div>
+        {isOwner && (
+          <Button variant="accent" onClick={addExpense}>
+            <PlusIcon aria-hidden />
+            {t.add}
+          </Button>
+        )}
+      </header>
+
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="font-heading text-xl font-semibold">{t.title}</h2>
-        <Button
-          variant="accent"
-          onClick={() => {
-            setEditing('new');
-          }}
-        >
-          <PlusIcon aria-hidden />
-          {t.add}
-        </Button>
+        <MonthNavigator month={month} today={today} onChange={setMonth} />
+        {dueSoon > 0 && (
+          <Button asChild variant="outline" size="sm" className="xl:hidden">
+            <a href="#recurring">
+              {t.recurring.title}
+              <Badge variant="warning">{t.recurring.dueCount(dueSoon)}</Badge>
+            </a>
+          </Button>
+        )}
       </div>
 
-      <ExpenseReminders />
-
-      <div className="flex items-center gap-2">
-        <Button
-          size="icon"
-          variant="outline"
-          aria-label={t.previousMonth}
-          onClick={() => {
-            setMonth(previousMonth(month));
-          }}
-        >
-          <ChevronLeftIcon className="rtl:rotate-180" aria-hidden />
-        </Button>
-        <DateText
-          value={`${month}-01`}
-          format="month"
-          className="min-w-32 text-center font-medium"
-        />
-        <Button
-          size="icon"
-          variant="outline"
-          aria-label={t.nextMonth}
-          onClick={() => {
-            setMonth(nextMonth(month));
-          }}
-        >
-          <ChevronRightIcon className="rtl:rotate-180" aria-hidden />
-        </Button>
-      </div>
-
-      <dl className="grid gap-x-6 gap-y-2 rounded-lg border bg-card p-4 sm:grid-cols-2">
-        <div className="flex justify-between gap-2">
-          <dt className="text-muted-foreground">{t.paidInMonth}</dt>
-          <dd className="font-semibold">
-            <Money cents={view.totals.paidCents} />
-          </dd>
-        </div>
-        <div className="flex justify-between gap-2">
-          <dt className="text-muted-foreground">{t.unpaid}</dt>
-          <dd>
-            <Money
-              cents={view.totals.unpaidCents}
-              tone={view.totals.unpaidCents > 0 ? 'debt' : undefined}
-            />{' '}
-            <span className="text-sm text-muted-foreground">
-              ({t.unpaidCount(view.totals.unpaidCount)})
-            </span>
-          </dd>
-        </div>
-        {Object.entries(view.totals.paidByCategory).map(([key, cents]) => (
-          <div key={key} className="flex justify-between gap-2 text-sm">
-            <dt className="text-muted-foreground">{label(key)}</dt>
-            <dd>
-              <Money cents={cents} />
-            </dd>
-          </div>
-        ))}
-      </dl>
-      <p className="text-sm text-muted-foreground">{t.paidInMonthHint}</p>
-
-      {view.expenses.length === 0 ? (
-        <EmptyState icon={ReceiptIcon} title={t.emptyTitle} description={t.emptyDescription} />
+      {data === undefined || view === undefined || totals === undefined ? (
+        <LoadingState rows={5} />
       ) : (
-        <div className="rounded-lg border bg-card">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>{t.columns.date}</TableHead>
-                <TableHead>{t.columns.category}</TableHead>
-                <TableHead className="max-sm:hidden">{t.columns.note}</TableHead>
-                <TableHead className="text-end">{t.columns.amount}</TableHead>
-                <TableHead>{t.columns.status}</TableHead>
-                <TableHead>
-                  <span className="sr-only">{messages.forms.edit}</span>
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {view.expenses.map((expense) => (
-                <TableRow key={expense.id} className="h-12">
-                  <TableCell>
-                    <DateText value={expense.date} />
-                  </TableCell>
-                  <TableCell>{label(expense.category)}</TableCell>
-                  <TableCell className="max-sm:hidden text-muted-foreground">
-                    {expense.note}
-                  </TableCell>
-                  <TableCell className="text-end">
-                    <Money cents={expense.amountCents} />
-                  </TableCell>
-                  <TableCell>
-                    {expense.paidDate ? (
-                      <Badge variant="success">
-                        {t.paidOn} <DateText value={expense.paidDate} format="short" />
-                      </Badge>
-                    ) : (
-                      <Badge variant="warning">{t.notPaid}</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-end whitespace-nowrap">
-                    {expense.paidDate === null && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          void repositories.expenses
-                            .setPaid(expense.id, shopToday())
-                            .then(() =>
-                              toast.success(t.markedPaid, { description: messages.forms.saved }),
-                            );
-                        }}
-                      >
-                        {t.markPaid}
-                      </Button>
-                    )}
-                    {isLockedOn(expense.paidDate, lockedThrough) ? (
-                      <LockedBadge lockedThrough={lockedThrough} />
-                    ) : (
-                      <>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => {
-                            setEditing(expense);
-                          }}
-                        >
-                          {messages.forms.edit}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => {
-                            setVoiding({ kind: 'expense', id: expense.id });
-                          }}
-                        >
-                          {t.voidTitle}
-                        </Button>
-                      </>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      )}
+        <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+          <div className="grid gap-4">
+            <div className="grid gap-1.5">
+              <dl
+                aria-label={t.stats.label}
+                className="grid grid-cols-2 rounded-lg border bg-card sm:grid-cols-4 [&>div]:border-s max-sm:[&>div:nth-child(n+3)]:border-t max-sm:[&>div:nth-child(odd)]:border-s-0 sm:[&>div:first-child]:border-s-0"
+              >
+                <Stat label={t.stats.total} value={<Money cents={totals.totalCents} />} />
+                <Stat label={t.stats.paid} value={<Money cents={totals.paidCents} />} />
+                <Stat
+                  label={t.stats.unpaid}
+                  value={
+                    <Money
+                      cents={totals.unpaidCents}
+                      tone={totals.unpaidCents > 0 ? 'debt' : undefined}
+                    />
+                  }
+                  note={t.unpaidCount(totals.unpaidCount)}
+                />
+                <Stat label={t.stats.entries} value={<span data-num>{totals.entryCount}</span>} />
+              </dl>
+              <p className="text-xs text-muted-foreground">{t.stats.note}</p>
+            </div>
 
-      <section aria-label={t.recurring.title} className="grid gap-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="font-heading font-semibold">{t.recurring.title}</h3>
-          <Button
-            variant="outline"
-            onClick={() => {
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative order-1 min-w-40 flex-1">
+                <SearchIcon
+                  aria-hidden
+                  className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                />
+                <Input
+                  type="search"
+                  aria-label={t.search}
+                  placeholder={t.search}
+                  className="ps-9"
+                  value={search}
+                  onChange={(event) => {
+                    setSearch(event.target.value);
+                  }}
+                />
+              </div>
+              <Tabs
+                className="order-2 max-sm:order-3 max-sm:w-full"
+                value={status}
+                onValueChange={(next) => {
+                  setStatus(next as StatusFilter);
+                }}
+              >
+                <TabsList aria-label={t.filters.label} className="max-sm:w-full">
+                  {STATUSES.map((option) => (
+                    <TabsTrigger key={option} value={option} className="px-3">
+                      {t.filters[option]}
+                      <span data-num className="text-xs text-muted-foreground">
+                        {counts[option]}
+                      </span>
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+              <Select
+                value={category ?? EVERY_CATEGORY}
+                onValueChange={(next) => {
+                  setCategory(next === EVERY_CATEGORY ? null : next);
+                }}
+              >
+                <SelectTrigger
+                  aria-label={t.filters.category}
+                  className="order-3 w-40 max-sm:order-2 max-sm:w-36"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={EVERY_CATEGORY}>{t.filters.allCategories}</SelectItem>
+                  {categories.map((option) => (
+                    <SelectItem key={option.key} value={option.key}>
+                      {categoryName(option)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {rows.length === 0 ? (
+              <EmptyState
+                icon={ReceiptIcon}
+                title={t.emptyTitle}
+                description={t.emptyDescription}
+                action={
+                  isOwner ? (
+                    <Button variant="outline" onClick={addExpense}>
+                      <PlusIcon aria-hidden />
+                      {t.add}
+                    </Button>
+                  ) : undefined
+                }
+              />
+            ) : shown.length === 0 ? (
+              <EmptyState
+                icon={ReceiptIcon}
+                title={t.noMatchTitle}
+                description={t.noMatchDescription}
+                action={
+                  filtering ? (
+                    <Button variant="outline" onClick={resetFilters}>
+                      {t.showAll}
+                    </Button>
+                  ) : undefined
+                }
+              />
+            ) : (
+              <ExpenseTable
+                rows={shown}
+                categoryLabel={categoryLabel}
+                canWrite={isOwner}
+                lockedThrough={lockedThrough}
+                onMarkPaid={markPaid}
+                onEdit={setEditing}
+                onVoid={(expense) => {
+                  setVoiding({ kind: 'expense', id: expense.id });
+                }}
+              />
+            )}
+          </div>
+
+          <RecurringPanel
+            bills={data.bills}
+            categoryLabel={categoryLabel}
+            canWrite={isOwner}
+            onAdd={() => {
               setEditingTemplate('new');
             }}
-          >
-            <PlusIcon aria-hidden />
-            {t.recurring.add}
-          </Button>
+            onCreate={setCreating}
+            onEdit={setEditingTemplate}
+            onToggle={toggleTemplate}
+            onVoid={(template) => {
+              setVoiding({ kind: 'template', id: template.id });
+            }}
+          />
         </div>
-        <p className="text-sm text-muted-foreground">{t.recurring.description}</p>
-        {templates.length === 0 ? (
-          <p className="text-muted-foreground">{t.recurring.empty}</p>
-        ) : (
-          <div className="rounded-lg border bg-card">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t.columns.name}</TableHead>
-                  <TableHead className="max-sm:hidden">{t.columns.category}</TableHead>
-                  <TableHead className="text-end">{t.columns.amount}</TableHead>
-                  <TableHead>{t.columns.day}</TableHead>
-                  <TableHead>
-                    <span className="sr-only">{messages.forms.edit}</span>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {templates.map((template) => (
-                  <TableRow key={template.id} className="h-12">
-                    <TableCell>
-                      {template.name}
-                      {!template.active && (
-                        <Badge variant="outline" className="ms-1.5">
-                          {t.recurring.paused}
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="max-sm:hidden">{label(template.category)}</TableCell>
-                    <TableCell className="text-end">
-                      {template.amountCents === null ? (
-                        t.recurring.variable
-                      ) : (
-                        <Money cents={template.amountCents} />
-                      )}
-                    </TableCell>
-                    <TableCell>{t.recurring.dayOf(template.dayOfMonth)}</TableCell>
-                    <TableCell className="text-end whitespace-nowrap">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          void repositories.expenses.saveTemplate(
-                            {
-                              name: template.name,
-                              category: template.category,
-                              amountCents: template.amountCents,
-                              dayOfMonth: template.dayOfMonth,
-                              active: !template.active,
-                            },
-                            template.id,
-                          );
-                        }}
-                      >
-                        {template.active ? t.recurring.pause : t.recurring.resume}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          setEditingTemplate(template);
-                        }}
-                      >
-                        {messages.forms.edit}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => {
-                          setVoiding({ kind: 'template', id: template.id });
-                        }}
-                      >
-                        {t.recurring.voidTitle}
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-      </section>
+      )}
 
       {editing !== null && (
         <ExpenseDialog
@@ -316,6 +300,11 @@ export function ExpensesScreen() {
           }}
           categories={categories}
           expense={editing === 'new' ? undefined : editing}
+          employeeName={
+            editing === 'new'
+              ? null
+              : (rows.find((row) => row.expense.id === editing.id)?.employeeName ?? null)
+          }
         />
       )}
       {editingTemplate !== null && (
@@ -326,6 +315,14 @@ export function ExpensesScreen() {
           }}
           categories={categories}
           template={editingTemplate === 'new' ? undefined : editingTemplate}
+        />
+      )}
+      {creating !== null && (
+        <FromTemplateDialog
+          bill={creating}
+          onOpenChange={(open) => {
+            if (!open) setCreating(null);
+          }}
         />
       )}
       <VoidDialog
@@ -343,6 +340,16 @@ export function ExpensesScreen() {
           toast.success(t.voided, { description: messages.forms.saved });
         }}
       />
+    </div>
+  );
+}
+
+function Stat({ label, value, note }: { label: string; value: React.ReactNode; note?: string }) {
+  return (
+    <div className="grid content-start gap-0.5 px-3 py-2.5 sm:px-4">
+      <dt className="text-xs text-muted-foreground sm:text-sm">{label}</dt>
+      <dd className="font-heading text-lg font-semibold sm:text-xl">{value}</dd>
+      {note && <dd className="text-xs text-muted-foreground">{note}</dd>}
     </div>
   );
 }

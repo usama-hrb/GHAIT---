@@ -1,15 +1,10 @@
-import type { Metadata } from 'next';
-import { Suspense } from 'react';
-import { RollScreen } from '@/features/inventory';
-import { messages } from '@/i18n';
+import { RedirectTo } from '@/shared/lib/redirect';
 
-export const metadata: Metadata = { title: messages.inventory.title };
-
-/** /inventory/roll?id=<roll>: one cached page for every roll (offline). */
-export default function RollPage() {
-  return (
-    <Suspense>
-      <RollScreen />
-    </Suspense>
-  );
+/**
+ * Gone since ADR 0012: stock is managed in the Inventory, by product. Kept so old links and
+ * bookmarks land there (the page redirects on the client, so the
+ * service worker's copy of it works offline too).
+ */
+export default function Page() {
+  return <RedirectTo href="/inventory" />;
 }

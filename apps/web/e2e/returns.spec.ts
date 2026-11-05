@@ -1,42 +1,36 @@
 import { expect, test } from '@playwright/test';
 import {
-  addFabric,
+  addProduct,
   addToBill,
   connectivity,
+  openLastSale,
   payInFull,
-  reviewAndSave,
   serverGet,
   signIn,
-  startPurchase,
   waitForAppShell,
 } from './helpers';
 
-test('goods given back: saved offline, the cloth returns to its roll, the profit is reversed, synced', async ({
+test('goods given back: saved offline, the cloth returns to its batch, the profit is reversed, synced', async ({
   page,
   request,
 }) => {
   await signIn(page);
   await waitForAppShell(page);
-  await addFabric(page, 'بروكار');
 
-  // 50 m per colour at 16 dh (320 rial), then 10 m of the red sold at 20 dh (400 rial): 4,000 rial.
-  await startPurchase(page, 'بالمتر', 'بروكار');
-  await page.getByLabel('سعر المتر').fill('320');
-  await page.getByRole('button', { name: 'كل الألوان' }).click();
-  await reviewAndSave(page);
+  // 50 m at 16 dh (320 rial), then 10 m sold at 20 dh (400 rial): 4,000 rial.
+  await addProduct(page, { name: 'بروكار - أحمر' });
 
   await page.goto('/pos');
-  await addToBill(page, 'بروكار', 'أحمر', '10');
+  await addToBill(page, 'بروكار - أحمر', '10');
   await payInFull(page);
-  await expect(page).toHaveURL(/\/pos\/view\?id=/);
-  const saleId = new URL(page.url()).searchParams.get('id') ?? '';
+  const saleId = await openLastSale(page);
   await expect.poll(() => connectivity(page).textContent()).not.toMatch(/معلّق/);
 
   // The customer brings back 4 m. Offline, nothing waits for the server.
   await page.context().setOffline(true);
   await page.getByRole('button', { name: 'إرجاع بضاعة' }).click();
   const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('الطول المرجَع بروكار أحمر').fill('4');
+  await dialog.getByLabel('الطول المرجَع بروكار - أحمر').fill('4');
   await dialog.getByLabel('السبب').fill('لم يعجبها اللون');
   // 4 of 10 m at 20 dh = 80 dh = 1,600 rial credited; the 2,400 rial left is what it is worth now.
   await expect(dialog.getByText('1,600').first()).toBeVisible();

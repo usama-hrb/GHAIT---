@@ -1,6 +1,6 @@
 import {
-  buildPurchaseAggregate,
   errorResponseSchema,
+  type BatchHistory,
   buildSaleAggregate,
   buildSaleReturn,
   HEADERS,
@@ -9,9 +9,6 @@ import {
   newSaleSchema,
   type NewSaleReturn,
   RETURN_ISSUES,
-  type Roll,
-  rollCode,
-  rollDetailSchema,
   settlementPreviewSchema,
   type SaleAggregate,
   type SaleDetail,
@@ -24,28 +21,24 @@ import {
 } from '@fabric/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestApp, type Session, type TestApp } from './support/app.js';
+import { stockKit } from './support/stock.js';
 
 const DAY = '2026-10-30';
 
 describe('returns (BUILD_PROMPTS 5.3, RT1–RT4)', () => {
   let t: TestApp;
   let session: Session;
-  const variantId = crypto.randomUUID();
+  let kit: ReturnType<typeof stockKit>;
+  let productId = '';
   const customerId = crypto.randomUUID();
-  let counter = 0;
   let clock = Date.UTC(2026, 9, 30, 10, 0);
   const tick = () => new Date((clock += 60_000)).toISOString();
 
   beforeAll(async () => {
     t = await createTestApp();
     session = await t.login();
-    const fabricId = crypto.randomUUID();
-    await as(t.http().put(`/fabrics/${fabricId}`))
-      .send({ name: 'روزا', refPricePerMeterCents: 2000, minPricePerMeterCents: 1700 })
-      .expect(200);
-    await as(t.http().put(`/variants/${variantId}`))
-      .send({ fabricId, colorName: 'أحمر' })
-      .expect(200);
+    kit = stockKit(t, () => session, push);
+    productId = await kit.product();
     await as(t.http().put(`/customers/${customerId}`))
       .send({ name: 'فاطمة', phone: '0612345678' })
       .expect(200);
@@ -82,42 +75,16 @@ describe('returns (BUILD_PROMPTS 5.3, RT1–RT4)', () => {
     return syncPushResponseSchema.parse(response.body).results;
   };
 
-  /** T1's roll: 50 m that cost 800 dh (16 dh/m). */
-  async function rosa(): Promise<Roll> {
-    const aggregate = buildPurchaseAggregate(
-      {
-        method: 'meter',
-        date: '2026-10-01',
-        supplierId: null,
-        notes: null,
-        pricePerMeterCents: 1600,
-        rolls: [{ variantId, lengthCm: 5000 }],
-      },
-      {
-        purchaseId: crypto.randomUUID(),
-        rollIds: [crypto.randomUUID()],
-        moveIds: [crypto.randomUUID()],
-        shortCodes: [rollCode('A', ++counter)],
-      },
-      { deviceId: 'desk', now: tick() },
-    );
-    const [result] = await push(op('purchase', aggregate.purchase.id, aggregate));
-    expect(result?.status).toBe('applied');
-    const [roll] = aggregate.rolls;
-    if (!roll) throw new Error('no roll');
-    return roll;
-  }
+  /** T1's batch: 50 m that cost 800 dh (16 dh/m). */
+  const rosa = () => kit.buy({ productId, quantity: 5000, totalCostCents: 80_000 });
 
   async function sell(input: NewSaleInput): Promise<SaleAggregate> {
     const parsed = newSaleSchema.parse(input);
-    const histories = new Map(
+    const histories = new Map<string, BatchHistory>(
       await Promise.all(
-        [...new Set(parsed.lines.map((line) => line.rollId))].map(async (id) => {
-          const detail = rollDetailSchema.parse(
-            (await as(t.http().get(`/rolls/${id}`)).expect(200)).body,
-          );
-          return [id, { roll: detail.roll, moves: detail.moves }] as const;
-        }),
+        [...new Set(parsed.lines.map((line) => line.batchId))].map(
+          async (id) => [id, await kit.history(id)] as const,
+        ),
       ),
     );
     const built = buildSaleAggregate(
@@ -143,18 +110,18 @@ describe('returns (BUILD_PROMPTS 5.3, RT1–RT4)', () => {
   const detail = async (saleId: string): Promise<SaleDetail> =>
     saleDetailSchema.parse((await as(t.http().get(`/sales/${saleId}`)).expect(200)).body);
 
-  const ledgerOf = async (rollId: string) =>
-    rollDetailSchema.parse((await as(t.http().get(`/rolls/${rollId}`)).expect(200)).body).ledger;
+  const ledgerOf = async (batchId: string) => (await kit.detail(batchId)).ledger;
 
   const integrity = async () =>
     integrityReportSchema.parse((await as(t.http().get('/integrity')).expect(200)).body);
 
-  const line = (rollId: string, soldCm: number, perMeterCents: number) => ({
-    rollId,
-    soldCm,
-    price: { perMeterCents },
-    refPricePerMeterCents: 2000,
-    minPricePerMeterCents: 1700,
+  const line = (batchId: string, soldCm: number, perMeterCents: number) => ({
+    batchId,
+    unit: 'meter' as const,
+    quantity: soldCm,
+    price: { perUnitCents: perMeterCents },
+    refPriceCents: 2000,
+    minPriceCents: 1700,
   });
 
   /** A device builds a return from the sale as it knows it (here: what it just sent). */
@@ -197,7 +164,7 @@ describe('returns (BUILD_PROMPTS 5.3, RT1–RT4)', () => {
     const given = giveBackOf(sold, {
       date: DAY,
       reason: 'لم يعجبها اللون',
-      lines: [{ lineId, returnedCm: 400 }],
+      lines: [{ lineId, quantity: 400 }],
       refundCents: 8000,
     });
     const [result] = await push(op('sale_return', given.saleReturn.id, given));
@@ -211,10 +178,10 @@ describe('returns (BUILD_PROMPTS 5.3, RT1–RT4)', () => {
       profitCents: 2400,
       paidCents: 12_000,
       dueCents: 0,
-      lines: [{ returnedCm: 400, costCents: 9600, profitCents: 2400 }],
+      lines: [{ returnedQuantity: 400, costCents: 9600, profitCents: 2400 }],
     });
     const ledger = await ledgerOf(roll.id);
-    expect(ledger.remainingCm).toBe(5000 - 1000 + 400);
+    expect(ledger.available.meter).toEqual({ unit: 'meter', centimeters: 5000 - 1000 + 400 });
     expect(ledger.unallocatedCostCents).toBe(80_000 - 9600);
     expect(ledger.returns).toEqual([
       expect.objectContaining({ saleMoveId: sold.moves[0]?.id, costCents: 6400 }),
@@ -237,7 +204,7 @@ describe('returns (BUILD_PROMPTS 5.3, RT1–RT4)', () => {
     });
     const lineId = sold.lines[0]?.id ?? '';
     const first = await as(t.http().post(`/sales/${sold.sale.id}/return`))
-      .send({ date: DAY, reason: 'قصيرة', lines: [{ lineId, returnedCm: 200 }] })
+      .send({ date: DAY, reason: 'قصيرة', lines: [{ lineId, quantity: 200 }] })
       .expect(200);
     // Debt 6000 → 6000 − 4000 credit = 2000 still owed: nothing handed back.
     expect(saleDetailSchema.parse(first.body).figures).toMatchObject({
@@ -248,7 +215,7 @@ describe('returns (BUILD_PROMPTS 5.3, RT1–RT4)', () => {
     });
 
     const refused = await as(t.http().post(`/sales/${sold.sale.id}/return`))
-      .send({ date: DAY, reason: 'أكثر', lines: [{ lineId, returnedCm: 301 }] })
+      .send({ date: DAY, reason: 'أكثر', lines: [{ lineId, quantity: 301 }] })
       .expect(422);
     expect(issueOf(refused.body)).toBe(RETURN_ISSUES.aboveSold);
 
@@ -256,7 +223,7 @@ describe('returns (BUILD_PROMPTS 5.3, RT1–RT4)', () => {
       .send({
         date: DAY,
         reason: 'الباقي',
-        lines: [{ lineId, returnedCm: 300 }],
+        lines: [{ lineId, quantity: 300 }],
         refundCents: 4000,
       })
       .expect(200);
@@ -265,7 +232,7 @@ describe('returns (BUILD_PROMPTS 5.3, RT1–RT4)', () => {
       netTotalCents: 0,
       dueCents: 0,
     });
-    expect((await ledgerOf(roll.id)).remainingCm).toBe(5000);
+    expect(await kit.remaining(roll.id)).toBe(5000);
     expect(await integrity()).toMatchObject({ ok: true });
 
     const audit = await t.sql.query(
@@ -281,7 +248,7 @@ describe('returns (BUILD_PROMPTS 5.3, RT1–RT4)', () => {
     const honest = giveBackOf(sold, {
       date: DAY,
       reason: 'x',
-      lines: [{ lineId, returnedCm: 100 }],
+      lines: [{ lineId, quantity: 100 }],
       refundCents: 2000,
     });
     const inflated = structuredClone(honest);
@@ -294,7 +261,7 @@ describe('returns (BUILD_PROMPTS 5.3, RT1–RT4)', () => {
     const whole = giveBackOf(sold, {
       date: DAY,
       reason: 'كلها',
-      lines: [{ lineId, returnedCm: 1000 }],
+      lines: [{ lineId, quantity: 1000 }],
       refundCents: 20_000,
     });
     expect((await push(op('sale_return', whole.saleReturn.id, whole)))[0]?.status).toBe('applied');
@@ -310,7 +277,7 @@ describe('returns (BUILD_PROMPTS 5.3, RT1–RT4)', () => {
       .send({
         date: DAY,
         reason: 'جزء',
-        lines: [{ lineId: sold.lines[0]?.id ?? '', returnedCm: 100 }],
+        lines: [{ lineId: sold.lines[0]?.id ?? '', quantity: 100 }],
         refundCents: 2000,
       })
       .expect(200);
@@ -336,7 +303,7 @@ describe('returns (BUILD_PROMPTS 5.3, RT1–RT4)', () => {
     const june = giveBackOf(sold, {
       date: '2026-09-20',
       reason: 'قديم',
-      lines: [{ lineId: sold.lines[0]?.id ?? '', returnedCm: 100 }],
+      lines: [{ lineId: sold.lines[0]?.id ?? '', quantity: 100 }],
       refundCents: 2000,
     });
     const [locked] = await push(op('sale_return', june.saleReturn.id, june));
@@ -351,7 +318,7 @@ describe('returns (BUILD_PROMPTS 5.3, RT1–RT4)', () => {
     const october = giveBackOf(sold, {
       date: DAY,
       reason: 'جديد',
-      lines: [{ lineId: sold.lines[0]?.id ?? '', returnedCm: 100 }],
+      lines: [{ lineId: sold.lines[0]?.id ?? '', quantity: 100 }],
       refundCents: 2000,
     });
     expect((await push(op('sale_return', october.saleReturn.id, october)))[0]?.status).toBe(

@@ -7,6 +7,11 @@ const FORMATS = {
   short: { dateStyle: 'short' },
   medium: { dateStyle: 'medium' },
   long: { dateStyle: 'long' },
+  /** With the weekday: "Tuesday, 3 November 2026" (a greeting's date). */
+  full: { dateStyle: 'full' },
+  /** The day and the month only: a chart's axis. */
+  dayMonth: { day: 'numeric', month: 'short' },
+  time: { timeStyle: 'short' },
   dateTime: { dateStyle: 'medium', timeStyle: 'short' },
   month: { year: 'numeric', month: 'long' },
   /** The zakat hawl only (CLAUDE.md: Hijri only in the zakat module). */

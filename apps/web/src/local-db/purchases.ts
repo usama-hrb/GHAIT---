@@ -1,79 +1,80 @@
 import {
-  buildPurchaseAggregate,
-  checkPurchaseAggregate,
-  type NewPurchaseInput,
-  newPurchaseSchema,
+  batchCode,
+  batchLedgerOf,
+  buildProductPurchase,
+  checkProductPurchase,
+  type NewProductPurchaseInput,
+  newProductPurchaseSchema,
+  type ProductBatch,
   type Purchase,
-  type Roll,
-  rollCode,
-  rollCountOf,
 } from '@fabric/contracts';
-import type { BatchCost } from '@fabric/core';
+import { type BatchCost, mulDivRoundHalfUp } from '@fabric/core';
 import type { Local } from './db';
 import { parseOrThrow, ValidationError } from './errors';
 import { DEVICE_CODE } from './session';
 import type { LocalStore } from './store';
 
-const ROLL_COUNTER = 'rollCounter';
+/** The counter the batch codes are numbered by (it continues the roll numbering of old versions). */
+const BATCH_COUNTER = 'rollCounter';
 
-/** The device has no code yet (it gets one when signing in online): it cannot number rolls. */
+/** The device has no code yet (it gets one when signing in online): it cannot number batches. */
 export class DeviceNotRegisteredError extends Error {
   override readonly name = 'DeviceNotRegisteredError';
 }
 
 export interface PurchaseSummary {
   purchase: Local<Purchase>;
-  fabricName: string | null;
+  /** What was bought, by product name (several only for purchases made before batches). */
+  productNames: string[];
   supplierName: string | null;
-  rollCount: number;
+  batchCount: number;
 }
 
 const newest = (a: Local<Purchase>, b: Local<Purchase>) =>
   b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt);
 
 /**
- * Purchases and the rolls they create (SPEC §2.3). A purchase is saved with its rolls and stock
- * moves and one outbox op, in one local transaction; the server re-checks it with the same
- * function (buildPurchaseAggregate → @fabric/core buildRollsFromPurchase).
+ * Purchases and the batches they bring in (SPEC §2.3, ADR 0012). A purchase is saved with its
+ * batch, the batch's receipt and one outbox op, in one local transaction; the server re-checks
+ * it with the same function (checkProductPurchase). Restocking a product and creating a product
+ * with its first stock are both this.
  */
 export class PurchasesRepository {
   constructor(private readonly store: LocalStore) {}
 
   /** Saves the purchase; throws ValidationError for invalid input. Returns the purchase id. */
-  async create(input: NewPurchaseInput): Promise<string> {
+  async create(input: NewProductPurchaseInput): Promise<string> {
     this.store.assertWritable();
-    const parsed = parseOrThrow(newPurchaseSchema, input);
+    const parsed = parseOrThrow(newProductPurchaseSchema, input);
     await this.store.assertPeriodOpen([parsed.date]);
     const { db } = this.store;
     const deviceId = await this.store.deviceId();
     const now = this.store.now().toISOString();
-    const count = rollCountOf(parsed);
     const purchaseId = crypto.randomUUID();
     await db.transaction(
       'rw',
-      [db.purchases, db.rolls, db.stockMoves, db.outbox, db.meta],
+      [db.purchases, db.productBatches, db.productStockMoves, db.products, db.outbox, db.meta],
       async () => {
-        const codes = await this.codesFrom(count);
-        if (!codes)
+        const code = await this.nextCode();
+        if (!code) {
           throw new DeviceNotRegisteredError('This device has no code yet: sign in online once');
-        const aggregate = buildPurchaseAggregate(
+        }
+        const aggregate = buildProductPurchase(
           parsed,
-          {
-            purchaseId,
-            rollIds: codes.map(() => crypto.randomUUID()),
-            moveIds: codes.map(() => crypto.randomUUID()),
-            shortCodes: codes,
-          },
+          { purchaseId, batchId: crypto.randomUUID(), moveId: crypto.randomUUID(), code },
           { deviceId, now },
         );
         // The server's own check, here too: a bug shows up before it reaches the outbox.
-        const issues = checkPurchaseAggregate(aggregate);
+        const issues = checkProductPurchase(aggregate, await db.products.get(parsed.productId));
         if (issues.length > 0) throw new ValidationError(issues);
         await db.purchases.put({ ...aggregate.purchase, serverSeq: null });
-        await db.rolls.bulkPut(aggregate.rolls.map((roll) => ({ ...roll, serverSeq: null })));
-        await db.stockMoves.bulkPut(aggregate.moves.map((move) => ({ ...move, serverSeq: null })));
-        const counter = await this.counter();
-        await db.meta.put({ key: ROLL_COUNTER, value: counter + count });
+        await db.productBatches.bulkPut(
+          aggregate.batches.map((batch) => ({ ...batch, serverSeq: null })),
+        );
+        await db.productStockMoves.bulkPut(
+          aggregate.moves.map((move) => ({ ...move, serverSeq: null })),
+        );
+        await db.meta.put({ key: BATCH_COUNTER, value: (await this.counter()) + 1 });
         await db.outbox.add({
           opId: crypto.randomUUID(),
           entity: 'purchase',
@@ -92,84 +93,96 @@ export class PurchasesRepository {
     return purchaseId;
   }
 
-  /** The codes the next `count` rolls will get (for the confirmation); null without a device code. */
-  nextRollCodes(count: number): Promise<string[] | null> {
-    return this.codesFrom(count);
+  /** The code the next batch will get (for the confirmation); null without a device code. */
+  nextBatchCode(): Promise<string | null> {
+    return this.nextCode();
   }
 
   get(id: string): Promise<Local<Purchase> | undefined> {
     return this.store.db.purchases.get(id);
   }
 
-  async rollsOf(purchaseId: string): Promise<Local<Roll>[]> {
-    const rolls = await this.store.db.rolls.where('purchaseId').equals(purchaseId).toArray();
-    return rolls.sort((a, b) => a.shortCode.localeCompare(b.shortCode));
+  async batchesOf(purchaseId: string): Promise<Local<ProductBatch>[]> {
+    const batches = await this.store.db.productBatches
+      .where('purchaseId')
+      .equals(purchaseId)
+      .toArray();
+    return batches.sort((a, b) => a.code.localeCompare(b.code));
   }
 
-  /** Newest first, with the fabric and supplier names for the list. */
+  /** Newest first, with the product and supplier names for the list. */
   async list(): Promise<PurchaseSummary[]> {
     const { db } = this.store;
-    const [purchases, rolls, variants, fabrics, suppliers] = await Promise.all([
+    const [purchases, batches, products, suppliers] = await Promise.all([
       db.purchases.toArray(),
-      db.rolls.toArray(),
-      db.variants.toArray(),
-      db.fabrics.toArray(),
+      db.productBatches.toArray(),
+      db.products.toArray(),
       db.suppliers.toArray(),
     ]);
-    const fabricOfVariant = new Map(variants.map((variant) => [variant.id, variant.fabricId]));
-    const fabricName = new Map(fabrics.map((fabric) => [fabric.id, fabric.name]));
+    const productName = new Map(products.map((product) => [product.id, product.name]));
     const supplierName = new Map(suppliers.map((supplier) => [supplier.id, supplier.name]));
     return purchases
       .filter((purchase) => purchase.voidedAt === null)
       .sort(newest)
       .map((purchase) => {
-        const own = rolls.filter((roll) => roll.purchaseId === purchase.id);
-        const fabricId = own[0] ? fabricOfVariant.get(own[0].variantId) : undefined;
+        const own = batches.filter((batch) => batch.purchaseId === purchase.id);
+        const names = [...new Set(own.flatMap((batch) => productName.get(batch.productId) ?? []))];
         return {
           purchase,
-          fabricName: fabricId ? (fabricName.get(fabricId) ?? null) : null,
+          productNames: names,
           supplierName: purchase.supplierId
             ? (supplierName.get(purchase.supplierId) ?? null)
             : null,
-          rollCount: own.length,
+          batchCount: own.length,
         };
       });
   }
 
   /**
-   * The fabric's previous batch: the rolls of its latest purchase (SPEC §8.5 renewal warning).
-   * null for a fabric never bought. Kg rolls count with their estimated length until measured.
+   * The product's previous batch (SPEC §8.5 renewal warning): what its latest purchase cost,
+   * against the length the batch's cost is spread over (its meters; a weight counts with the
+   * length it makes, estimated until measured, as the ledger reads it). null for a product never
+   * bought, or when that purchase has no length (a weight awaiting a measurement, or pieces).
    */
-  async lastBatchOf(fabricId: string): Promise<BatchCost[] | null> {
+  async lastBatchOf(productId: string): Promise<BatchCost[] | null> {
     const { db } = this.store;
-    const variantIds = (await db.variants.where('fabricId').equals(fabricId).toArray()).map(
-      (variant) => variant.id,
-    );
-    if (variantIds.length === 0) return null;
-    const rolls = (await db.rolls.where('variantId').anyOf(variantIds).toArray()).filter(
-      (roll) => roll.voidedAt === null,
-    );
-    const purchases = (
-      await db.purchases.bulkGet([...new Set(rolls.map((roll) => roll.purchaseId))])
-    )
-      .filter((purchase): purchase is Local<Purchase> => purchase?.voidedAt === null)
-      .sort(newest);
-    const latest = purchases[0];
+    const batches = (await db.productBatches.where('productId').equals(productId).toArray())
+      .filter((batch) => batch.voidedAt === null)
+      .sort(
+        (a, b) =>
+          b.purchaseDate.localeCompare(a.purchaseDate) || b.createdAt.localeCompare(a.createdAt),
+      );
+    const latest = batches[0];
     if (!latest) return null;
-    return rolls
-      .filter((roll) => roll.purchaseId === latest.id)
-      .map((roll) => ({ costTotalCents: roll.costTotalCents, lengthCm: roll.lengthCmInitial }));
+    const moves = await db.productStockMoves.where('batchId').equals(latest.id).toArray();
+    let ledger;
+    try {
+      ledger = batchLedgerOf(latest, moves);
+    } catch {
+      // A batch the ledger cannot read has no length to compare with.
+      return null;
+    }
+    // A weight makes the length its conversion gives for the weight received (the conversion is
+    // a proportion, or the whole batch once measured); a meter batch is its corrected length.
+    const conversion = ledger.conversion;
+    const lengthCm =
+      latest.unit === 'meter'
+        ? ledger.lengthBasisCm
+        : latest.unit === 'kg' && conversion
+          ? mulDivRoundHalfUp(latest.receivedQuantity, conversion.lengthCm, conversion.weightG)
+          : null;
+    if (lengthCm === null || lengthCm < 1) return null;
+    return [{ costTotalCents: latest.costTotalCents, lengthCm }];
   }
 
   private async counter(): Promise<number> {
-    const value = await this.store.getMeta(ROLL_COUNTER);
+    const value = await this.store.getMeta(BATCH_COUNTER);
     return typeof value === 'number' ? value : 0;
   }
 
-  private async codesFrom(count: number): Promise<string[] | null> {
+  private async nextCode(): Promise<string | null> {
     const code = await this.store.getMeta(DEVICE_CODE);
     if (typeof code !== 'string') return null;
-    const counter = await this.counter();
-    return Array.from({ length: count }, (_, index) => rollCode(code, counter + index + 1));
+    return batchCode(code, (await this.counter()) + 1);
   }
 }

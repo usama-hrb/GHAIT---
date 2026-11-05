@@ -183,6 +183,48 @@
       "when": 1793479429199,
       "tag": "0025_photos_guards",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1793581575111,
+      "tag": "0026_products",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1793718004924,
+      "tag": "0027_product_selling_units",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1793724504581,
+      "tag": "0028_product_stock",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1793724537240,
+      "tag": "0029_product_stock_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1793726383590,
+      "tag": "0030_sale_lines_on_batches",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1793824483191,
+      "tag": "0031_people_and_salaries",
+      "breakpoints": true
     }
   ]
 }

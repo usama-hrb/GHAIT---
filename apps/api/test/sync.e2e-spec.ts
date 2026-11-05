@@ -1,6 +1,6 @@
 import {
-  CATALOG_ISSUES,
-  type Fabric,
+  PRODUCT_ISSUES,
+  type Product,
   type SyncOp,
   type SyncOpResult,
   syncPullResponseSchema,
@@ -11,7 +11,7 @@ import { createTestApp, type Session, type TestApp } from './support/app.js';
 
 const at = (minute: number) => new Date(Date.UTC(2026, 9, 29, 10, minute)).toISOString();
 
-function fabric(overrides: Partial<Fabric> = {}): Fabric {
+function product(overrides: Partial<Product> = {}): Product {
   return {
     id: crypto.randomUUID(),
     createdAt: at(0),
@@ -19,23 +19,26 @@ function fabric(overrides: Partial<Fabric> = {}): Fabric {
     deviceId: 'desk',
     voidedAt: null,
     name: 'روزا',
-    type: null,
-    defaultSupplierId: null,
-    refPricePerMeterCents: 2000,
-    minPricePerMeterCents: 1800,
-    estCmPerKg: null,
-    sellableAsPiece: false,
-    piecePriceCents: null,
+    sku: null,
+    description: null,
     tags: [],
-    notes: null,
+    purchaseUnits: ['meter'],
+    sellingUnits: ['meter'],
+    kgToMeterConversion: null,
+    pricePerMeterCents: 2000,
+    minPricePerMeterCents: 1800,
+    pricePerPieceCents: null,
+    minPricePerPieceCents: null,
+    lowStockThreshold: null,
+    active: true,
     ...overrides,
   };
 }
 
-function upsert(record: Fabric, baseServerSeq: number | null = null): SyncOp {
+function upsert(record: Product, baseServerSeq: number | null = null): SyncOp {
   return {
     opId: crypto.randomUUID(),
-    entity: 'fabric',
+    entity: 'product',
     entityId: record.id,
     kind: 'upsert',
     payload: record,
@@ -79,7 +82,7 @@ describe('sync push and pull (ADR 0002)', () => {
     (await t.sql.query(sql, params)).rowCount;
 
   it('applies a new record, audited with the op’s device and the signed-in owner', async () => {
-    const record = fabric({ deviceId: 'phone-1' });
+    const record = product({ deviceId: 'phone-1' });
     const [result] = await push(upsert(record));
     expect(result).toMatchObject({ status: 'applied', error: null });
     expect(result?.serverSeq).toEqual(expect.any(Number));
@@ -89,7 +92,7 @@ describe('sync push and pull (ADR 0002)', () => {
       device_id: string;
       actor_id: string | null;
     }>(
-      `SELECT action, device_id, actor_id FROM audit_log WHERE entity = 'fabric' AND entity_id = $1`,
+      `SELECT action, device_id, actor_id FROM audit_log WHERE entity = 'product' AND entity_id = $1`,
       [record.id],
     );
     const { rows: owners } = await t.sql.query<{ id: string }>(`SELECT id FROM app_user`);
@@ -97,7 +100,7 @@ describe('sync push and pull (ADR 0002)', () => {
   });
 
   it('is idempotent by opId: a replay answers the same and changes nothing', async () => {
-    const op = upsert(fabric());
+    const op = upsert(product());
     const [first] = await push(op);
     const [again, inSameBatch] = await push(op, op);
     for (const replay of [again, inSameBatch]) {
@@ -109,7 +112,7 @@ describe('sync push and pull (ADR 0002)', () => {
         error: null,
       });
     }
-    await expect(count(`SELECT 1 FROM fabric WHERE id = $1`, [op.entityId])).resolves.toBe(1);
+    await expect(count(`SELECT 1 FROM product WHERE id = $1`, [op.entityId])).resolves.toBe(1);
     await expect(
       count(`SELECT 1 FROM audit_log WHERE entity_id = $1`, [op.entityId]),
     ).resolves.toBe(1);
@@ -117,7 +120,7 @@ describe('sync push and pull (ADR 0002)', () => {
   });
 
   it('rejects an invalid record with the contract’s issues, and keeps rejecting it', async () => {
-    const op = upsert(fabric({ minPricePerMeterCents: 2500 }));
+    const op = upsert(product({ purchaseUnits: ['kg', 'kg'] }));
     const [result] = await push(op);
     expect(result).toMatchObject({
       status: 'rejected',
@@ -126,8 +129,8 @@ describe('sync push and pull (ADR 0002)', () => {
         code: 'validation_failed',
         issues: [
           expect.objectContaining({
-            path: ['payload', 'minPricePerMeterCents'],
-            message: CATALOG_ISSUES.minAboveRef,
+            path: ['payload', 'purchaseUnits'],
+            message: PRODUCT_ISSUES.duplicateUnit,
           }),
         ],
       },
@@ -138,34 +141,37 @@ describe('sync push and pull (ADR 0002)', () => {
       originalStatus: 'rejected',
       error: result?.error,
     });
-    await expect(count(`SELECT 1 FROM fabric WHERE id = $1`, [op.entityId])).resolves.toBe(0);
+    await expect(count(`SELECT 1 FROM product WHERE id = $1`, [op.entityId])).resolves.toBe(0);
   });
 
   it('applies the other ops of a batch when one is rejected', async () => {
-    const good = fabric();
-    const missingFabric = {
+    const good = product();
+    const paymentId = crypto.randomUUID();
+    const unknownSupplier = {
       ...upsert(good),
-      entity: 'variant' as const,
-      entityId: crypto.randomUUID(),
+      entity: 'supplier_payment' as const,
+      entityId: paymentId,
       payload: {
-        id: '',
-        fabricId: crypto.randomUUID(),
-        colorName: 'أحمر',
-        lowStockThresholdCm: 500,
+        id: paymentId,
+        supplierId: crypto.randomUUID(),
+        purchaseId: null,
+        amountCents: 500,
+        date: '2026-10-29',
+        method: 'cash',
+        note: null,
         createdAt: at(0),
         updatedAt: at(0),
         deviceId: 'desk',
         voidedAt: null,
       },
     };
-    missingFabric.payload.id = missingFabric.entityId;
-    const results = await push(missingFabric, upsert(good));
+    const results = await push(unknownSupplier, upsert(good));
     expect(results.map((result) => result.status)).toEqual(['rejected', 'applied']);
-    expect(results[0]?.error).toMatchObject({ code: 'conflict' });
+    expect(results[0]?.error).toMatchObject({ code: 'validation_failed' });
   });
 
   it('rejects an op whose record does not match it, and ops an entity does not take', async () => {
-    const record = fabric();
+    const record = product();
     const results = await push(
       { ...upsert(record), entityId: crypto.randomUUID() },
       { ...upsert(record), deviceId: 'other-device' },
@@ -181,7 +187,7 @@ describe('sync push and pull (ADR 0002)', () => {
   });
 
   it('never treats a device’s own consecutive edits as a conflict', async () => {
-    const record = fabric();
+    const record = product();
     const [created] = await push(upsert(record));
     const base = created?.serverSeq ?? null;
     const [first, second] = await push(
@@ -195,7 +201,7 @@ describe('sync push and pull (ADR 0002)', () => {
   });
 
   it('concurrent edits: the later one wins, the loser is kept in sync_conflict', async () => {
-    const record = fabric({ deviceId: 'desk' });
+    const record = product({ deviceId: 'desk' });
     const [created] = await push(upsert(record));
     const base = created?.serverSeq ?? null;
 
@@ -222,14 +228,14 @@ describe('sync push and pull (ADR 0002)', () => {
       ['incoming', 'هاتف'],
     ]);
     const { rows: now } = await t.sql.query<{ name: string }>(
-      `SELECT name FROM fabric WHERE id = $1`,
+      `SELECT name FROM product WHERE id = $1`,
       [record.id],
     );
     expect(now[0]?.name).toBe('مكتب أحدث');
   });
 
   it('a clock set ahead of the server does not win every conflict (BUILD_PROMPTS 3.6)', async () => {
-    const record = fabric({ deviceId: 'desk' });
+    const record = product({ deviceId: 'desk' });
     const [created] = await push(upsert(record));
     const base = created?.serverSeq ?? null;
     // The phone's clock says next year: stored as at most 5 minutes after the server got it.
@@ -239,7 +245,7 @@ describe('sync push and pull (ADR 0002)', () => {
     );
     expect(phone?.status).toBe('applied');
     const { rows } = await t.sql.query<{ updated_at: Date }>(
-      `SELECT updated_at FROM fabric WHERE id = $1`,
+      `SELECT updated_at FROM product WHERE id = $1`,
       [record.id],
     );
     expect(rows[0]?.updated_at.getTime()).toBeLessThanOrEqual(Date.now() + 5 * 60_000);
@@ -256,7 +262,7 @@ describe('sync push and pull (ADR 0002)', () => {
   });
 
   it('an edit on the current version applies even with an older clock (no conflict)', async () => {
-    const record = fabric({ updatedAt: at(30) });
+    const record = product({ updatedAt: at(30) });
     const [created] = await push(upsert(record));
     const [edit] = await push(
       upsert(
@@ -268,7 +274,7 @@ describe('sync push and pull (ADR 0002)', () => {
   });
 
   it('voids: final, audited with the reason, idempotent, and a later upsert keeps it voided', async () => {
-    const record = fabric();
+    const record = product();
     const [created] = await push(upsert(record));
     const voidOp: SyncOp = {
       ...upsert(record),
@@ -289,7 +295,7 @@ describe('sync push and pull (ADR 0002)', () => {
       ),
     );
     const { rows } = await t.sql.query<{ voided_at: Date; name: string }>(
-      `SELECT voided_at, name FROM fabric WHERE id = $1`,
+      `SELECT voided_at, name FROM product WHERE id = $1`,
       [record.id],
     );
     expect(rows[0]?.voided_at.toISOString()).toBe(at(9));
@@ -305,11 +311,11 @@ describe('sync push and pull (ADR 0002)', () => {
   });
 
   it('rejects a void without a reason or of an unknown record', async () => {
-    const record = fabric();
+    const record = product();
     await push(upsert(record));
     const results = await push(
       { ...upsert(record), kind: 'void', payload: { reason: ' ' } },
-      { ...upsert(fabric()), kind: 'void', payload: { reason: 'x' } },
+      { ...upsert(product()), kind: 'void', payload: { reason: 'x' } },
     );
     expect(results.map((result) => [result.status, result.error?.code])).toEqual([
       ['rejected', 'validation_failed'],
@@ -331,9 +337,9 @@ describe('sync push and pull (ADR 0002)', () => {
     expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
     // Settings changed through the API reach the devices too (pull only).
     expect(new Set(all.changes.map((change) => change.entity))).toEqual(
-      new Set(['fabric', 'setting', 'sync_conflict']),
+      new Set(['product', 'setting', 'sync_conflict']),
     );
-    expect(all.changes.some((change) => (change.record as Fabric).voidedAt !== null)).toBe(true);
+    expect(all.changes.some((change) => (change.record as Product).voidedAt !== null)).toBe(true);
 
     const paged: number[] = [];
     let since = 0;

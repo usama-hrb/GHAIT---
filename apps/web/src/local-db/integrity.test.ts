@@ -5,6 +5,7 @@ import { ValidationError } from './errors';
 import { createRepositories, type Repositories } from './repositories';
 import { DEVICE_CODE } from './session';
 import { LocalStore } from './store';
+import { seedBatch, seedPartners, seedProduct } from './test-helpers';
 
 let db: ShopDatabase;
 let repos: Repositories;
@@ -26,10 +27,7 @@ afterEach(async () => {
 
 /** T13 (SPEC §16), entered through this device's repositories, offline. */
 async function t13(): Promise<{ expenseId: string }> {
-  await repos.partners.saveBoth({
-    owner: { name: 'أنا', ownershipBp: 5000 },
-    partner: { name: 'شريكي' },
-  });
+  await seedPartners(repos);
   const [owner, partner] = await repos.partners.list();
   if (!owner || !partner) throw new Error('two partners');
   for (const view of [owner, partner]) {
@@ -40,31 +38,24 @@ async function t13(): Promise<{ expenseId: string }> {
       date: '2026-10-01',
     });
   }
-  const fabricId = await repos.fabrics.save({
-    name: 'روزا',
-    refPricePerMeterCents: 2000,
-    minPricePerMeterCents: 1000,
-  });
-  const variantId = await repos.variants.save({ fabricId, colorName: 'أحمر' });
-  const purchaseId = await repos.purchases.create({
-    method: 'meter',
-    date: '2026-10-02',
-    pricePerMeterCents: 1600,
-    rolls: [{ variantId, lengthCm: 5000 }],
-  });
-  const [roll] = await repos.purchases.rollsOf(purchaseId);
-  if (!roll) throw new Error('a roll');
+  const batchId = await seedBatch(
+    repos,
+    await seedProduct(repos, { minPricePerMeterCents: 1000 }),
+    5000,
+    { date: '2026-10-02' },
+  );
   const sell = (date: string, customerId: string | null, paidCents: number) =>
     repos.sales.create({
       date,
       customerId,
       lines: [
         {
-          rollId: roll.id,
-          soldCm: 1000,
-          price: { perMeterCents: 2000 },
-          refPricePerMeterCents: 2000,
-          minPricePerMeterCents: 1000,
+          batchId: batchId,
+          unit: 'meter',
+          quantity: 1000,
+          price: { perUnitCents: 2000 },
+          refPriceCents: 2000,
+          minPriceCents: 1000,
         },
       ],
       paidCents,
@@ -84,11 +75,11 @@ async function t13(): Promise<{ expenseId: string }> {
     amountCents: dh(10),
     paidDate: '2026-10-12',
   });
-  await repos.inventory.record({
+  await repos.stock.act({
     type: 'loss',
-    rollId: roll.id,
+    batchId,
     date: '2026-10-15',
-    lengthCm: 30,
+    quantity: 30,
     reason: 'تلف',
   });
   await repos.partners.recordDraw(
@@ -109,11 +100,11 @@ describe('the integrity check on the device (BUILD_PROMPTS 4.4)', () => {
     await db.expenses.update(expenseId, { amountCents: dh(10) + 500 });
     expect(await repos.integrity.report()).toMatchObject({ ok: true });
 
-    // A roll whose cost no longer matches what was paid for it, edited straight in the
+    // A batch whose cost no longer matches what was paid for it, edited straight in the
     // device's database past the repositories: the check shows exactly that difference.
-    const [roll] = await db.rolls.toArray();
-    if (!roll) throw new Error('a roll');
-    await db.rolls.update(roll.id, { costTotalCents: roll.costTotalCents + 77 });
+    const [batch] = await db.productBatches.toArray();
+    if (!batch) throw new Error('a batch');
+    await db.productBatches.update(batch.id, { costTotalCents: batch.costTotalCents + 77 });
     expect(await repos.integrity.report()).toMatchObject({ ok: false, diffCents: 77 });
   });
 
@@ -174,6 +165,7 @@ describe('the integrity check on the device (BUILD_PROMPTS 4.4)', () => {
       ownerWeight: 1,
       partnerWeight: 1,
       shopWeight: 1,
+      partnerWeights: null,
       lockedAt: '2026-11-02T09:00:00.000Z',
     });
     await expect(

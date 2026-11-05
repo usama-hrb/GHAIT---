@@ -131,26 +131,15 @@ export function ReportsScreen() {
 
           <TabsContent value="products" className="grid gap-4">
             <ReportTable
-              title={t.byFabric}
-              file="sales-by-fabric"
-              rows={data.fabrics}
+              title={t.tabs.products}
+              file="sales-by-product"
+              rows={data.products}
               columns={[
-                { key: 'fabricName', label: c.fabric, kind: 'text' },
+                { key: 'productName', label: c.product, kind: 'text' },
                 { key: 'soldCm', label: c.sold, kind: 'meters' },
+                { key: 'soldPieces', label: c.pieces, kind: 'count' },
                 { key: 'revenueCents', label: c.revenue, kind: 'money' },
                 { key: 'costCents', label: c.cost, kind: 'money' },
-                { key: 'profitCents', label: c.profit, kind: 'money' },
-              ]}
-            />
-            <ReportTable
-              title={t.byColor}
-              file="sales-by-color"
-              rows={data.colors}
-              columns={[
-                { key: 'fabricName', label: c.fabric, kind: 'text' },
-                { key: 'colorName', label: c.color, kind: 'text' },
-                { key: 'soldCm', label: c.sold, kind: 'meters' },
-                { key: 'revenueCents', label: c.revenue, kind: 'money' },
                 { key: 'profitCents', label: c.profit, kind: 'money' },
               ]}
             />
@@ -162,9 +151,9 @@ export function ReportsScreen() {
               file="slow-moving"
               rows={data.slow}
               columns={[
-                { key: 'fabricName', label: c.fabric, kind: 'text' },
-                { key: 'colorName', label: c.color, kind: 'text' },
+                { key: 'productName', label: c.product, kind: 'text' },
                 { key: 'remainingCm', label: c.left, kind: 'meters' },
+                { key: 'remainingPieces', label: c.leftPieces, kind: 'count' },
                 { key: 'costCents', label: c.atCost, kind: 'money' },
                 { key: 'lastSale', label: c.lastSale, kind: 'date' },
                 { key: 'daysIdle', label: c.daysIdle, kind: 'days' },
@@ -181,7 +170,7 @@ export function ReportsScreen() {
                   'negotiation-by-customer',
                   data.byCustomer.map((row) => ({ ...row, name: row.name || t.walkIn })),
                 ],
-                [t.byFabric, 'negotiation-by-fabric', data.byFabric],
+                [t.byProduct, 'negotiation-by-product', data.byProduct],
               ] as const
             ).map(([title, file, rows]) => (
               <ReportTable
@@ -244,8 +233,9 @@ export function ReportsScreen() {
               file="stock-value"
               rows={data.stock}
               columns={[
-                { key: 'fabricName', label: c.fabric, kind: 'text' },
+                { key: 'productName', label: c.product, kind: 'text' },
                 { key: 'remainingCm', label: c.left, kind: 'meters' },
+                { key: 'remainingPieces', label: c.leftPieces, kind: 'count' },
                 { key: 'costCents', label: c.atCost, kind: 'money' },
                 { key: 'marketCents', label: c.atReference, kind: 'money' },
               ]}

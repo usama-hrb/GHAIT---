@@ -1,4 +1,9 @@
-import { type SupplierAccount, supplierAccount, supplierStatement } from '@fabric/core';
+import {
+  type SupplierAccount,
+  type SupplierAllocation,
+  supplierAccount,
+  supplierStatement,
+} from '@fabric/core';
 import { z } from 'zod';
 import { recordBaseSchema, storedSupplierSchema } from './catalog.js';
 import { amountCentsSchema, idSchema, isoDateSchema, optionalTextSchema } from './common.js';
@@ -53,8 +58,12 @@ export interface SupplierRecords {
   payments: readonly SupplierPayment[];
 }
 
+/** In the order they were recorded (by when, then by id), so same-day records read as they happened (SP6). */
+const recorded = <T extends { id: string; createdAt: string }>(records: readonly T[]): T[] =>
+  [...records].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+
 const accountInput = (supplierId: string, records: SupplierRecords) => ({
-  purchases: live(records.purchases)
+  purchases: recorded(live(records.purchases))
     .filter((purchase) => purchase.supplierId === supplierId)
     .map((purchase) => ({
       purchaseId: purchase.id,
@@ -62,7 +71,7 @@ const accountInput = (supplierId: string, records: SupplierRecords) => ({
       totalCents: purchase.totalCostCents,
       paidCents: purchase.paidCents,
     })),
-  payments: live(records.payments)
+  payments: recorded(live(records.payments))
     .filter((payment) => payment.supplierId === supplierId)
     .map((payment) => ({
       paymentId: payment.id,
@@ -105,6 +114,49 @@ export function checkSupplierPayment(
   return payment.amountCents > owed ? issue('amountCents', SUPPLIER_PAYMENT_ISSUES.aboveOwed) : [];
 }
 
+/** What a payment would do, before it is saved. */
+export interface SupplierPaymentPreview {
+  /** What the save would refuse it for (checkSupplierPayment); empty when it can be saved. */
+  issues: ValidationIssue[];
+  /** Where the payment would go (SP2): the purchases it settles, the oldest first after its own. */
+  allocations: SupplierAllocation[];
+  /** What the shop would owe the supplier after it. */
+  owedAfterCents: number;
+}
+
+/**
+ * The payment as the account will read it once saved: the same check and the same account
+ * (@fabric/core supplierAccount) as the save, so the form shows where the money goes and what is
+ * left without working anything out itself.
+ */
+export function previewSupplierPayment(
+  payment: Pick<SupplierPayment, 'id' | 'supplierId' | 'purchaseId' | 'amountCents' | 'date'>,
+  records: SupplierRecords,
+): SupplierPaymentPreview {
+  const issues = checkSupplierPayment(payment, records);
+  const others = accountInput(payment.supplierId, {
+    purchases: records.purchases,
+    payments: records.payments.filter((candidate) => candidate.id !== payment.id),
+  });
+  const after = supplierAccount({
+    purchases: others.purchases,
+    payments: [
+      ...others.payments,
+      {
+        paymentId: payment.id,
+        date: payment.date,
+        amountCents: payment.amountCents,
+        purchaseId: payment.purchaseId,
+      },
+    ],
+  });
+  return {
+    issues,
+    allocations: after.allocations.filter((part) => part.paymentId === payment.id),
+    owedAfterCents: after.owedCents,
+  };
+}
+
 /** A supplier payment is only created or voided, never edited. */
 export function checkSupplierPaymentUnchanged(
   current: SupplierPayment,
@@ -126,6 +178,11 @@ const accountSchema = z.object({
   balanceCents: z.int(),
   owedCents: z.int(),
   advanceCents: z.int(),
+  purchasesCents: z.int(),
+  paidCents: z.int(),
+  allocations: z.array(
+    z.object({ paymentId: idSchema, purchaseId: idSchema.nullable(), amountCents: z.int() }),
+  ),
   purchases: z.array(
     z.object({
       purchaseId: idSchema,

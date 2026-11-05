@@ -1,9 +1,12 @@
 import {
+  type BatchHistory,
   buildSaleReturn,
   buildSaleVoid,
   checkSaleAggregate,
+  checkSaleMinimums,
   checkSaleReturn,
   checkSaleVoid,
+  minimumOverrideIssues,
   type NewSaleReturn,
   type Sale,
   type SaleAggregate,
@@ -18,13 +21,15 @@ import {
   SERVER_DEVICE_ID,
   shopDate,
   type StoredSale,
+  type ValidationIssue,
 } from '@fabric/contracts';
 import { HttpStatus, Injectable, type OnModuleInit } from '@nestjs/common';
 import { AppHttpException, requestContext } from '../../common/index.js';
 import { AuditService } from '../audit/index.js';
-
-import { InventoryService } from '../inventory/index.js';
+import { AuthService } from '../auth/index.js';
+import { CatalogService } from '../catalog/index.js';
 import { ReceivablesService } from '../receivables/index.js';
+import { StockService } from '../stock/index.js';
 import {
   type SyncedRow,
   type SyncHandler,
@@ -43,8 +48,10 @@ const stored = <R>(row: SyncedRow<R>) => ({ ...row.record, serverSeq: row.server
 
 /**
  * Sales at the counter (SPEC §3, §4). A device sends one append op with the sale, its lines and
- * stock moves and the cash paid there; this prices it again on the server's view of the rolls
- * (checkSaleAggregate) and stores it atomically. A void is its own op (sale_void).
+ * stock moves and the cash paid there; this prices it again on the server's view of the batches
+ * (checkSaleAggregate), judges every line against its product's minimum price (a cashier never
+ * sells below it, the owner may after confirming) and stores it atomically. A void is its own
+ * op (sale_void).
  */
 @Injectable()
 export class SalesService implements OnModuleInit {
@@ -56,7 +63,9 @@ export class SalesService implements OnModuleInit {
     private readonly lines: SaleLineRepository,
     private readonly voids: SaleVoidRepository,
     private readonly returns: SaleReturnRepository,
-    private readonly inventory: InventoryService,
+    private readonly stock: StockService,
+    private readonly catalog: CatalogService,
+    private readonly auth: AuthService,
     private readonly receivables: ReceivablesService,
   ) {}
 
@@ -181,10 +190,10 @@ export class SalesService implements OnModuleInit {
     if (!sale) throw new AppHttpException('not_found', `No sale ${id}`, HttpStatus.NOT_FOUND);
     const lines = await this.lines.listBySale(id);
     const [moves, allocations, saleVoid, ledgers, writeOffs, returns] = await Promise.all([
-      this.inventory.movesOf(lines.map((line) => line.record.id)),
+      this.stock.movesOf(lines.map((line) => line.record.id)),
       this.receivables.allocationsOfSale(id),
       this.voids.findBySale(id),
-      this.inventory.ledgers(lines.map((line) => line.record.rollId)),
+      this.stock.ledgers(lines.map((line) => line.record.batchId)),
       this.receivables.writeOffsOfSales([id]),
       this.returns.listBySale(id),
     ]);
@@ -212,7 +221,7 @@ export class SalesService implements OnModuleInit {
     if (!sale) return undefined;
     const lines = await this.lines.listBySale(saleId);
     const [moves, allocations] = await Promise.all([
-      this.inventory.movesOf(lines.map((line) => line.record.id)),
+      this.stock.movesOf(lines.map((line) => line.record.id)),
       this.receivables.allocationsOfSale(saleId),
     ]);
     return {
@@ -229,7 +238,7 @@ export class SalesService implements OnModuleInit {
     if (!sale) return undefined;
     const lines = await this.lines.listBySale(saleId);
     const [moves, allocations, returns, writeOffs] = await Promise.all([
-      this.inventory.movesOf(lines.map((line) => line.record.id)),
+      this.stock.movesOf(lines.map((line) => line.record.id)),
       this.receivables.allocationsOfSale(saleId),
       this.returns.listBySale(saleId),
       this.receivables.writeOffsOfSales([saleId]),
@@ -255,21 +264,79 @@ export class SalesService implements OnModuleInit {
     if (sale.id !== context.entityId || sale.deviceId !== context.deviceId) {
       throw new SyncRejection('bad_request', 'The sale does not match the op (id or device)');
     }
-    const histories = await this.inventory.histories(aggregate.lines.map((line) => line.rollId));
-    const issues = checkSaleAggregate(aggregate, histories);
+    const histories = await this.stock.histories(aggregate.lines.map((line) => line.batchId));
+    const issues = [
+      ...checkSaleAggregate(aggregate, histories),
+      ...(await this.minimumPriceIssues(aggregate, histories)),
+    ];
     if (issues.length > 0) {
-      throw new SyncRejection('validation_failed', 'The sale does not match its rolls', issues);
+      throw new SyncRejection('validation_failed', 'The sale does not match its batches', issues);
     }
     const written = await this.sales.insert(sale);
     await this.lines.insertMany(aggregate.lines);
-    await this.inventory.insertMoves(aggregate.moves);
+    await this.stock.insertMoves(aggregate.moves);
     if (aggregate.payment) {
       await this.receivables.record(
         aggregate.payment,
         aggregate.allocation ? [aggregate.allocation] : [],
       );
     }
+    // Selling under the minimum price is the owner's decision: each such line is on the record
+    // with who confirmed it and the price it went at (ADR 0012).
+    for (const line of aggregate.lines) {
+      if (line.minOverrideBy === null) continue;
+      await this.audit.record({
+        entity: 'sale_line',
+        entityId: line.id,
+        action: 'create',
+        before: null,
+        after: {
+          saleId: sale.id,
+          batchId: line.batchId,
+          unit: line.unit,
+          quantity: line.quantity,
+          minPriceCents: line.minPriceCents,
+          appliedPriceCents: line.wholePiece ? line.lineTotalCents : line.actualPriceCents,
+          lineTotalCents: line.lineTotalCents,
+          minOverrideBy: line.minOverrideBy,
+        },
+        reason: 'sold under the minimum price',
+        deviceId: sale.deviceId,
+      });
+    }
     return written;
+  }
+
+  /**
+   * The minimum-price rules, against the product as the server has it: who may name an override
+   * (only the signed-in owner, never a cashier), and every line under its product's minimum
+   * without one (ADR 0012).
+   */
+  private async minimumPriceIssues(
+    aggregate: SaleAggregate,
+    histories: ReadonlyMap<string, BatchHistory>,
+  ): Promise<ValidationIssue[]> {
+    const issues: ValidationIssue[] = [];
+    const context = requestContext();
+    if (context?.actorRole && context.actorId) {
+      const { username } = await this.auth.me(context.actorId);
+      issues.push(...minimumOverrideIssues(aggregate.lines, { role: context.actorRole, username }));
+    }
+    const products = await this.catalog.productsByIds(
+      [...histories.values()].map((history) => history.batch.productId),
+    );
+    issues.push(
+      ...checkSaleMinimums(aggregate.lines, (batchId) => {
+        const product = products.get(histories.get(batchId)?.batch.productId ?? '');
+        return product
+          ? {
+              meter: product.minPricePerMeterCents ?? 0,
+              piece: product.minPricePerPieceCents ?? 0,
+            }
+          : undefined;
+      }),
+    );
+    return issues;
   }
 
   private async receiveVoid(
@@ -288,7 +355,7 @@ export class SalesService implements OnModuleInit {
     }
     if (aggregate.refund) await this.receivables.record(aggregate.refund, []);
     const written = await this.voids.insert(saleVoid);
-    await this.inventory.insertMoves(aggregate.reversals);
+    await this.stock.insertMoves(aggregate.reversals);
     const voided = await this.sales.markVoided(
       records.sale.id,
       new Date(saleVoid.createdAt),
@@ -322,7 +389,7 @@ export class SalesService implements OnModuleInit {
     }
     if (aggregate.refund) await this.receivables.record(aggregate.refund, []);
     const written = await this.returns.insert(saleReturn);
-    await this.inventory.insertMoves(aggregate.moves);
+    await this.stock.insertMoves(aggregate.moves);
     return written;
   }
 }

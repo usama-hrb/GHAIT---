@@ -11,7 +11,7 @@ function daysAgo(days: number): string {
 
 /** The two partners (set up once), and money in the shop: a contribution of 50 000 rial. */
 async function shopWithMoney(page: Page) {
-  await page.goto('/partners');
+  await page.goto('/settings/partners');
   const setup = page.getByLabel('اسم المالك');
   const ready = page.getByRole('region', { name: 'مال المحل حسب السجلات' });
   await expect(setup.or(ready)).toBeVisible();
@@ -53,7 +53,7 @@ test('zakat: settings, the hawl’s report saved and paid by the partners, remin
 
   // Reminded on the home screen until the hawl's report is saved.
   await page.goto('/home');
-  await expect(page.getByRole('region', { name: 'الزكاة' })).toContainText('حال الحول');
+  await expect(page.getByRole('link', { name: /حال الحول/ })).toBeVisible();
 
   // Offline: the base from this device's records; the report saves and syncs later.
   await page.context().setOffline(true);
@@ -86,5 +86,5 @@ test('zakat: settings, the hawl’s report saved and paid by the partners, remin
     })
     .toEqual([true, 2]);
   await page.goto('/home');
-  await expect(page.getByRole('region', { name: 'الزكاة' })).toBeHidden();
+  await expect(page.getByRole('link', { name: /حال الحول/ })).toBeHidden();
 });

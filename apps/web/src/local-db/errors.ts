@@ -48,3 +48,11 @@ export function isPeriodLocked(error: unknown): boolean {
     error.issues.some((issue) => issue.message === 'period_locked')
   );
 }
+
+/** The month's bill was already created from this template (E6): nothing is created twice. */
+export function isAlreadyCreated(error: unknown): boolean {
+  return (
+    error instanceof ValidationError &&
+    error.issues.some((issue) => issue.message === 'recurring_expense_already_created')
+  );
+}

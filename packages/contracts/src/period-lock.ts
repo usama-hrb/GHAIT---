@@ -13,6 +13,7 @@ type DatesOf = { [E in SyncEntity]?: (payload: SyncPushPayload<E>) => (string | 
 const DATES: DatesOf = {
   purchase: (aggregate) => [aggregate.purchase.date],
   stock_move: (move) => [move.date],
+  product_stock_move: (move) => [move.date],
   sale: (aggregate) => [aggregate.sale.date],
   sale_void: (aggregate) => [aggregate.saleVoid.date],
   sale_return: (aggregate) => [aggregate.saleReturn.date],

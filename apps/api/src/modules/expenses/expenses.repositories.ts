@@ -1,8 +1,8 @@
-import type { Expense, RecurringExpense } from '@fabric/contracts';
+import { checkSalaryPayment, type Expense, type RecurringExpense } from '@fabric/contracts';
 import { Injectable } from '@nestjs/common';
 import { and, asc, eq, gt, gte, isNull, lte, or } from 'drizzle-orm';
 import { baseOf, schema, TransactionHost } from '../../database/index.js';
-import type { SyncedRow, SyncHandler } from '../sync/index.js';
+import { type SyncedRow, type SyncHandler, SyncRejection } from '../sync/index.js';
 
 type ExpenseRow = typeof schema.expense.$inferSelect;
 
@@ -17,11 +17,16 @@ function expenseOf(row: ExpenseRow): SyncedRow<Expense> {
       paidDate: row.paidDate,
       note: row.note,
       recurringExpenseId: row.recurringExpenseId,
+      employeeId: row.employeeId,
+      salaryMonth: row.salaryMonth,
     },
   };
 }
 
-/** Expenses (SPEC §5): mutable, last write wins; voided, never deleted. */
+/**
+ * Expenses (SPEC §5): mutable, last write wins; voided, never deleted. One that carries an
+ * employee and a month is a salary payment (PY3): an ordinary expense that is also checked as one.
+ */
 @Injectable()
 export class ExpenseRepository implements SyncHandler<'expense'> {
   readonly entity = 'expense' as const;
@@ -34,6 +39,12 @@ export class ExpenseRepository implements SyncHandler<'expense'> {
   }
 
   async write(record: Expense): Promise<SyncedRow<Expense>> {
+    if (record.employeeId !== null || record.salaryMonth !== null) {
+      const issues = checkSalaryPayment(record, await this.employees());
+      if (issues.length > 0) {
+        throw new SyncRejection('validation_failed', 'Invalid salary payment', issues);
+      }
+    }
     const fields = {
       date: record.date,
       category: record.category,
@@ -41,6 +52,8 @@ export class ExpenseRepository implements SyncHandler<'expense'> {
       paidDate: record.paidDate,
       note: record.note,
       recurringExpenseId: record.recurringExpenseId,
+      employeeId: record.employeeId,
+      salaryMonth: record.salaryMonth,
       updatedAt: new Date(record.updatedAt),
       deviceId: record.deviceId,
     };
@@ -94,6 +107,18 @@ export class ExpenseRepository implements SyncHandler<'expense'> {
   async listAll(): Promise<SyncedRow<Expense>[]> {
     const rows = await this.tx.db.select().from(schema.expense);
     return rows.map(expenseOf);
+  }
+
+  /** The employees a salary payment may name (checkSalaryPayment). */
+  private async employees() {
+    const rows = await this.tx.db
+      .select({
+        id: schema.employee.id,
+        startDate: schema.employee.startDate,
+        voidedAt: schema.employee.voidedAt,
+      })
+      .from(schema.employee);
+    return rows.map((row) => ({ ...row, voidedAt: row.voidedAt?.toISOString() ?? null }));
   }
 }
 

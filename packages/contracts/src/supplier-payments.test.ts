@@ -6,6 +6,7 @@ import {
   integrityStateOf,
   newSupplierPaymentSchema,
   periodDatesOf,
+  previewSupplierPayment,
   supplierAccountOf,
   supplierPaymentSchema,
   supplierStatementOf,
@@ -20,7 +21,7 @@ const SUPPLIER = crypto.randomUUID();
 function owingShop() {
   const shop = new Shop();
   shop.contribute(OWNER, dh(1000));
-  const roll = shop.roll(dh(800), 5000, false, '2026-09-01', {
+  const roll = shop.batch(dh(800), 5000, false, '2026-09-01', {
     supplierId: SUPPLIER,
     owedCents: dh(500),
   });
@@ -30,6 +31,33 @@ function owingShop() {
 const recordsOf = (shop: Shop) => ({
   purchases: shop.records.purchases,
   payments: shop.records.supplierPayments,
+});
+
+describe('the statement of a supplier, same-day records (SP6)', () => {
+  it('lists payments of one day as they were recorded, not by id', () => {
+    const { shop } = owingShop();
+    shop.paySupplier(SUPPLIER, '2026-09-20', dh(200));
+    shop.paySupplier(SUPPLIER, '2026-09-20', dh(300));
+    const [first, second] = shop.records.supplierPayments;
+    if (!first || !second) throw new Error('two payments expected');
+    // Recorded in this order whatever their ids sort like, and handed over in the other order.
+    first.createdAt = '2026-09-20T09:00:00.000Z';
+    second.createdAt = '2026-09-20T10:00:00.000Z';
+    first.id = 'ffffffff-0000-4000-8000-000000000001';
+    second.id = '00000000-0000-4000-8000-000000000002';
+    const records = {
+      purchases: shop.records.purchases,
+      payments: [second, first],
+    };
+    const lines = supplierStatementOf(SUPPLIER, records).filter((line) => line.kind === 'payment');
+    expect(lines.map((line) => [line.refId, line.balanceCents])).toEqual([
+      [first.id, dh(300)],
+      [second.id, 0],
+    ]);
+    expect(supplierStatementOf(SUPPLIER, records).at(-1)?.balanceCents).toBe(
+      supplierAccountOf(SUPPLIER, records).balanceCents,
+    );
+  });
 });
 
 describe('what the shop owes a supplier (SP1–SP3)', () => {
@@ -101,6 +129,32 @@ describe('paying a supplier (SP3)', () => {
     expect(checkSupplierPayment(stored, recordsOf(shop))).toEqual([]);
   });
 
+  it('previews where a payment would go and what stays owed, with the same check as the save', () => {
+    const { shop, purchase } = owingShop();
+    const payment = (amountCents: number, purchaseId: string | null = null) => ({
+      id: crypto.randomUUID(),
+      supplierId: SUPPLIER,
+      purchaseId,
+      amountCents,
+      date: '2026-09-20',
+    });
+    const named = payment(dh(200), purchase?.id);
+    const part = previewSupplierPayment(named, recordsOf(shop));
+    expect(part).toMatchObject({ issues: [], owedAfterCents: dh(300) });
+    expect(part.allocations).toEqual([
+      { paymentId: named.id, purchaseId: purchase?.id, amountCents: dh(200) },
+    ]);
+    const all = previewSupplierPayment(payment(dh(500)), recordsOf(shop));
+    expect(all.owedAfterCents).toBe(0);
+    // Above what is owed: refused, and the preview says so.
+    const above = previewSupplierPayment(payment(dh(501)), recordsOf(shop));
+    expect(above.issues).toEqual([
+      { path: ['amountCents'], message: SUPPLIER_PAYMENT_ISSUES.aboveOwed, code: 'custom' },
+    ]);
+    // Nothing is saved by previewing it.
+    expect(shop.records.supplierPayments).toHaveLength(0);
+  });
+
   it('is created or voided, never edited', () => {
     const { shop } = owingShop();
     shop.paySupplier(SUPPLIER, '2026-09-20', dh(100));
@@ -157,7 +211,7 @@ describe('the books with supplier debts (SPEC §9, §10)', () => {
 
   it('the debt comes off the zakat base (SPEC §10)', () => {
     const { shop } = owingShop();
-    const names = { fabrics: [], variants: [], customers: [] };
+    const names = { products: [], customers: [] };
     const supplier = {
       ...base('2026-09-01'),
       id: SUPPLIER,

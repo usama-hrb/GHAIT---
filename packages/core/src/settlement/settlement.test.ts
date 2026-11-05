@@ -321,7 +321,7 @@ describe('computeSettlement (SPEC §8.1)', () => {
       'netProfitCents must be a safe integer',
     ],
     [{ splitRules: [] }, 'no split rule in effect on 2026-10-01'],
-    [{ partners: [OWNER] }, 'expected exactly two partners, got 1'],
+    [{ partners: [OWNER] }, 'expected an owner and at least one partner, got 1'],
   ] satisfies [Partial<SettlementInput>, string][])('rejects %j', (overrides, message) => {
     expect(() => computeSettlement(period(overrides))).toThrow(message);
   });
@@ -467,8 +467,12 @@ describe('splitByOwnership (SPEC §6, §8.1)', () => {
   });
 
   it.each([
-    [[OWNER], 'expected exactly two partners, got 1'],
-    [[OWNER, PARTNER, { ...PARTNER, partnerId: 'third' }], 'expected exactly two partners, got 3'],
+    [[OWNER], 'expected an owner and at least one partner, got 1'],
+    [[], 'expected an owner and at least one partner, got 0'],
+    [
+      [OWNER, PARTNER, { ...PARTNER, partnerId: 'third' }],
+      'ownership must add up to 10000 bp, got 15000',
+    ],
     [[OWNER, { ...PARTNER, isOwner: true }], 'exactly one partner must be the owner'],
     [[{ ...OWNER, isOwner: false }, PARTNER], 'exactly one partner must be the owner'],
     [[OWNER, { ...PARTNER, partnerId: 'owner' }], 'partner ids must differ'],

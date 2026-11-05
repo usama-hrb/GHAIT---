@@ -31,6 +31,7 @@ function ruleOf(row: RuleRow): SyncedRow<SplitRule> {
       ownerWeight: row.ownerWeight,
       partnerWeight: row.partnerWeight,
       shopWeight: row.shopWeight,
+      partnerWeights: row.partnerWeights,
     },
   };
 }
@@ -55,6 +56,7 @@ export class SplitRuleRepository implements SyncHandler<'profit_split_rule'> {
     const issues = checkSplitRule(record, current?.record, {
       today: shopDate(new Date()),
       rules: (await this.listAll()).map((row) => row.record),
+      partners: await this.partners(),
     });
     if (issues.length > 0)
       throw new SyncRejection('validation_failed', 'Invalid split rule', issues);
@@ -63,6 +65,7 @@ export class SplitRuleRepository implements SyncHandler<'profit_split_rule'> {
       ownerWeight: record.ownerWeight,
       partnerWeight: record.partnerWeight,
       shopWeight: record.shopWeight,
+      partnerWeights: record.partnerWeights,
       updatedAt: new Date(record.updatedAt),
       deviceId: record.deviceId,
     };
@@ -106,6 +109,18 @@ export class SplitRuleRepository implements SyncHandler<'profit_split_rule'> {
       .from(schema.profitSplitRule)
       .orderBy(asc(schema.profitSplitRule.effectiveFrom));
     return rows.map(ruleOf);
+  }
+
+  /** The partners a rule may name: a rule's weights are checked against who is in the shop (S17). */
+  private async partners() {
+    const rows = await this.tx.db
+      .select({
+        id: schema.partner.id,
+        isOwner: schema.partner.isOwner,
+        voidedAt: schema.partner.voidedAt,
+      })
+      .from(schema.partner);
+    return rows.map((row) => ({ ...row, voidedAt: row.voidedAt?.toISOString() ?? null }));
   }
 }
 

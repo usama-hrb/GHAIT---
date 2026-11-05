@@ -12,10 +12,13 @@ export const EXPORT_ENTITIES = [
   'supplier',
   'fabric',
   'variant',
+  'product',
   'photo',
   'purchase',
   'roll',
   'stock_move',
+  'product_batch',
+  'product_stock_move',
   'supplier_payment',
   'customer',
   'sale',
@@ -25,6 +28,9 @@ export const EXPORT_ENTITIES = [
   'sale_void',
   'sale_return',
   'write_off',
+  // Employees come before the expenses that pay them (expense.employee_id is a foreign key).
+  'employee',
+  'employee_salary',
   'recurring_expense',
   'expense',
   'cash_adjustment',
@@ -63,3 +69,41 @@ export const dataExportSchema = z.object({
 });
 export type DataExport = z.output<typeof dataExportSchema>;
 export type DataExportInput = z.input<typeof dataExportSchema>;
+
+type Loose = Record<string, unknown>;
+const isRecord = (value: unknown): value is Loose =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/**
+ * An export written before product batches (ADR 0012) has its sale lines on rolls. This gives
+ * them the shape they have now: the roll is the batch (they share an id), the length sold is the
+ * quantity in meters and the per-meter prices are the prices. Anything else passes through; the
+ * rolls and moves of an old export become batches when it is imported (the stock backfill).
+ */
+export function upgradeLegacyExport(file: unknown): unknown {
+  if (!isRecord(file) || !isRecord(file.records)) return file;
+  const lines = file.records.sale_line;
+  if (!Array.isArray(lines)) return file;
+  const upgraded = lines.map((line: unknown) => {
+    if (!isRecord(line) || line.batchId !== undefined || line.rollId === undefined) return line;
+    const {
+      rollId,
+      soldCm,
+      refPricePerMeterCents,
+      minPricePerMeterCents,
+      actualPricePerMeterCents,
+      ...rest
+    } = line;
+    return {
+      ...rest,
+      batchId: rollId,
+      unit: 'meter',
+      quantity: soldCm,
+      refPriceCents: refPricePerMeterCents,
+      minPriceCents: minPricePerMeterCents,
+      actualPriceCents: actualPricePerMeterCents,
+      minOverrideBy: null,
+    };
+  });
+  return { ...file, records: { ...file.records, sale_line: upgraded } };
+}

@@ -195,3 +195,37 @@ describe('format → parse round trip', () => {
     expect(isCents(2 ** 53)).toBe(false);
   });
 });
+
+describe('switching the display unit between rial and dirham (ADR 0017)', () => {
+  const cents = fc.integer({ min: -1_000_000_000_000, max: 1_000_000_000_000 });
+  const typed = (value: number, unit: 'rial' | 'dirham') =>
+    formatMoneyAmount(value, unit, { grouping: false });
+
+  it('is a relabel: the same cents read back in either unit', () => {
+    fc.assert(
+      fc.property(cents, (value) => {
+        const rial = parseMoneyInput(typed(value, 'rial'), 'rial', { allowNegative: true });
+        const dirham = parseMoneyInput(typed(value, 'dirham'), 'dirham', { allowNegative: true });
+        expect(rial).toEqual({ ok: true, value });
+        expect(dirham).toEqual(rial);
+      }),
+    );
+  });
+
+  it('shows the same amount in both units without losing a cent or inventing one', () => {
+    // 1 cent is 0.2 rial and 0.01 dirham; 99.95 dh is 1,999 rial: no rounding in either.
+    expect(fromRial(20)).toBe(fromDirham(1));
+    expect(formatMoneyAmount(1, 'rial')).toBe('0.2');
+    expect(formatMoneyAmount(1, 'dirham')).toBe('0.01');
+    expect(formatMoneyAmount(9995, 'rial')).toBe('1,999');
+    expect(formatMoneyAmount(9995, 'dirham')).toBe('99.95');
+    expect(formatMoneyAmount(0, 'rial')).toBe('0');
+    expect(formatMoneyAmount(0, 'dirham')).toBe('0');
+  });
+
+  it('refuses typing what the unit cannot hold instead of rounding it', () => {
+    // Half a rial is 2.5 cents; a third of a cent is nothing a shop can pay.
+    expect(parseMoneyInput('0.5', 'rial')).toEqual({ ok: false, error: 'not_exact' });
+    expect(parseMoneyInput('0.001', 'dirham').ok).toBe(false);
+  });
+});

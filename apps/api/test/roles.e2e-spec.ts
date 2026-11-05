@@ -1,14 +1,12 @@
 import {
   accessTokenResponseSchema,
   ACCESS_ISSUES,
-  buildPurchaseAggregate,
+  type BatchHistory,
+  type ProductBatch,
   buildSaleAggregate,
   errorResponseSchema,
   HEADERS,
   newSaleSchema,
-  type Roll,
-  rollCode,
-  rollDetailSchema,
   saleDetailSchema,
   SALE_ISSUES,
   type SyncEntity,
@@ -20,51 +18,52 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AuthService } from '../src/modules/auth/index.js';
 import { createTestApp, type Session, type TestApp } from './support/app.js';
+import { stockKit } from './support/stock.js';
 
 describe('roles: a cashier sells and never sees a cost or a profit (BUILD_PROMPTS 5.3, RL1–RL5)', () => {
   let t: TestApp;
   let owner: Session;
   let cashierToken = '';
-  let roll: Roll;
-  const variantId = crypto.randomUUID();
+  let kit: ReturnType<typeof stockKit>;
+  /** 50 m at 16 dh/m of a product that may go down to 10 dh/m: under cost is possible. */
+  let roll: ProductBatch;
+  /** 50 m of a product with a 17 dh/m minimum. */
+  let guarded: ProductBatch;
   const customerId = crypto.randomUUID();
 
   beforeAll(async () => {
     t = await createTestApp();
     owner = await t.login();
-    const fabricId = crypto.randomUUID();
-    await asOwner(t.http().put(`/fabrics/${fabricId}`))
-      .send({ name: 'روزا', refPricePerMeterCents: 2000, minPricePerMeterCents: 1700 })
-      .expect(200);
-    await asOwner(t.http().put(`/variants/${variantId}`))
-      .send({ fabricId, colorName: 'أحمر' })
-      .expect(200);
+    kit = stockKit(
+      t,
+      () => owner,
+      async (...ops) => pushAs(asOwner, 'desk', ...ops),
+    );
     await asOwner(t.http().put(`/customers/${customerId}`))
       .send({ name: 'فاطمة' })
       .expect(200);
-    const aggregate = buildPurchaseAggregate(
-      {
-        method: 'meter',
-        date: '2026-10-01',
-        supplierId: null,
-        notes: null,
-        pricePerMeterCents: 1600,
-        rolls: [{ variantId, lengthCm: 5000 }],
-      },
-      {
-        purchaseId: crypto.randomUUID(),
-        rollIds: [crypto.randomUUID()],
-        moveIds: [crypto.randomUUID()],
-        shortCodes: [rollCode('A', 1)],
-      },
-      { deviceId: 'desk', now: new Date().toISOString() },
-    );
-    await asOwner(t.http().post('/purchases')).send(aggregate).expect(201);
-    const [first] = aggregate.rolls;
-    if (!first) throw new Error('no roll');
-    roll = first;
+    roll = await kit.buy({
+      productId: await kit.product({ minPricePerMeterCents: 1000 }),
+      date: '2026-10-01',
+      quantity: 5000,
+      totalCostCents: 80_000,
+    });
+    guarded = await kit.buy({
+      productId: await kit.product({ name: 'محمي' }),
+      date: '2026-10-01',
+      quantity: 5000,
+      totalCostCents: 80_000,
+    });
     await asOwner(t.http().put(`/expenses/${crypto.randomUUID()}`))
       .send({ date: '2026-10-02', category: 'rent', amountCents: 5000, paidDate: '2026-10-02' })
+      .expect(200);
+    // A colleague's pay is the owner's business: it must never reach the till (PY5).
+    const employeeId = crypto.randomUUID();
+    await asOwner(t.http().put(`/employees/${employeeId}`))
+      .send({ name: 'يوسف', startDate: '2026-01-01' })
+      .expect(200);
+    await asOwner(t.http().put(`/employee-salaries/${crypto.randomUUID()}`))
+      .send({ employeeId, effectiveFrom: '2026-01-01', amountCents: 300_000 })
       .expect(200);
 
     await t.app.get(AuthService).setCashierUser({
@@ -125,12 +124,13 @@ describe('roles: a cashier sells and never sees a cost or a profit (BUILD_PROMPT
     await asCashier(t.http().post('/devices/register')).expect(200);
     const refused: [string, string][] = [
       ['get', '/fabrics'],
-      ['get', `/rolls/${roll.id}`],
+      ['get', `/batches/${roll.id}`],
       ['get', '/purchases'],
       ['get', '/sales'],
       ['get', '/customers'],
       ['get', '/expenses'],
       ['get', '/partners'],
+      ['get', '/employees'],
       ['get', '/integrity'],
       ['get', '/settlements'],
       ['get', '/zakat/reports'],
@@ -150,7 +150,7 @@ describe('roles: a cashier sells and never sees a cost or a profit (BUILD_PROMPT
     await t.http().get('/fabrics').expect(401);
   });
 
-  it('a pull carries no cost: the roll’s cost is zero, and nothing about buying or the partners', async () => {
+  it('a pull carries no cost: the batch’s cost is zero, and nothing about buying or the partners', async () => {
     const forCashier = await pullAs(asCashier);
     const entities = new Set<SyncEntity>(forCashier.changes.map((change) => change.entity));
     for (const hidden of [
@@ -158,35 +158,43 @@ describe('roles: a cashier sells and never sees a cost or a profit (BUILD_PROMPT
       'supplier',
       'expense',
       'partner',
+      'employee',
+      'employee_salary',
       'settlement',
       'capital_move',
       'zakat_report',
+      // The rolls the stock was kept on before batches are history the till is not sent.
+      'fabric',
+      'variant',
+      'roll',
+      'stock_move',
     ] as const) {
       expect(entities.has(hidden), hidden).toBe(false);
     }
     expect(entities).toEqual(
       new Set(
-        ['fabric', 'variant', 'customer', 'roll', 'stock_move', 'setting'].filter((e) =>
+        ['product', 'product_batch', 'product_stock_move', 'customer', 'setting'].filter((e) =>
           entities.has(e as SyncEntity),
         ),
       ),
     );
-    const rolls = forCashier.changes.filter((change) => change.entity === 'roll');
-    expect(rolls).toHaveLength(1);
-    expect(rolls[0]?.record).toMatchObject({
-      id: roll.id,
-      costTotalCents: 0,
-      lengthCmInitial: 5000,
-    });
+    const batches = forCashier.changes.filter((change) => change.entity === 'product_batch');
+    expect(batches).toHaveLength(2);
+    expect(
+      batches.find((change) => (change.record as { id: string }).id === roll.id)?.record,
+    ).toMatchObject({ id: roll.id, costTotalCents: 0, receivedQuantity: 5000 });
     const everything = JSON.stringify(forCashier.changes);
     expect(everything).not.toContain('"totalCostCents"');
     expect(everything).not.toContain('80000');
 
     // The owner's device gets all of it.
     const forOwner = await pullAs(asOwner);
-    expect(forOwner.changes.find((change) => change.entity === 'roll')?.record).toMatchObject({
-      costTotalCents: 80_000,
-    });
+    expect(
+      forOwner.changes.find(
+        (change) =>
+          change.entity === 'product_batch' && (change.record as { id: string }).id === roll.id,
+      )?.record,
+    ).toMatchObject({ costTotalCents: 80_000 });
     expect(forOwner.changes.some((change) => change.entity === 'purchase')).toBe(true);
     expect(forOwner.changes.some((change) => change.entity === 'expense')).toBe(true);
   });
@@ -201,7 +209,7 @@ describe('roles: a cashier sells and never sees a cost or a profit (BUILD_PROMPT
       if (!page.hasMore) break;
       expect(pages).toBeLessThan(49);
     }
-    expect(seen.has('roll')).toBe(true);
+    expect(seen.has('product_batch')).toBe(true);
     expect(seen.has('purchase')).toBe(false);
   });
 
@@ -215,29 +223,63 @@ describe('roles: a cashier sells and never sees a cost or a profit (BUILD_PROMPT
     expect(keys).not.toContain('zakat_reminder_days');
   });
 
-  async function saleBody(perMeterCents: number, confirmedBelowCost = false) {
-    // The cashier's device builds the sale from what it was sent: the roll without its cost.
-    const detail = rollDetailSchema.parse(
-      (await asOwner(t.http().get(`/rolls/${roll.id}`)).expect(200)).body,
+  it('the shop’s logo is sent to the till, and only the owner can change it', async () => {
+    const logo = {
+      contentType: 'image/jpeg',
+      width: 120,
+      height: 120,
+      byteLength: 6,
+      data: '/9j/AAAA',
+    };
+    await asOwner(t.http().put('/settings/shop_logo')).send({ value: logo }).expect(200);
+    const change = (await pullAs(asCashier)).changes.find(
+      (candidate) =>
+        candidate.entity === 'setting' && (candidate.record as { key: string }).key === 'shop_logo',
     );
-    const redacted = { ...detail.roll, costTotalCents: 0 };
+    expect((change?.record as { value: unknown } | undefined)?.value).toEqual(logo);
+    expect(
+      (await asCashier(t.http().put('/settings/shop_logo')).send({ value: null })).status,
+    ).toBe(403);
+  });
+
+  /**
+   * The cashier's device builds the sale from what it was sent: the batch without its cost.
+   * `minPriceCents` is what the till has on the line (the product's, unless it is lying).
+   */
+  async function saleBody(
+    perMeterCents: number,
+    options: {
+      confirmedBelowCost?: boolean;
+      batch?: ProductBatch;
+      minPriceCents?: number;
+      minOverrideBy?: string | null;
+    } = {},
+  ) {
+    const target = options.batch ?? roll;
+    const stock = await kit.history(target.id);
+    const history: BatchHistory = {
+      batch: { ...stock.batch, costTotalCents: 0 },
+      moves: stock.moves,
+    };
     const built = buildSaleAggregate(
       newSaleSchema.parse({
         date: '2026-10-30',
         customerId: null,
         lines: [
           {
-            rollId: roll.id,
-            soldCm: 100,
-            price: { perMeterCents },
-            refPricePerMeterCents: 2000,
-            minPricePerMeterCents: 1700,
+            batchId: target.id,
+            unit: 'meter',
+            quantity: 100,
+            price: { perUnitCents: perMeterCents },
+            refPriceCents: 2000,
+            minPriceCents: options.minPriceCents ?? (options.batch ? 1700 : 1000),
+            minOverrideBy: options.minOverrideBy ?? null,
           },
         ],
         paidCents: perMeterCents,
-        confirmedBelowCost,
+        confirmedBelowCost: options.confirmedBelowCost ?? false,
       }),
-      new Map([[roll.id, { roll: redacted, moves: detail.moves }]]),
+      new Map([[target.id, history]]),
       {
         saleId: crypto.randomUUID(),
         lineIds: [crypto.randomUUID()],
@@ -251,15 +293,17 @@ describe('roles: a cashier sells and never sees a cost or a profit (BUILD_PROMPT
     return built.aggregate;
   }
 
+  const saleOp = (aggregate: Awaited<ReturnType<typeof saleBody>>) => ({
+    entity: 'sale' as const,
+    entityId: aggregate.sale.id,
+    kind: 'append' as const,
+    payload: aggregate,
+    baseServerSeq: null,
+  });
+
   it('a cashier’s sale is accepted, priced again on the server with the real costs', async () => {
     const aggregate = await saleBody(1800);
-    const [result] = await pushAs(asCashier, 'till', {
-      entity: 'sale',
-      entityId: aggregate.sale.id,
-      kind: 'append',
-      payload: aggregate,
-      baseServerSeq: null,
-    });
+    const [result] = await pushAs(asCashier, 'till', saleOp(aggregate));
     expect(result?.status).toBe('applied');
     // The owner sees what the sale earned; the cashier is never sent it.
     const figures = saleDetailSchema.parse(
@@ -282,7 +326,7 @@ describe('roles: a cashier sells and never sees a cost or a profit (BUILD_PROMPT
     expect(refused?.error?.issues?.[0]?.message).toBe(SALE_ISSUES.belowCostUnconfirmed);
 
     // Confirming it is the owner's decision.
-    const confirmed = await saleBody(1400, true);
+    const confirmed = await saleBody(1400, { confirmedBelowCost: true });
     const [forbidden] = await pushAs(asCashier, 'till', {
       entity: 'sale',
       entityId: confirmed.sale.id,
@@ -294,12 +338,12 @@ describe('roles: a cashier sells and never sees a cost or a profit (BUILD_PROMPT
     expect(forbidden?.error?.issues?.[0]?.message).toBe(ACCESS_ISSUES.belowCostByCashier);
   });
 
-  it('everything else a cashier pushes is refused: purchases, rolls, expenses, voids, refunds', async () => {
+  it('everything else a cashier pushes is refused: purchases, batches, expenses, voids, refunds', async () => {
     const now = new Date().toISOString();
     const base = { createdAt: now, updatedAt: now, deviceId: 'till', voidedAt: null };
     const attempts: Omit<SyncOp, 'opId' | 'deviceId' | 'clientTs'>[] = [
       {
-        entity: 'roll',
+        entity: 'product_batch',
         entityId: roll.id,
         kind: 'upsert',
         payload: { ...roll, costTotalCents: 0, deviceId: 'till' },
@@ -346,11 +390,32 @@ describe('roles: a cashier sells and never sees a cost or a profit (BUILD_PROMPT
       ['rejected', 'forbidden'],
       ['rejected', 'forbidden'],
     ]);
-    // The roll still costs what it did.
-    const roll80 = rollDetailSchema.parse(
-      (await asOwner(t.http().get(`/rolls/${roll.id}`)).expect(200)).body,
-    );
-    expect(roll80.roll.costTotalCents).toBe(80_000);
+    // The batch still costs what it did.
+    expect((await kit.detail(roll.id)).batch.costTotalCents).toBe(80_000);
+  });
+
+  it('a cashier never sells under the minimum price: the till refuses it, and so does the server (ADR 0012)', async () => {
+    // The till has the product's minimum on the line and will not build a sale under it.
+    await expect(saleBody(1650, { batch: guarded })).rejects.toThrow(SALE_ISSUES.belowMinimum);
+
+    // A till that drops the minimum from the line (stale, or not honest) is judged by the server
+    // against the product: 16.50 under 17 is refused.
+    const hidden = await saleBody(1650, { batch: guarded, minPriceCents: 0 });
+    const [refused] = await pushAs(asCashier, 'till', saleOp(hidden));
+    expect(refused).toMatchObject({ status: 'rejected', error: { code: 'validation_failed' } });
+    expect(refused?.error?.issues?.[0]?.message).toBe(SALE_ISSUES.belowMinimum);
+
+    // An override is the owner's: a cashier's sale cannot carry one, whatever name it gives.
+    const overridden = await saleBody(1650, { batch: guarded, minOverrideBy: 'owner' });
+    const [forbidden] = await pushAs(asCashier, 'till', saleOp(overridden));
+    expect(forbidden).toMatchObject({ status: 'rejected', error: { code: 'forbidden' } });
+    expect(forbidden?.error?.issues?.[0]?.message).toBe(ACCESS_ISSUES.belowMinimumByCashier);
+    expect(await kit.remaining(guarded.id)).toBe(5000);
+
+    // The same price goes through for the owner, who confirms it.
+    const [applied] = await pushAs(asOwner, 'till', saleOp(overridden));
+    expect(applied?.status).toBe('applied');
+    expect(await kit.remaining(guarded.id)).toBe(4900);
   });
 
   it('a cashier may add a customer', async () => {

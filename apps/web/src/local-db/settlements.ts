@@ -4,8 +4,11 @@ import {
   checkSplitRuleVoid,
   DEFAULT_SPLIT_RULE,
   lockedThroughOf,
+  type NamedSplitRule,
   type Partner,
+  partnerWeightsOfRule,
   previewSettlement,
+  ruleWithPartnerWeight,
   type SettlementLine,
   type SettlementPreview,
   type SettlementPreviewResult,
@@ -16,9 +19,10 @@ import {
   type SplitRule,
   type SplitRuleInput,
   splitRuleInputSchema,
+  type SplitRulePartnerWeight,
   splitRuleSchema,
 } from '@fabric/contracts';
-import { monthBounds, previousMonth } from '@fabric/core';
+import { dayAfter, monthBounds, monthOf, nextMonth, previousMonth } from '@fabric/core';
 import { shopToday } from '@/shared/lib/dates';
 import type { Local } from './db';
 import { parseOrThrow, ValidationError } from './errors';
@@ -49,6 +53,17 @@ class SplitRuleTable extends SyncedTable<SplitRule> {
   }
 }
 
+/** One partner's allocation by a settlement (what the history lists). */
+export interface HistoryShare {
+  partnerId: string;
+  /** Null when the partner's record is not on this device. */
+  name: string | null;
+  amountCents: number;
+}
+
+/** A settlement of the history: its record, and the partners' shares it allocated. */
+export type SettlementHistoryRow = Local<SettlementRecord> & { partnerShares: HistoryShare[] };
+
 export interface SettlementView {
   settlement: Local<SettlementRecord>;
   /** Each partner's share, with their name. */
@@ -63,10 +78,37 @@ export interface SplitRuleRow {
   rule: Local<SplitRule> | null;
   effectiveFrom: string;
   ownerWeight: number;
+  /** The partners together. */
   partnerWeight: number;
   shopWeight: number;
+  /**
+   * What each partner gets under the rule (S17). A rule that names none (the default, and any
+   * made before there were several partners) is the shop's first partner's.
+   */
+  partnerWeights: SplitRulePartnerWeight[];
   /** Not in effect yet: it can still be changed or removed. */
   future: boolean;
+}
+
+/**
+ * The period ends the owner can pick from: the last day of each month that has ended since the
+ * last settled day, the oldest first (S7: a period starts the day after the last settlement, so
+ * picking a later month settles the months before it too). With nothing settled yet the first
+ * period takes everything before it, so only the last ended month is offered. `[]` when every
+ * ended month is settled.
+ */
+export function openPeriodEnds(lockedThrough: string | null, today: string, limit = 24): string[] {
+  const lastEnded = monthBounds(previousMonth(monthOf(today))).end;
+  if (lockedThrough === null) return [lastEnded];
+  const ends: string[] = [];
+  let month = monthOf(dayAfter(lockedThrough));
+  while (ends.length < limit) {
+    const { end } = monthBounds(month);
+    if (end > lastEnded) break;
+    ends.push(end);
+    month = nextMonth(month);
+  }
+  return ends;
 }
 
 /**
@@ -89,12 +131,42 @@ export class SettlementsRepository {
     return lockedThroughOf(await this.store.db.settlements.toArray());
   }
 
-  /** Every settlement, the latest period first (unlocked ones included). */
-  async history(): Promise<Local<SettlementRecord>[]> {
-    const settlements = await this.store.db.settlements.toArray();
-    return settlements.sort(
-      (a, b) => b.periodEnd.localeCompare(a.periodEnd) || b.createdAt.localeCompare(a.createdAt),
-    );
+  /**
+   * Every settlement, the latest period first (unlocked ones included), with what each partner
+   * (the owner apart: their share is on the settlement) was allocated by it.
+   */
+  async history(): Promise<SettlementHistoryRow[]> {
+    const { db } = this.store;
+    const [settlements, shares, partners] = await Promise.all([
+      db.settlements.toArray(),
+      db.settlementShares.toArray(),
+      db.partners.toArray(),
+    ]);
+    const partnerOf = new Map(partners.map((partner) => [partner.id, partner]));
+    const joined = (id: string) => partnerOf.get(id)?.createdAt ?? '';
+    return settlements
+      .sort(
+        (a, b) => b.periodEnd.localeCompare(a.periodEnd) || b.createdAt.localeCompare(a.createdAt),
+      )
+      .map((settlement) => ({
+        ...settlement,
+        partnerShares: shares
+          .filter(
+            (share) =>
+              share.settlementId === settlement.id &&
+              partnerOf.get(share.partnerId)?.isOwner !== true,
+          )
+          .sort(
+            (a, b) =>
+              joined(a.partnerId).localeCompare(joined(b.partnerId)) ||
+              a.partnerId.localeCompare(b.partnerId),
+          )
+          .map((share) => ({
+            partnerId: share.partnerId,
+            name: partnerOf.get(share.partnerId)?.name ?? null,
+            amountCents: share.amountCents,
+          })),
+      }));
   }
 
   async detail(id: string): Promise<SettlementView | undefined> {
@@ -122,18 +194,21 @@ export class SettlementsRepository {
     };
   }
 
-  /** The period end to propose: last month's end, unless it is settled already (then null). */
+  /** The month ends that can be settled now, the oldest first (`openPeriodEnds`). */
+  async openPeriodEnds(): Promise<string[]> {
+    return openPeriodEnds(await this.lockedThrough(), shopToday(this.store.now()));
+  }
+
+  /** The period end to propose: the oldest open month's end (null when all are settled). */
   async nextPeriodEnd(): Promise<string | null> {
-    const lastMonthEnd = monthBounds(previousMonth(shopToday(this.store.now()).slice(0, 7))).end;
-    const through = await this.lockedThrough();
-    return through === null || lastMonthEnd > through ? lastMonthEnd : null;
+    return (await this.openPeriodEnds())[0] ?? null;
   }
 
   /** The period ending on `periodEnd`, from this device's records. */
   async preview(periodEnd: string): Promise<SettlementPreviewResult> {
     const { db } = this.store;
     const [
-      rolls,
+      batches,
       stockMoves,
       sales,
       saleLines,
@@ -147,8 +222,8 @@ export class SettlementsRepository {
       splitRules,
       partners,
     ] = await Promise.all([
-      db.rolls.toArray(),
-      db.stockMoves.toArray(),
+      db.productBatches.toArray(),
+      db.productStockMoves.toArray(),
       db.sales.toArray(),
       db.saleLines.toArray(),
       db.saleReturns.toArray(),
@@ -163,7 +238,7 @@ export class SettlementsRepository {
     ]);
     return previewSettlement(
       {
-        rolls,
+        batches,
         stockMoves,
         sales,
         saleLines,
@@ -217,17 +292,25 @@ export class SettlementsRepository {
   /** The split rules: the default first, then the entered ones by date. */
   async splitRules(): Promise<SplitRuleRow[]> {
     const today = shopToday(this.store.now());
+    const partners = await this.store.db.partners.toArray();
     const rules = (await this.store.db.profitSplitRules.toArray())
       .filter((rule) => rule.voidedAt === null)
       .sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+    const unnamed = { partnerWeights: null };
     return [
-      { rule: null, ...DEFAULT_SPLIT_RULE, future: false },
+      {
+        rule: null,
+        ...DEFAULT_SPLIT_RULE,
+        partnerWeights: partnerWeightsOfRule({ ...DEFAULT_SPLIT_RULE, ...unnamed }, partners),
+        future: false,
+      },
       ...rules.map((rule) => ({
         rule,
         effectiveFrom: rule.effectiveFrom,
         ownerWeight: rule.ownerWeight,
         partnerWeight: rule.partnerWeight,
         shopWeight: rule.shopWeight,
+        partnerWeights: partnerWeightsOfRule(rule, partners),
         future: rule.effectiveFrom > today,
       })),
     ];
@@ -240,10 +323,50 @@ export class SettlementsRepository {
     const issues = checkSplitRule(
       { id, ...fields },
       rules.find((rule) => rule.id === id),
-      { today: shopToday(this.store.now()), rules },
+      {
+        today: shopToday(this.store.now()),
+        rules,
+        partners: await this.store.db.partners.toArray(),
+      },
     );
     if (issues.length > 0) throw new ValidationError(issues);
     return this.rules.save(fields, id);
+  }
+
+  /**
+   * The rule that gives one partner a weight in the profit split from a future date (S17): the
+   * rule in force that day with this partner's weight added or changed, every other weight as it
+   * stands. `id` is the rule already entered for that very day, which is changed in place (one
+   * rule per day, S15); null for a new one. Nothing is saved: this is what the screens show.
+   */
+  async previewPartnerWeight(input: {
+    partnerId: string;
+    weight: number;
+    effectiveFrom: string;
+  }): Promise<{ id: string | null; rule: NamedSplitRule }> {
+    const { db } = this.store;
+    const [rules, partners] = await Promise.all([
+      db.profitSplitRules.toArray(),
+      db.partners.toArray(),
+    ]);
+    return ruleWithPartnerWeight(
+      rules.filter((current) => current.voidedAt === null),
+      partners,
+      input,
+    );
+  }
+
+  /**
+   * Saves what previewPartnerWeight shows. Rules after that day are left alone: the owner sees
+   * which of them leave the partner out and decides.
+   */
+  async setPartnerWeight(input: {
+    partnerId: string;
+    weight: number;
+    effectiveFrom: string;
+  }): Promise<string> {
+    const { id, rule } = await this.previewPartnerWeight(input);
+    return this.saveSplitRule(rule, id ?? undefined);
   }
 
   async voidSplitRule(id: string, reason: string): Promise<void> {

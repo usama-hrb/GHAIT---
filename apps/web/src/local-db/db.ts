@@ -2,14 +2,19 @@ import type {
   CapitalMove,
   CashAdjustment,
   Customer,
+  Employee,
+  EmployeeSalary,
   Expense,
   Fabric,
   LockedCost,
   Partner,
   PartnerDraw,
   Payment,
+  Product,
   Photo,
   PaymentAllocation,
+  ProductBatch,
+  ProductStockMove,
   Purchase,
   RecurringExpense,
   Roll,
@@ -32,6 +37,7 @@ import type {
   ZakatReport,
 } from '@fabric/contracts';
 import { Dexie, type EntityTable } from 'dexie';
+import { upgradeToBatches, upgradeToPeople } from './upgrade';
 
 /** A synced record on the device, with the server_seq of the version it was last synced at. */
 export type Local<R> = R & {
@@ -60,9 +66,14 @@ export interface MetaEntry {
 export class ShopDatabase extends Dexie {
   fabrics!: EntityTable<Local<Fabric>, 'id'>;
   variants!: EntityTable<Local<Variant>, 'id'>;
+  products!: EntityTable<Local<Product>, 'id'>;
   suppliers!: EntityTable<Local<Supplier>, 'id'>;
   settings!: EntityTable<Local<SyncedSetting>, 'id'>;
   purchases!: EntityTable<Local<Purchase>, 'id'>;
+  /** The stock (ADR 0012): what each purchase brought in, and its moves. */
+  productBatches!: EntityTable<Local<ProductBatch>, 'id'>;
+  productStockMoves!: EntityTable<Local<ProductStockMove>, 'id'>;
+  /** What the shop kept its stock on before batches: history, received and never written. */
   rolls!: EntityTable<Local<Roll>, 'id'>;
   stockMoves!: EntityTable<Local<StockMove>, 'id'>;
   customers!: EntityTable<Local<Customer>, 'id'>;
@@ -77,6 +88,9 @@ export class ShopDatabase extends Dexie {
   syncConflicts!: EntityTable<Local<SyncConflict>, 'id'>;
   expenses!: EntityTable<Local<Expense>, 'id'>;
   recurringExpenses!: EntityTable<Local<RecurringExpense>, 'id'>;
+  /** The people who work for the shop, and their monthly pay (ADR 0022). Not partners. */
+  employees!: EntityTable<Local<Employee>, 'id'>;
+  employeeSalaries!: EntityTable<Local<EmployeeSalary>, 'id'>;
   partners!: EntityTable<Local<Partner>, 'id'>;
   capitalMoves!: EntityTable<Local<CapitalMove>, 'id'>;
   partnerDraws!: EntityTable<Local<PartnerDraw>, 'id'>;
@@ -154,5 +168,37 @@ export class ShopDatabase extends Dexie {
     });
     // v12, ADR 0009: the pictures of colours.
     this.version(12).stores({ photos: 'id, variantId' });
+    this.version(13).stores({ products: 'id, name, sku, active' });
+    // v14, ADR 0012: the stock is product batches and their moves. The rolls, moves, sale lines,
+    // pictures and pending ops this device holds are carried over in place (upgradeToBatches).
+    this.version(14)
+      .stores({
+        productBatches: 'id, productId, purchaseId, code',
+        productStockMoves: 'id, batchId, refId',
+        saleLines: 'id, saleId, batchId',
+        photos: 'id, variantId, productId',
+      })
+      .upgrade(upgradeToBatches);
+    // v15, ADR 0018: indexes only, so the Home's "recent activity" reads the newest few records of
+    // each kind (by when they were made) instead of the whole table, and its sales by day read a
+    // range of dates. No record is rewritten.
+    this.version(15).stores({
+      sales: 'id, date, customerId, createdAt',
+      payments: 'id, customerId, createdAt',
+      purchases: 'id, date, createdAt',
+      supplierPayments: 'id, supplierId, createdAt',
+      expenses: 'id, date, paidDate, recurringExpenseId, createdAt',
+      productStockMoves: 'id, batchId, refId, [type+createdAt]',
+      saleReturns: 'id, saleId, date',
+    });
+    // v16, ADR 0022: employees and their salary rates; an expense can pay an employee's salary
+    // (indexed by employee). Records already here get the fields they lack (upgradeToPeople).
+    this.version(16)
+      .stores({
+        employees: 'id, name',
+        employeeSalaries: 'id, employeeId, effectiveFrom',
+        expenses: 'id, date, paidDate, recurringExpenseId, createdAt, employeeId',
+      })
+      .upgrade(upgradeToPeople);
   }
 }

@@ -3,6 +3,7 @@ import { cashAdjustmentSchema } from './cash-counts.js';
 import { zakatReportSchema } from './zakat.js';
 import { fabricSchema, recordBaseSchema, supplierSchema, variantSchema } from './catalog.js';
 import { deviceIdSchema, idSchema, isoDateSchema, timestampSchema } from './common.js';
+import { employeeSalarySchema, employeeSchema } from './employees.js';
 import { expenseSchema, recurringExpenseSchema } from './expenses.js';
 import { photoSchema } from './photos.js';
 import { capitalMoveSchema, partnerDrawSchema, partnerSchema } from './partners.js';
@@ -19,12 +20,7 @@ import {
   writeOffSchema,
 } from './customers.js';
 import { errorCodeSchema, validationIssueSchema } from './errors.js';
-import {
-  purchaseAggregateSchema,
-  purchaseSchema,
-  rollSchema,
-  stockMoveSchema,
-} from './purchasing.js';
+import { purchaseSchema, rollSchema, stockMoveSchema } from './purchasing.js';
 import { creditApplicationSchema, paymentAggregateSchema } from './receivables.js';
 import { saleReturnAggregateSchema, saleReturnSchema } from './returns.js';
 import {
@@ -35,6 +31,9 @@ import {
   saleVoidSchema,
 } from './sales.js';
 import { supplierPaymentSchema } from './supplier-payments.js';
+import { productPurchaseAggregateSchema } from './product-purchase.js';
+import { productSchema } from './products.js';
+import { productBatchSchema, productStockMoveSchema } from './stock.js';
 
 /**
  * Every entity the devices sync (ADR 0002). Each slice adds its entities here, with how the
@@ -60,17 +59,27 @@ export const syncConflictSchema = recordBaseSchema.extend({
 export type SyncConflict = z.output<typeof syncConflictSchema>;
 
 export const SYNC_ENTITIES = {
-  fabric: { merge: 'mutable', schema: fabricSchema },
-  variant: { merge: 'mutable', schema: variantSchema },
+  /** Fabrics and colours are history since ADR 0012: the product replaced them; devices only receive them. */
+  fabric: { merge: 'pull_only', schema: fabricSchema },
+  variant: { merge: 'pull_only', schema: variantSchema },
+  product: { merge: 'mutable', schema: productSchema },
   /** A colour's picture, resized on the device and carried in the record (ADR 0009); never edited. */
   photo: { merge: 'mutable', schema: photoSchema },
   supplier: { merge: 'mutable', schema: supplierSchema },
-  /** A purchase op carries its rolls and moves (purchaseAggregateSchema), applied atomically. */
-  purchase: { merge: 'append_only', schema: purchaseSchema, pushSchema: purchaseAggregateSchema },
-  /** Only its remnant mark changes after the purchase (checkRollUpdate). */
-  roll: { merge: 'mutable', schema: rollSchema },
-  /** Losses, stocktake counts and measurements (checkStockMove); never overwritten. */
-  stock_move: { merge: 'append_only', schema: stockMoveSchema },
+  /** A purchase op carries its batch and receipt (productPurchaseAggregateSchema), applied atomically. */
+  purchase: {
+    merge: 'append_only',
+    schema: purchaseSchema,
+    pushSchema: productPurchaseAggregateSchema,
+  },
+  /** The stock (ADR 0012): what a purchase brought in. Only its remnant mark changes (checkBatchUpdate). */
+  product_batch: { merge: 'mutable', schema: productBatchSchema },
+  /** Losses, counts and measurements of a batch (checkBatchMove); never overwritten. */
+  product_stock_move: { merge: 'append_only', schema: productStockMoveSchema },
+  /** The rolls the stock was kept on before batches (ADR 0012): history, received but never changed. */
+  roll: { merge: 'pull_only', schema: rollSchema },
+  /** Their moves: history too; the batches' moves (product_stock_move) are the stock now. */
+  stock_move: { merge: 'pull_only', schema: stockMoveSchema },
   customer: { merge: 'mutable', schema: customerSchema },
   /** A sale op carries its lines, moves and the payment made there (checkSaleAggregate). */
   sale: { merge: 'append_only', schema: saleSchema, pushSchema: saleAggregateSchema },
@@ -99,7 +108,11 @@ export const SYNC_ENTITIES = {
   /** SPEC §5: edited and voided like the catalog (last write wins). */
   expense: { merge: 'mutable', schema: expenseSchema },
   recurring_expense: { merge: 'mutable', schema: recurringExpenseSchema },
-  /** SPEC §6: the owner and the partner. */
+  /** The people who work in the shop (ADR 0022): edited, ended with an end date, never removed once paid. */
+  employee: { merge: 'mutable', schema: employeeSchema },
+  /** What an employee earns a month from a month on; created or voided, never edited (checkSalaryRate). */
+  employee_salary: { merge: 'mutable', schema: employeeSalarySchema },
+  /** SPEC §6: the owner and the partners. */
   partner: { merge: 'mutable', schema: partnerSchema },
   /** Created, or voided with a reason; never edited (checkCapitalMove, checkUnchanged). */
   capital_move: { merge: 'mutable', schema: capitalMoveSchema },
@@ -173,11 +186,18 @@ export const voidPayloadSchema = z.object({ reason: z.string().trim().min(1).max
  */
 export const SYNC_BATCH_MAX_BYTES = 1_000_000;
 
-/** What `record` counts against SYNC_BATCH_MAX_BYTES: its image, if it has one; else nothing. */
+/**
+ * What `record` counts against SYNC_BATCH_MAX_BYTES: its image, if it has one; else nothing. A
+ * product photo carries it in `data`; the shop's logo is a `setting` row whose value is the image.
+ */
 export function syncWeightOf(entity: SyncEntity, record: unknown): number {
-  if (entity !== 'photo') return 0;
-  const data = (record as { data?: unknown } | null)?.data;
-  return typeof data === 'string' ? data.length : 0;
+  const fields = record as { data?: unknown; key?: unknown; value?: unknown } | null;
+  if (entity === 'photo') return typeof fields?.data === 'string' ? fields.data.length : 0;
+  if (entity === 'setting' && fields?.key === 'shop_logo') {
+    const data = (fields.value as { data?: unknown } | null)?.data;
+    return typeof data === 'string' ? data.length : 0;
+  }
+  return 0;
 }
 
 export const SYNC_PUSH_MAX_OPS = 200;

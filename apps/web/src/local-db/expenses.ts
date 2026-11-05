@@ -1,4 +1,5 @@
 import {
+  checkSalaryPayment,
   type Expense,
   type ExpenseInput,
   expenseInputSchema,
@@ -13,15 +14,20 @@ import {
 } from '@fabric/contracts';
 import {
   dueDateIn,
+  type ExpenseStanding,
+  expenseStanding,
   monthBounds,
   type MonthExpenses,
   monthlyExpenses,
+  monthOf,
+  type NextDue,
+  nextRecurringDue,
   type Reminder,
   recurringReminders,
 } from '@fabric/core';
 import { shopToday } from '@/shared/lib/dates';
 import type { Local } from './db';
-import { parseOrThrow } from './errors';
+import { parseOrThrow, ValidationError } from './errors';
 import type { LocalStore } from './store';
 import { type SettingsRepository, SyncedTable } from './tables';
 
@@ -30,8 +36,15 @@ class ExpenseTable extends SyncedTable<Expense> {
     super(store, 'expenses', 'expense', expenseSchema);
   }
 
+  /**
+   * An expense that pays a salary names the employee and the month it pays, and is paid
+   * (checkSalaryPayment, as the server checks it: PY3).
+   */
   async save(input: ExpenseInput, id?: string): Promise<string> {
-    return this.write(parseOrThrow(expenseInputSchema, input), id);
+    const fields = parseOrThrow(expenseInputSchema, input);
+    const issues = checkSalaryPayment(fields, await this.store.db.employees.toArray());
+    if (issues.length > 0) throw new ValidationError(issues);
+    return this.write(fields, id);
   }
 }
 
@@ -50,12 +63,35 @@ export interface ExpenseCategory {
   label: string;
 }
 
+/** One expense of a month's list, with how it counts in that month (@fabric/core expenseStanding). */
+export interface MonthRow {
+  expense: Local<Expense>;
+  /** paid: paid in the month; unpaid: still to pay; other: dated here but counted in another month. */
+  standing: ExpenseStanding;
+  /** An unpaid bill of an earlier month, still to pay. */
+  carriedOver: boolean;
+  /** For `other`: the month (YYYY-MM) it was paid in, where it counts. */
+  countsIn: string | null;
+  /** The employee whose salary it pays, if it is a salary payment (ADR 0022). */
+  employeeName: string | null;
+}
+
 export interface MonthView {
   month: string;
-  /** Live expenses dated or paid in the month, by date. */
-  expenses: Local<Expense>[];
-  /** @fabric/core monthlyExpenses: paid in the month (S6), per category, still unpaid. */
+  /**
+   * The month's expenses, newest first: those that count in it (paid in it, or still unpaid up to
+   * its end) and those dated in it that were paid in another month.
+   */
+  rows: MonthRow[];
+  /** @fabric/core monthlyExpenses: paid in the month (S6), per category, still unpaid, the total. */
   totals: MonthExpenses;
+}
+
+/** A recurring template and when its next bill is due. */
+export interface TemplateView {
+  template: Local<RecurringExpense>;
+  /** @fabric/core nextRecurringDue: null for a paused template. */
+  next: NextDue | null;
 }
 
 export interface ReminderView extends Reminder {
@@ -92,18 +128,33 @@ export class ExpensesRepository {
 
   async month(month: string): Promise<MonthView> {
     const all = await this.store.db.expenses.toArray();
+    const names = new Map(
+      (await this.store.db.employees.toArray()).map((employee) => [employee.id, employee.name]),
+    );
     const { start, end } = monthBounds(month);
-    const inMonth = (date: string | null) => date !== null && date >= start && date <= end;
-    return {
-      month,
-      expenses: all
-        .filter(
-          (expense) =>
-            expense.voidedAt === null && (inMonth(expense.date) || inMonth(expense.paidDate)),
-        )
-        .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt)),
-      totals: monthlyExpenses(all.map(expenseItemOf), month),
-    };
+    const rows = all
+      .filter((expense) => expense.voidedAt === null)
+      .map((expense): MonthRow => {
+        const standing = expenseStanding(expenseItemOf(expense), month);
+        return {
+          expense,
+          standing,
+          carriedOver: standing === 'unpaid' && expense.date < start,
+          countsIn: standing === 'other' && expense.paidDate ? monthOf(expense.paidDate) : null,
+          employeeName:
+            expense.employeeId === null ? null : (names.get(expense.employeeId) ?? null),
+        };
+      })
+      .filter(
+        ({ expense, standing }) =>
+          standing !== 'other' || (expense.date >= start && expense.date <= end),
+      )
+      .sort(
+        (a, b) =>
+          b.expense.date.localeCompare(a.expense.date) ||
+          b.expense.createdAt.localeCompare(a.expense.createdAt),
+      );
+    return { month, rows, totals: monthlyExpenses(all.map(expenseItemOf), month) };
   }
 
   /** Live templates, by due day. */
@@ -112,6 +163,33 @@ export class ExpensesRepository {
     return templates
       .filter((template) => template.voidedAt === null)
       .sort((a, b) => a.dayOfMonth - b.dayOfMonth || a.name.localeCompare(b.name, 'ar'));
+  }
+
+  /** Live templates with their next bill: what is due first comes first, paused ones last (E5). */
+  async recurringBills(): Promise<TemplateView[]> {
+    const today = shopToday(this.store.now());
+    const [templates, expenses, leadDays] = await Promise.all([
+      this.recurring(),
+      this.store.db.expenses.toArray(),
+      this.settings.get('expense_reminder_days', today),
+    ]);
+    const items = expenses.map(expenseItemOf);
+    return templates
+      .map((template) => ({
+        template,
+        next: nextRecurringDue({
+          template: recurringTemplateOf(template, sinceOf(template)),
+          expenses: items,
+          today,
+          leadDays,
+        }),
+      }))
+      .sort(
+        (a, b) =>
+          Number(a.next === null) - Number(b.next === null) ||
+          (a.next?.dueDate ?? '').localeCompare(b.next?.dueDate ?? '') ||
+          a.template.name.localeCompare(b.template.name, 'ar'),
+      );
   }
 
   /** Bills to create from their templates, from `expense_reminder_days` before they are due. */
@@ -150,6 +228,9 @@ export class ExpensesRepository {
         paidDate,
         note: expense.note,
         recurringExpenseId: expense.recurringExpenseId,
+        // A salary payment stays one; it cannot go back to unpaid (checkSalaryPayment).
+        employeeId: expense.employeeId,
+        salaryMonth: expense.salaryMonth,
       },
       id,
     );
@@ -169,7 +250,8 @@ export class ExpensesRepository {
 
   /**
    * A month's bill from its template, in one tap (SPEC §5): dated on its due date (E1), with the
-   * amount typed for a variable bill such as electricity, paid now or not.
+   * amount typed for a variable bill such as electricity, paid now or not. Refused when that
+   * month's bill was already created from the template (E6).
    */
   async createFromTemplate(input: {
     templateId: string;
@@ -179,6 +261,18 @@ export class ExpensesRepository {
   }): Promise<string> {
     const template = await this.templates.get(input.templateId);
     if (!template) throw new Error(`No recurring expense ${input.templateId}`);
+    // One bill a month per template (E6): a second tap, or another device's, creates nothing.
+    const already = (await this.store.db.expenses.toArray()).some(
+      (expense) =>
+        expense.voidedAt === null &&
+        expense.recurringExpenseId === template.id &&
+        monthOf(expense.date) === input.month,
+    );
+    if (already) {
+      throw new ValidationError([
+        { path: ['month'], message: 'recurring_expense_already_created', code: 'custom' },
+      ]);
+    }
     return this.expenses.save({
       date: dueDateIn(input.month, template.dayOfMonth),
       category: template.category,

@@ -65,7 +65,7 @@ describe('the catalogs', () => {
     expect(en.shell.pendingOps(0)).toBe('No pending changes');
     expect(en.shell.pendingOps(1)).toBe('1 pending change');
     expect(en.shell.pendingOps(2)).toBe('2 pending changes');
-    expect(en.inventory.rollsCount(12)).toBe('12 rolls');
+    expect(en.pos.bill.items(12)).toBe('12 items');
     expect(en.customers.ageDays(1)).toBe('1 day ago');
   });
 });

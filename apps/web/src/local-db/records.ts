@@ -7,7 +7,7 @@ import type { ShopDatabase } from './db';
  */
 export async function loadShopRecords(db: ShopDatabase): Promise<ReportRecords> {
   const [
-    rolls,
+    batches,
     stockMoves,
     sales,
     saleLines,
@@ -20,8 +20,8 @@ export async function loadShopRecords(db: ShopDatabase): Promise<ReportRecords> 
     settlements,
     splitRules,
   ] = await Promise.all([
-    db.rolls.toArray(),
-    db.stockMoves.toArray(),
+    db.productBatches.toArray(),
+    db.productStockMoves.toArray(),
     db.sales.toArray(),
     db.saleLines.toArray(),
     db.saleReturns.toArray(),
@@ -41,8 +41,7 @@ export async function loadShopRecords(db: ShopDatabase): Promise<ReportRecords> 
     capitalMoves,
     draws,
     settlementShares,
-    fabrics,
-    variants,
+    products,
     customers,
     suppliers,
   ] = await Promise.all([
@@ -53,13 +52,12 @@ export async function loadShopRecords(db: ShopDatabase): Promise<ReportRecords> 
     db.capitalMoves.toArray(),
     db.partnerDraws.toArray(),
     db.settlementShares.toArray(),
-    db.fabrics.toArray(),
-    db.variants.toArray(),
+    db.products.toArray(),
     db.customers.toArray(),
     db.suppliers.toArray(),
   ]);
   return {
-    rolls,
+    batches,
     stockMoves,
     sales,
     saleLines,
@@ -78,8 +76,7 @@ export async function loadShopRecords(db: ShopDatabase): Promise<ReportRecords> 
     capitalMoves,
     draws,
     settlementShares,
-    fabrics,
-    variants,
+    products,
     customers,
     suppliers,
   };

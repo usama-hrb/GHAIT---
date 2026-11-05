@@ -1,5 +1,9 @@
 import {
-  type FabricFields,
+  type Product,
+  type ProductFields,
+  productInputSchema,
+  type StoredProduct,
+  type ProductInput,
   SERVER_DEVICE_ID,
   type StoredFabric,
   type StoredSupplier,
@@ -7,21 +11,25 @@ import {
   type SupplierInput,
   supplierInputSchema,
   type SyncEntity,
-  type VariantInput,
-  variantInputSchema,
 } from '@fabric/contracts';
 import { HttpStatus, Injectable, type OnModuleInit } from '@nestjs/common';
 import { AppHttpException, requestContext } from '../../common/index.js';
 import { type SyncedRow, SyncRegistry, SyncService } from '../sync/index.js';
-import { FabricRepository, SupplierRepository, VariantRepository } from './catalog.repositories.js';
+import {
+  FabricRepository,
+  ProductRepository,
+  SupplierRepository,
+  VariantRepository,
+} from './catalog.repositories.js';
 
 function stored<R>(row: SyncedRow<R>): R & { serverSeq: number } {
   return { ...row.record, serverSeq: row.serverSeq };
 }
 
 /**
- * Fabrics, colours and suppliers (SPEC §2.2, §13). Devices change them through sync; these REST
- * operations go through the same SyncService path, so validation and audit are identical.
+ * Products and suppliers (SPEC §2.2, §13), with the fabrics and colours they replaced (ADR 0012),
+ * which are only read. Devices change the rest through sync; these REST operations go through the
+ * same SyncService path, so validation and audit are identical.
  */
 @Injectable()
 export class CatalogService implements OnModuleInit {
@@ -30,12 +38,14 @@ export class CatalogService implements OnModuleInit {
     private readonly sync: SyncService,
     private readonly fabrics: FabricRepository,
     private readonly variants: VariantRepository,
+    private readonly products: ProductRepository,
     private readonly suppliers: SupplierRepository,
   ) {}
 
   onModuleInit(): void {
     this.registry.register(this.fabrics);
     this.registry.register(this.variants);
+    this.registry.register(this.products);
     this.registry.register(this.suppliers);
   }
 
@@ -47,17 +57,27 @@ export class CatalogService implements OnModuleInit {
     return stored(this.found('fabric', id, await this.fabrics.find(id)));
   }
 
-  async putFabric(id: string, fields: FabricFields): Promise<StoredFabric> {
-    return stored(await this.save('fabric', id, fields)) as StoredFabric;
-  }
-
   async listVariants(fabricId: string, includeVoided: boolean): Promise<StoredVariant[]> {
     this.found('fabric', fabricId, await this.fabrics.find(fabricId));
     return (await this.variants.listByFabric(fabricId, includeVoided)).map(stored);
   }
 
-  async putVariant(id: string, input: VariantInput): Promise<StoredVariant> {
-    return stored(await this.save('variant', id, variantInputSchema.parse(input))) as StoredVariant;
+  async listProducts(includeVoided: boolean): Promise<StoredProduct[]> {
+    return (await this.products.list(includeVoided)).map(stored);
+  }
+
+  /** These products, voided ones included (history keeps reading them). */
+  async productsByIds(ids: readonly string[]): Promise<Map<string, Product>> {
+    return new Map((await this.products.findMany(ids)).map((row) => [row.record.id, row.record]));
+  }
+
+  async getProduct(id: string): Promise<StoredProduct> {
+    return stored(this.found('product', id, await this.products.find(id)));
+  }
+
+  async putProduct(id: string, input: ProductInput): Promise<StoredProduct> {
+    const fields: ProductFields = productInputSchema.parse(input);
+    return stored(await this.save('product', id, fields)) as StoredProduct;
   }
 
   async listSuppliers(includeVoided: boolean): Promise<StoredSupplier[]> {
@@ -74,7 +94,7 @@ export class CatalogService implements OnModuleInit {
     ) as StoredSupplier;
   }
 
-  async void(entity: 'fabric' | 'variant' | 'supplier', id: string, reason: string) {
+  async void(entity: 'product' | 'supplier', id: string, reason: string) {
     return stored(await this.sync.voidDirect(entity, id, reason));
   }
 

@@ -1,12 +1,12 @@
 'use client';
 
+import { amountOfQuantity } from '@fabric/contracts';
 import Link from 'next/link';
 import { messages } from '@/i18n';
 import { useLiveQuery, useRepositories } from '@/local-db';
-import { LoadingState, OfflineNotice } from '@/shared/brand';
-import { DateText, Meters } from '@/shared/format';
+import { LoadingState } from '@/shared/brand';
+import { DateText, Quantity } from '@/shared/format';
 import { Badge } from '@/shared/ui/badge';
-import { Button } from '@/shared/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
 
 const t = messages.syncIssues;
@@ -25,15 +25,16 @@ function labelOf(record: unknown, id: string): string {
 
 /**
  * What needs a look after syncing (BUILD_PROMPTS 3.6), read-only: changes the server refused,
- * conflicts it settled (last write wins, the loser kept), and rolls sold beyond their length.
+ * conflicts it settled (last write wins, the loser kept), and batches sold beyond what they held.
+ * A part of the Synchronization section of Settings (SyncSettingsScreen).
  */
-export function SyncIssuesScreen() {
+export function SyncIssues() {
   const repositories = useRepositories();
   const data = useLiveQuery(async () => {
     const [rejected, conflicts, review] = await Promise.all([
       repositories.maintenance.rejected(),
       repositories.maintenance.conflicts(),
-      repositories.maintenance.rollsToReview(),
+      repositories.maintenance.batchesToReview(),
     ]);
     return { rejected, conflicts, review };
   }, [repositories]);
@@ -42,13 +43,7 @@ export function SyncIssuesScreen() {
   const { rejected, conflicts, review } = data;
 
   return (
-    <div className="mx-auto grid w-full max-w-4xl gap-4">
-      <OfflineNotice />
-      <Button asChild variant="link" className="justify-self-start px-0">
-        <Link href="/settings">{t.back}</Link>
-      </Button>
-      <h2 className="font-heading text-xl font-semibold">{t.title}</h2>
-
+    <div className="grid gap-4">
       <section aria-label={t.reviewTitle} className="grid gap-2">
         <h3 className="font-heading font-semibold">{t.reviewTitle}</h3>
         <p className="text-sm text-muted-foreground">{t.reviewDescription}</p>
@@ -59,34 +54,37 @@ export function SyncIssuesScreen() {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>{t.columns.roll}</TableHead>
+                  <TableHead>{t.columns.batch}</TableHead>
                   <TableHead>{t.columns.item}</TableHead>
                   <TableHead className="text-end">{t.columns.remaining}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {review.map(({ roll, fabric, variant, ledger }) => (
-                  <TableRow key={roll.id}>
+                {review.map(({ batch, product, ledger }) => (
+                  <TableRow key={batch.id}>
                     <TableCell>
                       <Link
-                        href={`/inventory/roll?id=${roll.id}`}
+                        href={`/inventory/product?id=${batch.productId}`}
                         className="underline-offset-4 hover:underline"
                       >
                         <bdi dir="ltr" data-num>
-                          {roll.shortCode}
+                          {batch.code}
                         </bdi>
                       </Link>
                     </TableCell>
-                    <TableCell>
-                      {fabric?.name} · {variant?.colorName}
-                    </TableCell>
+                    <TableCell>{product?.name}</TableCell>
                     <TableCell className="text-end">
-                      <Meters cm={ledger.remainingCm} />
-                      {ledger.oversoldCm > 0 && (
-                        <Badge variant="warning" className="ms-1.5">
-                          {t.oversold}: <Meters cm={ledger.oversoldCm} />
-                        </Badge>
-                      )}
+                      <Quantity
+                        unit={ledger.remaining.unit}
+                        amount={amountOfQuantity(ledger.remaining)}
+                      />
+                      <Badge variant="warning" className="ms-1.5">
+                        {t.oversold}:{' '}
+                        <Quantity
+                          unit={ledger.oversold.unit}
+                          amount={amountOfQuantity(ledger.oversold)}
+                        />
+                      </Badge>
                     </TableCell>
                   </TableRow>
                 ))}

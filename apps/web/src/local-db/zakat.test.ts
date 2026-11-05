@@ -6,6 +6,7 @@ import { ValidationError } from './errors';
 import { createRepositories, type Repositories } from './repositories';
 import { DEVICE_CODE } from './session';
 import { LocalStore } from './store';
+import { seedBatch, seedPartners, seedProduct } from './test-helpers';
 
 let db: ShopDatabase;
 let repos: Repositories;
@@ -34,10 +35,7 @@ beforeEach(async () => {
   const store = new LocalStore(db, () => new Date((now += 60_000)));
   repos = createRepositories(store);
   await store.setMeta(DEVICE_CODE, 'A');
-  await repos.partners.saveBoth({
-    owner: { name: 'أنا', ownershipBp: 5000 },
-    partner: { name: 'شريكي' },
-  });
+  await seedPartners(repos);
   const [owner] = await repos.partners.list();
   await repos.partners.recordCapitalMove({
     partnerId: owner?.partner.id ?? '',
@@ -45,18 +43,12 @@ beforeEach(async () => {
     amountCents: dh(1000),
     date: '2025-11-01',
   });
-  const fabricId = await repos.fabrics.save({
-    name: 'روزا',
-    refPricePerMeterCents: dh(20),
-    minPricePerMeterCents: dh(15),
-  });
-  const variantId = await repos.variants.save({ fabricId, colorName: 'أحمر' });
-  await repos.purchases.create({
-    method: 'meter',
-    date: '2025-11-02',
-    pricePerMeterCents: dh(16),
-    rolls: [{ variantId, lengthCm: 5000 }],
-  });
+  await seedBatch(
+    repos,
+    await seedProduct(repos, { pricePerMeterCents: dh(20), minPricePerMeterCents: dh(15) }),
+    5000,
+    { date: '2025-11-02', costPerMeterCents: dh(16) },
+  );
 });
 
 afterEach(async () => {
@@ -94,7 +86,7 @@ describe('zakat on the device (BUILD_PROMPTS 5.1)', () => {
       zakatDueCents: dh(30),
       breakdown: { goodsCents: dh(1000), cashCents: dh(200), hawlCompleted: true },
     });
-    expect(preview.fields.breakdown.goods[0]?.label).toBe('R-A0001 · روزا · أحمر');
+    expect(preview.fields.breakdown.goods[0]?.label).toBe('B-A0001 · روزا');
 
     const id = await repos.zakat.save();
     await expect(repos.zakat.save()).rejects.toBeInstanceOf(ValidationError);

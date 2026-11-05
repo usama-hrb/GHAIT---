@@ -32,6 +32,7 @@ const t14 = {
       rollId: crypto.randomUUID(),
       label: 'R-A0001 · روزا · أحمر',
       remainingCm: 100_000,
+      remainingPieces: 0,
       refPricePerMeterCents: dh(30),
       costCents: dh(24_000),
       valueCents: 0,
@@ -134,7 +135,7 @@ describe('the zakat report (SPEC §10, BUILD_PROMPTS 5.1)', () => {
   it('the position from the records: stock left, money, what customers owe and are owed', () => {
     const shop = new Shop();
     shop.contribute(OWNER, dh(1000));
-    const roll = shop.roll(dh(800), 5000);
+    const roll = shop.batch(dh(800), 5000);
     shop.sale(roll, '2026-09-05', 1000, dh(200), 0); // owed, then written off
     const owed = shop.sale(roll, '2026-09-06', 1000, dh(200), dh(50)); // 150 still owed
     shop.records.writeOffs.push({
@@ -148,8 +149,7 @@ describe('the zakat report (SPEC §10, BUILD_PROMPTS 5.1)', () => {
     shop.pay(overpaid, '2026-09-09', dh(130), dh(100)); // 30 held for the customer
     const position = zakatPositionOf({
       ...shop.records,
-      fabrics: [],
-      variants: [],
+      products: [],
       customers: [],
       suppliers: [],
     });

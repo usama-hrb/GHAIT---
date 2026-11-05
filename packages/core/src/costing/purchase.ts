@@ -45,6 +45,38 @@ export interface PurchaseRolls {
 }
 
 /**
+ * What a length bought by the metre costs in all (SPEC §2.3): price per metre × length, rounded
+ * half up to the cent when not exact (16.05 dh/m × 2.75 m = 44.1375 dh → 4414 cents).
+ */
+export function meterPurchaseCostCents(pricePerMeterCents: number, lengthCm: number): number {
+  assertInteger(pricePerMeterCents, 'pricePerMeterCents', 0);
+  assertInteger(lengthCm, 'lengthCm', 1);
+  return mulDivRoundHalfUp(pricePerMeterCents, lengthCm, CM_PER_METER);
+}
+
+/**
+ * What a weight bought by the kilo costs in all: price per kg × weight, rounded half up to the
+ * cent when not exact, as a length is (PB21). 38.50 dh/kg × 2.345 kg = 90.2825 dh → 9028 cents.
+ */
+export function weightPurchaseCostCents(pricePerKgCents: number, weightG: number): number {
+  assertInteger(pricePerKgCents, 'pricePerKgCents', 0);
+  assertInteger(weightG, 'weightG', 1);
+  return mulDivRoundHalfUp(pricePerKgCents, weightG, GRAMS_PER_KG);
+}
+
+/**
+ * What ready pieces bought one by one cost in all: price per piece × number of pieces. Both are
+ * whole numbers, so the product is exact and nothing is rounded (PB21).
+ */
+export function piecePurchaseCostCents(pricePerPieceCents: number, pieces: number): number {
+  assertInteger(pricePerPieceCents, 'pricePerPieceCents', 0);
+  assertInteger(pieces, 'pieces', 1);
+  const total = pricePerPieceCents * pieces;
+  assertInteger(total, 'piece purchase total', 0);
+  return total;
+}
+
+/**
  * Turns a purchase into rolls with their length and total cost (SPEC §2.3).
  * - meter: cost = price per metre × length, rounded half up to the cent when not exact
  *   (e.g. 16.05 dh/m × 2.75 m = 44.1375 dh → 4414 cents).
@@ -61,15 +93,13 @@ export function buildRollsFromPurchase(input: PurchaseInput): PurchaseRolls {
 function buildRolls(input: PurchaseInput): PurchasedRoll[] {
   switch (input.method) {
     case 'meter': {
-      assertInteger(input.pricePerMeterCents, 'pricePerMeterCents', 0);
       if (input.rolls.length === 0)
         throw new RangeError('a meter purchase needs at least one roll');
       return input.rolls.map((roll) => {
-        assertInteger(roll.lengthCm, 'lengthCm', 1);
         return {
           variantId: roll.variantId,
           lengthCmInitial: roll.lengthCm,
-          costTotalCents: mulDivRoundHalfUp(input.pricePerMeterCents, roll.lengthCm, CM_PER_METER),
+          costTotalCents: meterPurchaseCostCents(input.pricePerMeterCents, roll.lengthCm),
           lengthEstimated: false,
         };
       });

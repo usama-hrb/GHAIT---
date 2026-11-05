@@ -1,13 +1,13 @@
 import { expect, test } from '@playwright/test';
 import {
-  addFabric,
+  addProduct,
   connectivity,
+  openLastSale,
   payInFull,
-  pickColor,
-  reviewAndSave,
+  pickProduct,
   serverGet,
+  serverRecords,
   signIn,
-  startPurchase,
   waitForAppShell,
 } from './helpers';
 import { E2E } from './stack';
@@ -17,30 +17,19 @@ test('a cashier sells and sees no cost or profit; the owner sees the sale’s pr
   page,
   request,
 }) => {
-  // The owner stocks the shop.
+  // The owner stocks the shop: 50 m at 320 rial/m.
   await signIn(page);
   await waitForAppShell(page);
-  await addFabric(page, 'مخمل');
-  await startPurchase(page, 'بالمتر', 'مخمل');
-  await page.getByLabel('سعر المتر').fill('320');
-  await page.getByRole('button', { name: 'كل الألوان' }).click();
-  await reviewAndSave(page);
-  const purchaseId = new URL(page.url()).searchParams.get('id') ?? '';
+  const productId = await addProduct(page, { name: 'مخمل - أحمر' });
   await expect(connectivity(page)).not.toContainText(/معلّق/);
   await expect
-    .poll(async () => {
-      const found = await serverGet<{ rolls?: { id: string }[] }>(
-        request,
-        `/purchases/${purchaseId}`,
-      );
-      return found.rolls?.length ?? 0;
-    })
+    .poll(
+      async () =>
+        (await serverRecords<{ productId: string }>(request, 'product_batch')).filter(
+          (batch) => batch.productId === productId,
+        ).length,
+    )
     .toBeGreaterThan(0);
-  const purchase = await serverGet<{ rolls: { id: string }[] }>(
-    request,
-    `/purchases/${purchaseId}`,
-  );
-  const rollId = purchase.rolls[0]?.id ?? '';
 
   // The cashier's own device.
   const till = await (await browser.newContext()).newPage();
@@ -56,32 +45,49 @@ test('a cashier sells and sees no cost or profit; the owner sees the sale’s pr
     await expect(menu.getByRole('link', { name, exact: true })).toHaveCount(0);
   }
   // A typed address does not open them.
-  await till.goto('/purchases');
+  await till.goto('/purchases/view');
   await expect(till.getByText('هذه الشاشة ليست لحساب العامل')).toBeVisible();
   await till.goto('/reports');
   await expect(till.getByText('هذه الشاشة ليست لحساب العامل')).toBeVisible();
+  // Settings: read-only for a cashier, and the partners are not among its sections.
+  await till.goto('/settings/partners');
+  await expect(till.getByText('هذه الشاشة ليست لحساب العامل')).toBeVisible();
+  await till.goto('/settings');
+  const sections = till.getByRole('navigation', { name: 'أقسام الإعدادات' });
+  await expect(sections.getByRole('link', { name: /العملة/ })).toBeVisible();
+  await expect(sections.getByRole('link', { name: /الشركاء/ })).toHaveCount(0);
+  await expect(till.getByLabel('الاسم', { exact: true })).toBeDisabled();
+  await expect(till.getByRole('button', { name: 'حفظ التغييرات' })).toHaveCount(0);
 
-  // The roll: its length, never its cost.
+  // The product: its stock, never its cost.
   await expect
     .poll(async () => {
-      await till.goto(`/inventory/roll?id=${rollId}`);
-      return till.getByText('المتبقي').count();
+      await till.goto(`/inventory/product?id=${productId}`);
+      const codes = till
+        .getByRole('region', { name: 'دفعات المخزون' })
+        .getByText(/^B-[A-Z]+\d{4}$/);
+      // The page renders after `load` (hydration, then the local read): give it a moment before counting.
+      await codes
+        .first()
+        .waitFor({ timeout: 3_000 })
+        .catch(() => undefined);
+      return codes.count();
     })
     .toBeGreaterThan(0);
   await expect(till.getByText('التكلفة', { exact: true })).toHaveCount(0);
-  await expect(till.getByText('تكلفة المتر')).toHaveCount(0);
+  await expect(till.getByText('التكلفة للوحدة')).toHaveCount(0);
+  await expect(till.getByText('قيمة المخزون')).toHaveCount(0);
 
   // A sale at the till: 2 m of the red at 400 rial/m = 800 rial. No profit anywhere.
   await till.goto('/pos');
-  const dialog = await pickColor(till, 'مخمل', 'أحمر');
+  const dialog = await pickProduct(till, 'مخمل - أحمر');
   await dialog.getByLabel('الطول', { exact: true }).fill('2');
   await expect(dialog.getByText('مجموع السطر')).toBeVisible();
   await expect(till.getByText('الربح')).toHaveCount(0);
   await dialog.getByRole('button', { name: 'أضف إلى الفاتورة' }).click();
   await expect(till.getByText('الربح')).toHaveCount(0);
   await payInFull(till);
-  await expect(till).toHaveURL(/\/pos\/view\?id=/);
-  const saleId = new URL(till.url()).searchParams.get('id') ?? '';
+  const saleId = await openLastSale(till);
   await expect(till.getByText('الربح')).toHaveCount(0);
   await expect(till.getByText('التكلفة', { exact: true })).toHaveCount(0);
   await expect(till.getByRole('button', { name: 'إرجاع بضاعة' })).toHaveCount(0);

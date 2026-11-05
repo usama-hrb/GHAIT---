@@ -2,18 +2,16 @@
 
 import type { Customer, NewSaleInput } from '@fabric/contracts';
 import { formatMoneyAmount, parseMoneyInput } from '@fabric/core';
-import { TriangleAlertIcon } from 'lucide-react';
 import { useId, useMemo, useState } from 'react';
 import { messages } from '@/i18n';
 import { type Local, useLiveQuery, useRepositories } from '@/local-db';
 import { Keypad, Money, MoneyInput, moneyPad, useMoneyUnit, usePadFields } from '@/shared/format';
-import { Alert, AlertDescription, AlertTitle } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
-import { Checkbox } from '@/shared/ui/checkbox';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/shared/ui/dialog';
 import { Field, FieldGroup, FieldLabel } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
 import { Tabs, TabsList, TabsTrigger } from '@/shared/ui/tabs';
+import { Authorization, ConfirmSwitch } from './authorization';
 import { CustomerPicker } from './customer-picker';
 
 const t = messages.pos;
@@ -34,7 +32,8 @@ export function CheckoutDialog({
   customerId,
   onCustomer,
   onAddCustomer,
-  requiresConfirmation,
+  belowCost,
+  asksConfirmation,
   saving,
   onComplete,
   onClose,
@@ -47,8 +46,13 @@ export function CheckoutDialog({
   customerId: string | null;
   onCustomer: (id: string | null) => void;
   onAddCustomer: () => void;
-  /** The bill is under cost somewhere: it needs the explicit confirmation. */
-  requiresConfirmation: boolean;
+  /** The bill is under cost somewhere (the owner confirmed it on its lines, or asks here). */
+  belowCost: boolean;
+  /**
+   * What the lines could not confirm is left: a line nobody confirmed, or a discount that takes
+   * the invoice under its cost. Only then does the payment ask for the confirmation.
+   */
+  asksConfirmation: boolean;
   saving: boolean;
   onComplete: (input: NewSaleInput) => void;
   onClose: () => void;
@@ -76,10 +80,10 @@ export function CheckoutDialog({
             customerId,
             paidCents,
             dueDate: mode === 'credit' && dueDate !== '' ? dueDate : null,
-            confirmedBelowCost: confirmed,
+            confirmedBelowCost: belowCost && (!asksConfirmation || confirmed),
             note: note.trim() === '' ? null : note,
           },
-    [base, customerId, paidCents, mode, dueDate, confirmed, note],
+    [base, customerId, paidCents, mode, dueDate, belowCost, asksConfirmation, confirmed, note],
   );
   const priced = useLiveQuery(async () => {
     if (!input) return null;
@@ -257,26 +261,15 @@ export function CheckoutDialog({
                 noteField
               )}
 
-              {requiresConfirmation && (
-                <Alert variant="destructive">
-                  <TriangleAlertIcon aria-hidden />
-                  <AlertTitle>{t.belowCostTitle}</AlertTitle>
-                  <AlertDescription className="grid gap-2">
-                    <span>{t.belowCostDescription}</span>
-                    <span className="flex items-center gap-2">
-                      <Checkbox
-                        id={`${id}-confirm`}
-                        checked={confirmed}
-                        onCheckedChange={(checked) => {
-                          setConfirmed(checked === true);
-                        }}
-                      />
-                      <label htmlFor={`${id}-confirm`} className="font-medium text-foreground">
-                        {t.confirmBelowCost}
-                      </label>
-                    </span>
-                  </AlertDescription>
-                </Alert>
+              {asksConfirmation && (
+                <Authorization title={t.belowCostTitle} description={t.belowCostDescription}>
+                  <ConfirmSwitch
+                    id={`${id}-confirm`}
+                    checked={confirmed}
+                    onChange={setConfirmed}
+                    label={t.confirmBelowCost}
+                  />
+                </Authorization>
               )}
               {issue && issue !== 'sale_credit_needs_customer' && (
                 <p role="alert" className="text-sm text-destructive">
@@ -303,10 +296,7 @@ export function CheckoutDialog({
             type="button"
             variant="accent"
             disabled={
-              saving ||
-              input === null ||
-              issue !== undefined ||
-              (requiresConfirmation && !confirmed)
+              saving || input === null || issue !== undefined || (asksConfirmation && !confirmed)
             }
             onClick={() => {
               if (input) onComplete(input);

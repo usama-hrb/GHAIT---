@@ -1,10 +1,19 @@
 import { type APIRequestContext, type BrowserContext, expect, test } from '@playwright/test';
-import { connectivity, serverGet, signIn, waitForAppShell } from './helpers';
+import {
+  addProduct,
+  connectivity,
+  serverGet,
+  serverRecords,
+  signIn,
+  waitForAppShell,
+} from './helpers';
 
-const serverFabrics = (request: APIRequestContext) =>
-  serverGet<{ name: string; refPricePerMeterCents: number }[]>(request, '/fabrics');
+const serverProducts = (request: APIRequestContext) =>
+  serverGet<
+    { id: string; name: string; pricePerMeterCents: number; minPricePerMeterCents: number }[]
+  >(request, '/products');
 
-test('a fabric added offline reaches the server and a second device', async ({
+test('a product with stock added offline reaches the server and a second device', async ({
   browser,
   request,
 }) => {
@@ -16,28 +25,35 @@ test('a fabric added offline reaches the server and a second device', async ({
   const status = connectivity(page);
   await expect(status).toContainText('متصل');
 
-  // Offline: navigate, add a fabric (prices typed in rial), see it listed and waiting.
+  // Offline: add a product with its first stock (prices typed in rial), see it listed and waiting.
   await desk.setOffline(true);
   await expect(status).toContainText('دون اتصال');
-  // The header's button (the empty state offers the same link).
-  await page.getByRole('link', { name: 'قماش جديد' }).first().click();
-  await expect(page.getByLabel('اسم القماش')).toBeVisible();
-  await page.getByLabel('اسم القماش').fill('روزا');
-  await page.getByLabel('السعر المرجعي للمتر').fill('400');
-  await page.getByLabel('أقل سعر للمتر').fill('360');
-  await page.getByRole('button', { name: 'حفظ' }).click();
-  await expect(page).toHaveURL(/\/inventory\/fabric\?id=/);
-  await page.getByRole('link', { name: 'العودة إلى الأقمشة' }).click();
-  await expect(page.getByRole('link', { name: 'روزا', exact: true })).toBeVisible();
-  await expect(status).toContainText('عملية معلّقة واحدة');
-  expect((await serverFabrics(request)).map((fabric) => fabric.name)).not.toContain('روزا');
+  const productId = await addProduct(page, { name: 'روزا' });
+  await page.getByRole('link', { name: 'العودة إلى المخزون' }).click();
+  await expect(page.getByRole('row', { name: /روزا/ })).toContainText('متوفر');
+  await expect(status).toContainText(/معلّق/);
+  expect((await serverProducts(request)).map((product) => product.name)).not.toContain('روزا');
 
-  // Online again: the outbox drains by itself and the server has it (400 rial = 2000 cents).
+  // Online again: the outbox drains by itself and the server has the product (400 rial = 2000
+  // cents, minimum 360 rial) and its batch (50 m for 16,000 rial).
   await desk.setOffline(false);
   await expect(status).not.toContainText(/معلّق/);
   await expect
-    .poll(async () => (await serverFabrics(request)).find((fabric) => fabric.name === 'روزا'))
-    .toMatchObject({ refPricePerMeterCents: 2000 });
+    .poll(async () => (await serverProducts(request)).find((product) => product.id === productId))
+    .toMatchObject({ pricePerMeterCents: 2000, minPricePerMeterCents: 1800 });
+  await expect
+    .poll(async () =>
+      (
+        await serverRecords<{
+          productId: string;
+          receivedQuantity: number;
+          costTotalCents: number;
+        }>(request, 'product_batch')
+      )
+        .filter((batch) => batch.productId === productId)
+        .map((batch) => [batch.receivedQuantity, batch.costTotalCents]),
+    )
+    .toEqual([[5000, 80_000]]);
 
   // A second device (fresh browser, empty local database) pulls it after signing in.
   const phone = await browser.newContext({
@@ -48,7 +64,7 @@ test('a fabric added offline reaches the server and a second device', async ({
   const phonePage = await phone.newPage();
   await signIn(phonePage);
   await phonePage.goto('/inventory');
-  await expect(phonePage.getByRole('link', { name: 'روزا', exact: true })).toBeVisible();
+  await expect(phonePage.getByRole('link', { name: /روزا/ })).toBeVisible();
 
   await desk.close();
   await phone.close();

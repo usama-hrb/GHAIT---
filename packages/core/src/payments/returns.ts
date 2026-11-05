@@ -9,29 +9,33 @@ import { assertInteger, mulDivRoundHalfUp } from '../numeric/index.js';
 
 /** A sale line as returns see it. */
 export interface ReturnableLine {
-  soldCm: number;
+  soldQuantity: number;
   lineTotalCents: number;
 }
 
 /**
- * The part of `amountCents` (a line's total, or its cost) that belongs to the first `returnedCm`
- * of the `soldCm` the line sold: round(amount × returned ÷ sold) half up; the whole line gives
+ * The part of `amountCents` (a line's total, or its cost) that belongs to the first `returnedQuantity`
+ * of the `soldQuantity` the line sold: round(amount × returned ÷ sold) half up; the whole line gives
  * the whole amount, so the last return takes the exact remainder (like the last sale off a roll).
  */
-export function shareOfLineCents(amountCents: number, soldCm: number, returnedCm: number): number {
+export function shareOfLineCents(
+  amountCents: number,
+  soldQuantity: number,
+  returnedQuantity: number,
+): number {
   assertInteger(amountCents, 'amountCents', 0);
-  assertInteger(soldCm, 'soldCm', 1);
-  assertInteger(returnedCm, 'returnedCm', 0);
-  if (returnedCm > soldCm) {
-    throw new RangeError(`returned ${String(returnedCm)} cm of a ${String(soldCm)} cm line`);
+  assertInteger(soldQuantity, 'soldQuantity', 1);
+  assertInteger(returnedQuantity, 'returnedQuantity', 0);
+  if (returnedQuantity > soldQuantity) {
+    throw new RangeError(`returned ${String(returnedQuantity)} of a ${String(soldQuantity)} line`);
   }
-  if (returnedCm === soldCm) return amountCents;
-  return mulDivRoundHalfUp(amountCents, returnedCm, soldCm);
+  if (returnedQuantity === soldQuantity) return amountCents;
+  return mulDivRoundHalfUp(amountCents, returnedQuantity, soldQuantity);
 }
 
 /** A line of an invoice and how much of it has been given back. */
 export interface InvoiceLine extends ReturnableLine {
-  returnedCm: number;
+  returnedQuantity: number;
 }
 
 /**
@@ -50,7 +54,8 @@ export function saleTotalAfterReturns(sale: {
     assertInteger(line.lineTotalCents, 'lineTotalCents', 0);
     linesCents += line.lineTotalCents;
     keptCents +=
-      line.lineTotalCents - shareOfLineCents(line.lineTotalCents, line.soldCm, line.returnedCm);
+      line.lineTotalCents -
+      shareOfLineCents(line.lineTotalCents, line.soldQuantity, line.returnedQuantity);
   }
   if (sale.discountCents > linesCents) {
     throw new RangeError(
@@ -66,10 +71,10 @@ export function saleTotalAfterReturns(sale: {
 
 /**
  * The credit a return gives the customer (RT2): what the invoice was worth before it less what it
- * is worth after it. `returningCm` is what each line gives back now, on top of `returnedCm`.
+ * is worth after it. `returningQuantity` is what each line gives back now, on top of `returnedQuantity`.
  */
 export function returnCreditCents(sale: {
-  lines: readonly (InvoiceLine & { returningCm: number })[];
+  lines: readonly (InvoiceLine & { returningQuantity: number })[];
   discountCents: number;
 }): number {
   const before = saleTotalAfterReturns(sale);
@@ -77,7 +82,7 @@ export function returnCreditCents(sale: {
     discountCents: sale.discountCents,
     lines: sale.lines.map((line) => ({
       ...line,
-      returnedCm: line.returnedCm + line.returningCm,
+      returnedQuantity: line.returnedQuantity + line.returningQuantity,
     })),
   });
   return before - after;

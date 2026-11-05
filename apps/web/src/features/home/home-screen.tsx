@@ -1,153 +1,129 @@
 'use client';
 
-import { PlusIcon, ShoppingCartIcon, TruckIcon } from 'lucide-react';
-import Link from 'next/link';
-import { ExpenseReminders } from '@/features/expenses';
-import { PayablesSummary } from '@/features/payables';
-import { ZakatReminder } from '@/features/zakat';
+import { useMemo } from 'react';
 import { messages } from '@/i18n';
-import { useCanSeeCosts, useLiveQuery, useRepositories } from '@/local-db';
+import {
+  useCanSeeCosts,
+  useLiveQuery,
+  useRepositories,
+  useSession,
+  useSyncStatus,
+} from '@/local-db';
 import { LoadingState, OfflineNotice } from '@/shared/brand';
-import { Meters, Money } from '@/shared/format';
-import { shopToday } from '@/shared/lib/dates';
-import { Button } from '@/shared/ui/button';
+import { ActivityPanel } from './activity-panel';
+import { AttentionPanel } from './attention-panel';
+import { attentionItems } from './attention';
+import { DataStatus } from './data-status';
+import { HomeHeader } from './home-header';
+import { KpiRow } from './kpi-cards';
+import { SalesChart } from './sales-chart';
+import { SectionBoundary } from './section-boundary';
+import { useShopToday } from './use-shop-today';
 
 const t = messages.home;
 
+/** Business figures. Each figure is its own live query, so a sale re-reads sales and not the stock. */
+function Overview({ today, seesCosts }: { today: string; seesCosts: boolean }) {
+  const repositories = useRepositories();
+  const sales = useLiveQuery(() => repositories.home.sales(today, 7), [repositories, today]);
+  // Cost and profit are never read on a cashier's device (SPEC §11).
+  const profit = useLiveQuery(
+    () => (seesCosts ? repositories.home.grossProfitToday(today) : null),
+    [repositories, today, seesCosts],
+  );
+  const receivables = useLiveQuery(() => repositories.home.receivables(), [repositories]);
+  const payables = useLiveQuery(
+    () => (seesCosts ? repositories.home.payables() : null),
+    [repositories, seesCosts],
+  );
+  return (
+    <KpiRow
+      seesCosts={seesCosts}
+      sales={sales}
+      profit={profit}
+      receivables={receivables}
+      payables={payables}
+    />
+  );
+}
+
+/** What needs doing: stock, late debts, bills, zakat and refused changes, ranked. */
+function Attention({ today, seesCosts }: { today: string; seesCosts: boolean }) {
+  const repositories = useRepositories();
+  const { rejectedCount } = useSyncStatus();
+  const stock = useLiveQuery(() => repositories.home.stock(), [repositories]);
+  const receivables = useLiveQuery(() => repositories.home.receivables(), [repositories]);
+  const dues = useLiveQuery(
+    () => (seesCosts ? repositories.home.dues(today) : null),
+    [repositories, today, seesCosts],
+  );
+  const items = useMemo(
+    () =>
+      stock === undefined || receivables === undefined || dues === undefined
+        ? undefined
+        : attentionItems({ stock, receivables, dues, rejectedCount, seesCosts }),
+    [stock, receivables, dues, rejectedCount, seesCosts],
+  );
+  return <AttentionPanel items={items} />;
+}
+
+function Activity({ seesCosts }: { seesCosts: boolean }) {
+  const repositories = useRepositories();
+  const events = useLiveQuery(
+    () => repositories.home.recent(10, seesCosts),
+    [repositories, seesCosts],
+  );
+  return <ActivityPanel events={events} />;
+}
+
 /**
- * The home screen (SPEC §14.1): today's sales, bills due, colours running low, overdue debts,
- * and shortcuts. Everything from the device's data, offline too.
+ * The home screen (SPEC §14.1, ADR 0018): how the shop is doing (today's figures and a sales
+ * chart), what needs the owner (ranked), and what just happened, with the three things done most
+ * one tap away. Everything comes from this device's data and works offline.
+ *
+ * Small screens stack by priority: actions, figures, what needs attention, sales, activity. From a
+ * container width of 56rem the activity moves to a column beside the sales and the attention list.
  */
 export function HomeScreen() {
   const repositories = useRepositories();
-  // A cashier's home is the till: no buying, bills, zakat or what the shop owes.
+  const session = useSession();
+  // A cashier's home is the till: no buying, bills, zakat, profit or what the shop owes.
   const seesCosts = useCanSeeCosts();
-  const data = useLiveQuery(async () => {
-    const today = shopToday();
-    const [sales, stock, debts, returnedToday] = await Promise.all([
-      repositories.sales.list(),
-      repositories.inventory.overview(),
-      repositories.accounts.debts('oldest'),
-      repositories.sales.returnedOn(today),
-    ]);
-    const todays = sales.filter(
-      (summary) => summary.sale.date === today && summary.sale.voidedAt === null,
-    );
-    return {
-      salesCount: todays.length,
-      // Goods given back today lower today's sales (RT4).
-      salesCents: todays.reduce((sum, summary) => sum + summary.sale.totalCents, 0) - returnedToday,
-      low: stock.fabrics.flatMap((fabric) =>
-        fabric.colors
-          .filter((color) => color.state === 'low')
-          .map((color) => ({ fabric: fabric.fabric, color })),
-      ),
-      overdue: debts.filter((debt) => debt.account.overdueCents > 0),
-    };
-  }, [repositories]);
+  const today = useShopToday();
+  const pulled = useLiveQuery(() => repositories.maintenance.pulledOnce(), [repositories]);
 
-  if (data === undefined) return <LoadingState />;
+  if (today === null || pulled === undefined) return <LoadingState />;
   return (
-    <div className="mx-auto grid w-full max-w-4xl gap-4">
+    <div className="@container mx-auto grid w-full max-w-[90rem] gap-5">
       <OfflineNotice />
-      <h2 className="font-heading text-xl font-semibold">{t.title}</h2>
-
-      <section aria-label={t.shortcuts} className="flex flex-wrap gap-2">
-        <Button asChild variant="accent" size="lg">
-          <Link href="/pos">
-            <ShoppingCartIcon aria-hidden />
-            {t.sell}
-          </Link>
-        </Button>
-        {seesCosts && (
-          <>
-            <Button asChild variant="outline" size="lg">
-              <Link href="/purchases/new">
-                <TruckIcon aria-hidden />
-                {t.buy}
-              </Link>
-            </Button>
-            <Button asChild variant="outline" size="lg">
-              <Link href="/expenses">
-                <PlusIcon aria-hidden />
-                {t.expense}
-              </Link>
-            </Button>
-          </>
-        )}
-      </section>
-
-      <section aria-label={t.todaySales} className="grid gap-1 rounded-xl border bg-card p-4">
-        <h3 className="font-heading font-semibold">{t.todaySales}</h3>
-        <p className="text-2xl font-semibold">
-          <Money cents={data.salesCents} />
-        </p>
-        <p className="text-sm text-muted-foreground">{t.salesCount(data.salesCount)}</p>
-      </section>
-
-      {seesCosts && (
+      <HomeHeader name={session.user?.displayName} today={today} seesCosts={seesCosts} />
+      {pulled ? (
         <>
-          <ExpenseReminders />
-          <ZakatReminder />
+          <SectionBoundary>
+            <Overview today={today} seesCosts={seesCosts} />
+          </SectionBoundary>
+          <div className="grid items-start gap-4 @4xl:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)]">
+            <div className="@4xl:col-start-1 @4xl:row-start-2">
+              <SectionBoundary>
+                <Attention today={today} seesCosts={seesCosts} />
+              </SectionBoundary>
+            </div>
+            <div className="@4xl:col-start-1 @4xl:row-start-1">
+              <SectionBoundary>
+                <SalesChart today={today} seesCosts={seesCosts} />
+              </SectionBoundary>
+            </div>
+            <div className="@4xl:col-start-2 @4xl:row-span-2 @4xl:row-start-1">
+              <SectionBoundary>
+                <Activity seesCosts={seesCosts} />
+              </SectionBoundary>
+            </div>
+          </div>
+          <DataStatus />
         </>
+      ) : (
+        <LoadingState variant="spinner" label={t.freshness.waitingForSync} />
       )}
-
-      <div className="grid gap-4 md:grid-cols-2">
-        <section
-          aria-label={t.lowStock}
-          className="grid content-start gap-2 rounded-xl border bg-card p-4"
-        >
-          <h3 className="font-heading font-semibold">{t.lowStock}</h3>
-          {data.low.length === 0 ? (
-            <p className="text-muted-foreground">{t.noLowStock}</p>
-          ) : (
-            <ul className="grid gap-1">
-              {data.low.slice(0, 8).map(({ fabric, color }) => (
-                <li key={color.variant.id} className="flex justify-between gap-2">
-                  <Link
-                    href={`/inventory/color?id=${color.variant.id}`}
-                    className="underline-offset-4 hover:underline"
-                  >
-                    {fabric.name} · {color.variant.colorName}
-                  </Link>
-                  <Meters cm={color.remainingCm} />
-                </li>
-              ))}
-            </ul>
-          )}
-          <Button asChild variant="link" className="justify-self-start px-0">
-            <Link href="/inventory">{t.seeAll}</Link>
-          </Button>
-        </section>
-
-        <section
-          aria-label={t.overdueDebts}
-          className="grid content-start gap-2 rounded-xl border bg-card p-4"
-        >
-          <h3 className="font-heading font-semibold">{t.overdueDebts}</h3>
-          {data.overdue.length === 0 ? (
-            <p className="text-muted-foreground">{t.noOverdue}</p>
-          ) : (
-            <ul className="grid gap-1">
-              {data.overdue.slice(0, 8).map(({ customer, account }) => (
-                <li key={customer.id} className="flex justify-between gap-2">
-                  <Link
-                    href={`/customers/view?id=${customer.id}`}
-                    className="underline-offset-4 hover:underline"
-                  >
-                    {customer.name}
-                  </Link>
-                  <Money cents={account.overdueCents} tone="debt" />
-                </li>
-              ))}
-            </ul>
-          )}
-          <Button asChild variant="link" className="justify-self-start px-0">
-            <Link href="/customers/debts">{t.seeAll}</Link>
-          </Button>
-        </section>
-        {seesCosts && <PayablesSummary />}
-      </div>
     </div>
   );
 }

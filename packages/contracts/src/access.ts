@@ -30,12 +30,17 @@ const NOTHING: EntityAccess = { read: 'none', push: [] };
  */
 export const CASHIER_ACCESS = {
   // The catalog and the stock: what is sold, at what price, how much is left. Costs are cut out.
-  fabric: SEES,
-  variant: SEES,
-  // The picture of a colour, for its tile: the till shows it, only the owner sets it.
+  product: SEES,
+  // The picture of a product, for its tile: the till shows it, only the owner sets it.
   photo: SEES,
-  roll: { read: 'redacted', push: [] },
-  stock_move: SEES,
+  // The stock the till sells from: quantities yes, cost no.
+  product_batch: { read: 'redacted', push: [] },
+  product_stock_move: SEES,
+  // What the shop kept its stock on before batches (ADR 0012) is history the till never needs.
+  fabric: NOTHING,
+  variant: NOTHING,
+  roll: NOTHING,
+  stock_move: NOTHING,
   // Selling: a sale with its payment, customers and their payments.
   customer: { read: 'all', push: ['upsert'] },
   sale: { read: 'all', push: ['append'] },
@@ -53,6 +58,8 @@ export const CASHIER_ACCESS = {
   write_off: NOTHING,
   expense: NOTHING,
   recurring_expense: NOTHING,
+  employee: NOTHING,
+  employee_salary: NOTHING,
   partner: NOTHING,
   capital_move: NOTHING,
   partner_draw: NOTHING,
@@ -69,6 +76,7 @@ export const CASHIER_ACCESS = {
 export const CASHIER_SETTING_KEYS: readonly string[] = [
   'money_display_unit',
   'shop_name',
+  'shop_logo',
   'remnant_threshold_cm',
 ];
 
@@ -95,7 +103,7 @@ export function mayPush(role: Role, entity: SyncEntity, kind: SyncOp['kind']): b
 
 /**
  * A record as `role` may receive it, or null when it must not be sent at all. A cashier gets no
- * roll cost (the length and the rest are all the till needs) and only its settings (RL1).
+ * batch cost (the length and the rest are all the till needs) and only its settings (RL1).
  */
 export function redactForRole<R extends object>(
   role: Role,
@@ -106,7 +114,7 @@ export function redactForRole<R extends object>(
   const access = CASHIER_ACCESS[entity];
   if (access.read === 'none') return null;
   if (access.read === 'all') return record;
-  if (entity === 'roll') return { ...record, costTotalCents: 0 };
+  if (entity === 'product_batch') return { ...record, costTotalCents: 0 };
   if (entity === 'setting') {
     const key = (record as { key?: unknown }).key;
     return typeof key === 'string' && CASHIER_SETTING_KEYS.includes(key) ? record : null;
@@ -117,20 +125,56 @@ export function redactForRole<R extends object>(
 export const ACCESS_ISSUES = {
   belowCostByCashier: 'cashier_cannot_confirm_below_cost',
   refundByCashier: 'cashier_cannot_refund',
+  belowMinimumByCashier: 'cashier_cannot_sell_below_minimum',
+  overrideNotByOwner: 'minimum_override_must_name_the_signed_in_owner',
 } as const;
 
 /**
+ * Who may put an owner's override of the minimum selling price on a sale line (ADR 0012): only
+ * the owner, and the line must name that owner, the user the request is made by. A cashier's
+ * sale never carries one; this refuses it wherever the sale comes in (sync push or REST).
+ */
+export function minimumOverrideIssues(
+  lines: readonly { minOverrideBy?: string | null }[],
+  actor: { role: Role; username: string },
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  lines.forEach((line, index) => {
+    const by = line.minOverrideBy ?? null;
+    if (by === null) return;
+    const path = ['lines', index, 'minOverrideBy'];
+    if (actor.role !== 'owner') {
+      issues.push({ path, message: ACCESS_ISSUES.belowMinimumByCashier, code: 'custom' });
+    } else if (by !== actor.username) {
+      issues.push({ path, message: ACCESS_ISSUES.overrideNotByOwner, code: 'custom' });
+    }
+  });
+  return issues;
+}
+
+/**
  * What a cashier may not put inside an op they are otherwise allowed to push (RL3): confirming
- * a sale under cost is the owner's decision, and cash does not leave the till as a refund.
+ * a sale under cost or under the minimum price is the owner's decision, and cash does not leave
+ * the till as a refund.
  */
 export function cashierPushIssues(entity: SyncEntity, payload: unknown): ValidationIssue[] {
   const issue = (path: (string | number)[], message: string): ValidationIssue[] => [
     { path, message, code: 'custom' },
   ];
   if (entity === 'sale') {
-    const sale = (payload as { sale?: { confirmedBelowCost?: unknown } } | null)?.sale;
-    if (sale?.confirmedBelowCost === true) {
+    const op = payload as {
+      sale?: { confirmedBelowCost?: unknown };
+      lines?: readonly { minOverrideBy?: unknown }[];
+    } | null;
+    if (op?.sale?.confirmedBelowCost === true) {
       return issue(['sale', 'confirmedBelowCost'], ACCESS_ISSUES.belowCostByCashier);
+    }
+    // Selling under the minimum price is the owner's decision too (ADR 0012).
+    const overridden = op?.lines?.findIndex(
+      (line) => line.minOverrideBy !== undefined && line.minOverrideBy !== null,
+    );
+    if (overridden !== undefined && overridden >= 0) {
+      return issue(['lines', overridden, 'minOverrideBy'], ACCESS_ISSUES.belowMinimumByCashier);
     }
   }
   if (entity === 'payment') {

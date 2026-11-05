@@ -2,7 +2,6 @@ import {
   BanknoteIcon,
   ChartColumnIcon,
   HandCoinsIcon,
-  HandshakeIcon,
   HistoryIcon,
   HouseIcon,
   PackageIcon,
@@ -11,7 +10,6 @@ import {
   SettingsIcon,
   ShieldCheckIcon,
   ShoppingCartIcon,
-  TruckIcon,
   UsersIcon,
 } from 'lucide-react';
 import type { Role } from '@fabric/contracts';
@@ -33,7 +31,6 @@ export const shopNavigation = (): readonly AppShellNavItem[] => [
     group: 'daily',
     tab: true,
   },
-  { href: '/purchases', label: messages.nav.purchases, icon: TruckIcon, group: 'daily' },
   {
     href: '/customers',
     label: messages.nav.customers,
@@ -41,10 +38,9 @@ export const shopNavigation = (): readonly AppShellNavItem[] => [
     group: 'daily',
     tab: true,
   },
-  // The money, the partners and the books.
+  // The money and the books. The partners are a section of Settings (ADR 0017).
   { href: '/payables', label: messages.nav.payables, icon: BanknoteIcon, group: 'books' },
   { href: '/expenses', label: messages.nav.expenses, icon: ReceiptIcon, group: 'books' },
-  { href: '/partners', label: messages.nav.partners, icon: HandshakeIcon, group: 'books' },
   { href: '/settlements', label: messages.nav.settlements, icon: ScaleIcon, group: 'books' },
   { href: '/integrity', label: messages.nav.integrity, icon: ShieldCheckIcon, group: 'books' },
   { href: '/zakat', label: messages.nav.zakat, icon: HandCoinsIcon, group: 'books' },
@@ -60,10 +56,19 @@ export const shopNavigation = (): readonly AppShellNavItem[] => [
  */
 const CASHIER_PAGES = ['/home', '/pos', '/inventory', '/customers', '/settings'] as const;
 
+/** Pages inside an allowed page that a cashier still may not open (the partners, SPEC §11). */
+const CASHIER_REFUSED = ['/settings/partners'] as const;
+
+const under = (pathname: string, page: string) =>
+  pathname === page || pathname.startsWith(`${page}/`);
+
 /** Whether `role` may open the page at `pathname` (the API refuses the rest anyway). */
 export function mayOpen(role: Role | undefined, pathname: string): boolean {
   if (role !== 'cashier') return true;
-  return CASHIER_PAGES.some((page) => pathname === page || pathname.startsWith(`${page}/`));
+  return (
+    CASHIER_PAGES.some((page) => under(pathname, page)) &&
+    !CASHIER_REFUSED.some((page) => under(pathname, page))
+  );
 }
 
 /** The navigation for `role`: a cashier sees only the pages above. */

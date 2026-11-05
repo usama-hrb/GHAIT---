@@ -1,9 +1,10 @@
 import {
-  checkPurchaseAggregate,
+  checkProductPurchase,
   type NewSupplierPayment,
+  type ProductPurchaseAggregate,
   type Purchase,
-  type PurchaseAggregate,
   type PurchaseDetail,
+  productSchema,
   type StoredPurchase,
   type StoredSupplierPayment,
   SERVER_DEVICE_ID,
@@ -15,7 +16,7 @@ import {
 } from '@fabric/contracts';
 import { HttpStatus, Injectable, type OnModuleInit } from '@nestjs/common';
 import { AppHttpException, requestContext } from '../../common/index.js';
-import { InventoryService } from '../inventory/index.js';
+import { StockService } from '../stock/index.js';
 import {
   type SyncedRow,
   type SyncHandler,
@@ -29,9 +30,9 @@ import { SupplierPaymentRepository } from './supplier-payment.repository.js';
 const stored = <R>(row: SyncedRow<R>) => ({ ...row.record, serverSeq: row.serverSeq });
 
 /**
- * Purchases → rolls (SPEC §2.3). A device sends one append op with the purchase and the rolls and
- * stock moves it creates; this re-checks them with @fabric/core (checkPurchaseAggregate) and
- * stores them atomically, in the op's transaction.
+ * Purchases → stock batches (ADR 0012). A device sends one append op with the purchase and the
+ * batch and receipt it creates; this re-checks them (checkProductPurchase, @fabric/core) against
+ * the product and stores them atomically, in the op's transaction.
  */
 @Injectable()
 export class PurchasingService implements OnModuleInit {
@@ -40,7 +41,7 @@ export class PurchasingService implements OnModuleInit {
     private readonly sync: SyncService,
     private readonly purchases: PurchaseRepository,
     private readonly supplierPayments: SupplierPaymentRepository,
-    private readonly inventory: InventoryService,
+    private readonly stock: StockService,
   ) {}
 
   onModuleInit(): void {
@@ -121,7 +122,7 @@ export class PurchasingService implements OnModuleInit {
   }
 
   /** REST: the same aggregate a device would push (scripts and tools act as a device). */
-  async create(aggregate: PurchaseAggregate): Promise<PurchaseDetail> {
+  async create(aggregate: ProductPurchaseAggregate): Promise<PurchaseDetail> {
     await this.sync.appendDirect('purchase', aggregate.purchase.id, aggregate);
     return this.get(aggregate.purchase.id);
   }
@@ -136,24 +137,27 @@ export class PurchasingService implements OnModuleInit {
       throw new AppHttpException('not_found', `No purchase ${id}`, HttpStatus.NOT_FOUND);
     return {
       purchase: stored(purchase),
-      rolls: (await this.inventory.rollsOfPurchase(id)).map(stored),
+      batches: (await this.stock.batchesOfPurchase(id)).map(stored),
     };
   }
 
   private async receive(
-    aggregate: PurchaseAggregate,
+    aggregate: ProductPurchaseAggregate,
     context: { entityId: string; deviceId: string },
   ): Promise<SyncedRow<Purchase>> {
     const { purchase } = aggregate;
     if (purchase.id !== context.entityId || purchase.deviceId !== context.deviceId) {
       throw new SyncRejection('bad_request', 'The purchase does not match the op (id or device)');
     }
-    const issues = checkPurchaseAggregate(aggregate);
+    const productId = aggregate.batches[0]?.productId;
+    const found = productId ? await this.sync.find('product', productId) : undefined;
+    const product = found ? productSchema.safeParse(found.record) : undefined;
+    const issues = checkProductPurchase(aggregate, product?.success ? product.data : undefined);
     if (issues.length > 0) {
-      throw new SyncRejection('validation_failed', 'The rolls do not match the purchase', issues);
+      throw new SyncRejection('validation_failed', 'The batch does not match the purchase', issues);
     }
     const written = await this.purchases.insert(purchase);
-    await this.inventory.receive(aggregate.rolls, aggregate.moves);
+    await this.stock.receive(aggregate.batches, aggregate.moves);
     return written;
   }
 }

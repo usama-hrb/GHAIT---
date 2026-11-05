@@ -1,5 +1,5 @@
 import {
-  buildPurchaseAggregate,
+  type BatchHistory,
   buildSaleAggregate,
   buildWriteOff,
   type CustomerAccountDetail,
@@ -10,8 +10,6 @@ import {
   newSaleSchema,
   type NewSaleInput,
   RECEIVABLE_ISSUES,
-  rollCode,
-  rollDetailSchema,
   saleDetailSchema,
   type SyncOp,
   type SyncOpResult,
@@ -20,46 +18,25 @@ import {
 } from '@fabric/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestApp, type Session, type TestApp } from './support/app.js';
+import { stockKit } from './support/stock.js';
 
 describe('customers, credit and payments (BUILD_PROMPTS 3.5)', () => {
   let t: TestApp;
   let session: Session;
-  const variantId = crypto.randomUUID();
-  let rollId: string;
-  let counter = 0;
+  let kit: ReturnType<typeof stockKit>;
+  let batchId: string;
   let clock = Date.UTC(2026, 9, 30, 10, 0);
   const tick = () => new Date((clock += 60_000)).toISOString();
 
   beforeAll(async () => {
     t = await createTestApp();
     session = await t.login();
-    const fabricId = crypto.randomUUID();
-    await as(t.http().put(`/fabrics/${fabricId}`))
-      .send({ name: 'روزا', refPricePerMeterCents: 2000, minPricePerMeterCents: 1700 })
-      .expect(200);
-    await as(t.http().put(`/variants/${variantId}`))
-      .send({ fabricId, colorName: 'أحمر' })
-      .expect(200);
-    // T1's roll, large enough for every sale here: 16 dh/m.
-    const aggregate = buildPurchaseAggregate(
-      {
-        method: 'meter',
-        date: '2026-09-01',
-        supplierId: null,
-        notes: null,
-        pricePerMeterCents: 1600,
-        rolls: [{ variantId, lengthCm: 50_000 }],
-      },
-      {
-        purchaseId: crypto.randomUUID(),
-        rollIds: [crypto.randomUUID()],
-        moveIds: [crypto.randomUUID()],
-        shortCodes: [rollCode('A', ++counter)],
-      },
-      { deviceId: 'desk', now: tick() },
-    );
-    await push(op('purchase', aggregate.purchase.id, aggregate));
-    rollId = aggregate.rolls[0]?.id ?? '';
+    kit = stockKit(t, () => session, push);
+    const productId = await kit.product();
+    // T1's batch, large enough for every sale here: 16 dh/m.
+    batchId = (
+      await kit.buy({ productId, date: '2026-09-01', quantity: 50_000, totalCostCents: 800_000 })
+    ).id;
   });
 
   afterAll(async () => {
@@ -103,26 +80,25 @@ describe('customers, credit and payments (BUILD_PROMPTS 3.5)', () => {
     perMeterCents: number,
     date: string,
   ) {
-    const detail = rollDetailSchema.parse(
-      (await as(t.http().get(`/rolls/${rollId}`)).expect(200)).body,
-    );
+    const history = await kit.history(batchId);
     const input: NewSaleInput = {
       date,
       customerId,
       lines: [
         {
-          rollId,
-          soldCm,
-          price: { perMeterCents },
-          refPricePerMeterCents: 2000,
-          minPricePerMeterCents: 1700,
+          batchId,
+          unit: 'meter',
+          quantity: soldCm,
+          price: { perUnitCents: perMeterCents },
+          refPriceCents: 2000,
+          minPriceCents: 1700,
         },
       ],
       paidCents: 0,
     };
     const built = buildSaleAggregate(
       newSaleSchema.parse(input),
-      new Map([[rollId, { roll: detail.roll, moves: detail.moves }]]),
+      new Map<string, BatchHistory>([[batchId, history]]),
       {
         saleId: crypto.randomUUID(),
         lineIds: [crypto.randomUUID()],

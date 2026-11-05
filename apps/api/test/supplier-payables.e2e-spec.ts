@@ -1,10 +1,11 @@
 import {
-  buildPurchaseAggregate,
+  batchCode,
+  buildProductPurchase,
   errorResponseSchema,
   HEADERS,
   integrityReportSchema,
+  newProductPurchaseSchema,
   PURCHASE_ISSUES,
-  rollCode,
   type SyncOp,
   type SyncOpResult,
   SUPPLIER_PAYMENT_ISSUES,
@@ -20,19 +21,21 @@ import { createTestApp, type Session, type TestApp } from './support/app.js';
 describe('supplier payables (BUILD_PROMPTS 5.3, SP1–SP4)', () => {
   let t: TestApp;
   let session: Session;
-  const variantId = crypto.randomUUID();
+  const productId = crypto.randomUUID();
   const supplierId = crypto.randomUUID();
   let counter = 0;
 
   beforeAll(async () => {
     t = await createTestApp();
     session = await t.login();
-    const fabricId = crypto.randomUUID();
-    await as(t.http().put(`/fabrics/${fabricId}`))
-      .send({ name: 'روزا', refPricePerMeterCents: 2000, minPricePerMeterCents: 1700 })
-      .expect(200);
-    await as(t.http().put(`/variants/${variantId}`))
-      .send({ fabricId, colorName: 'أحمر' })
+    await as(t.http().put(`/products/${productId}`))
+      .send({
+        name: 'روزا',
+        purchaseUnits: ['meter'],
+        sellingUnits: ['meter'],
+        pricePerMeterCents: 2000,
+        minPricePerMeterCents: 1700,
+      })
       .expect(200);
     await as(t.http().put(`/suppliers/${supplierId}`))
       .send({ name: 'مورد الأقمشة', phone: '0522000000' })
@@ -56,21 +59,22 @@ describe('supplier payables (BUILD_PROMPTS 5.3, SP1–SP4)', () => {
 
   /** 50 m at 16 dh/m = 800 dh, from the supplier unless said otherwise. */
   async function buy(paidCents: number | undefined, from: string | null = supplierId) {
-    const aggregate = buildPurchaseAggregate(
-      {
-        method: 'meter',
+    const aggregate = buildProductPurchase(
+      newProductPurchaseSchema.parse({
         date: '2026-10-01',
         supplierId: from,
         paidCents,
         notes: null,
-        pricePerMeterCents: 1600,
-        rolls: [{ variantId, lengthCm: 5000 }],
-      },
+        productId,
+        unit: 'meter',
+        quantity: 5000,
+        totalCostCents: 80_000,
+      }),
       {
         purchaseId: crypto.randomUUID(),
-        rollIds: [crypto.randomUUID()],
-        moveIds: [crypto.randomUUID()],
-        shortCodes: [rollCode('A', ++counter)],
+        batchId: crypto.randomUUID(),
+        moveId: crypto.randomUUID(),
+        code: batchCode('A', ++counter),
       },
       { deviceId: 'desk', now: new Date().toISOString() },
     );

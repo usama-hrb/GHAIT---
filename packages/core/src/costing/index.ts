@@ -35,10 +35,13 @@ export {
   type EstCmPerKgPolicy,
   isRenewalCostHigher,
   measuredCmPerKg,
+  meterPurchaseCostCents,
   nextEstCmPerKg,
+  piecePurchaseCostCents,
   type PurchasedRoll,
   type PurchaseInput,
   type PurchaseRolls,
+  weightPurchaseCostCents,
 } from './purchase.js';
 export {
   costBasisLength,

@@ -103,7 +103,7 @@ To add a component, run from `apps/web`: `pnpm dlx shadcn@4.23.0 add <name>`. Th
 
 - Everything goes through `@fabric/core` (`formatMoneyAmount`, `parseMoneyInput`, `formatLengthMeters`, `parseLengthInput`); no number logic lives in web.
 - Plain text (WhatsApp invoice, toasts, CSV): use core's `formatMoney(cents, unit)` → "410 ريال" and `formatLength(cm)` → "2.75 م". They join number and unit with a no-break space and put an LRM before a minus sign, so "-410" doesn't flip in Arabic text. Components keep rendering digits (in `<bdi>`) and label separately.
-- Display unit: `MoneyUnitProvider` holds the `money_display_unit` setting (rial by default). `MoneyUnitToggle` switches it; it moves to local-db settings in BUILD_PROMPTS 3.1.
+- Display unit: `MoneyUnitProvider` holds the `money_display_unit` setting (rial by default). The owner picks it in Settings › Currency (a draft until saved; the screen previews sample amounts in both units); `MoneyUnitToggle` stays for the design gallery. Switching converts no data: amounts are always whole cents ([ADR 0017](adr/0017-settings-workspace.md)).
 - Inputs accept Arabic-Indic and Persian digits and `.`/`٫`/`,` as the decimal point, use `inputmode="decimal"` and return integer cents/cm, or `null` while empty or invalid. Thousands separators are rejected.
 - Rial input must be a whole number of cents: half a rial (2.5 cents) is rejected with a message, never rounded (SPEC §0.2).
 - Errors show after the first blur; pass `showError` to show them after a submit attempt.

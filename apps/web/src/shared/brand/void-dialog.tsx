@@ -1,6 +1,6 @@
 'use client';
 
-import { useId, useState } from 'react';
+import { type ReactNode, useId, useState } from 'react';
 import { messages } from '@/i18n';
 import { Button } from '@/shared/ui/button';
 import {
@@ -23,6 +23,9 @@ export function VoidDialog({
   description,
   onConfirm,
   confirmLabel = messages.voidDialog.confirm,
+  busyLabel,
+  confirmDisabled = false,
+  children,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -31,6 +34,12 @@ export function VoidDialog({
   onConfirm: (reason: string) => Promise<void>;
   /** The confirm button (default: confirm the cancellation). */
   confirmLabel?: string;
+  /** The confirm button while the cancellation is being saved (default: the same label). */
+  busyLabel?: string;
+  /** The cancellation cannot be confirmed now (something the dialog explains in `children`). */
+  confirmDisabled?: boolean;
+  /** What the cancellation will do, shown under the description (who, what stays, what blocks). */
+  children?: ReactNode;
 }) {
   const id = useId();
   const [reason, setReason] = useState('');
@@ -54,6 +63,7 @@ export function VoidDialog({
           className="grid gap-4"
           onSubmit={(event) => {
             event.preventDefault();
+            if (confirmDisabled || busy) return;
             if (reason.trim() === '') {
               setError(true);
               return;
@@ -68,6 +78,7 @@ export function VoidDialog({
             <DialogTitle>{title}</DialogTitle>
             <DialogDescription>{description}</DialogDescription>
           </DialogHeader>
+          {children}
           <Field data-invalid={error ? true : undefined}>
             <FieldLabel htmlFor={`${id}-reason`}>{messages.voidDialog.reason}</FieldLabel>
             <Textarea
@@ -89,8 +100,8 @@ export function VoidDialog({
                 {messages.forms.cancel}
               </Button>
             </DialogClose>
-            <Button type="submit" variant="destructive" disabled={busy}>
-              {confirmLabel}
+            <Button type="submit" variant="destructive" disabled={busy || confirmDisabled}>
+              {busy ? (busyLabel ?? confirmLabel) : confirmLabel}
             </Button>
           </DialogFooter>
         </form>

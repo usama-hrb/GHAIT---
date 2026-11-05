@@ -30,7 +30,10 @@ export interface AccountInvoice {
   saleId: string;
   date: string;
   dueDate: string | null;
+  /** What the invoice is worth now: its sale total less what its returns took off (RT1–RT3). */
   totalCents: number;
+  /** What its returns took off the sale total; the sale was for `totalCents + returnedCents`. */
+  returnedCents: number;
   paidCents: number;
   /** total − paid, the total being the invoice's worth after returns; never negative (RT3). */
   dueCents: number;
@@ -67,6 +70,15 @@ export interface CustomerAccount {
    * the customer owes the shop; negative: the shop holds money for them. Equals Σ due − credit.
    */
   balanceCents: number;
+  /**
+   * Σ what the invoices are worth (sales after their returns), voided sales left out: everything
+   * the customer was charged. `purchasesCents − receivedCents` is `balanceCents`.
+   */
+  purchasesCents: number;
+  /** Σ payments − Σ refunds: what the customer has put in, net of what was given back. */
+  receivedCents: number;
+  /** Σ refunds (already taken off `receivedCents`). */
+  refundedCents: number;
   /** What can still be collected: what is due on invoices not written off. */
   collectibleCents: number;
   /** What is due on written-off invoices. */
@@ -75,6 +87,8 @@ export interface CustomerAccount {
   creditCents: number;
   /** Due on invoices not written off whose due date has passed. */
   overdueCents: number;
+  /** Every invoice not voided, settled ones too, oldest first. */
+  invoices: AccountInvoice[];
   /** Invoices with something due, oldest first (written-off ones included, flagged). */
   openInvoices: AccountInvoice[];
   /** Date of the oldest invoice still to collect: the age of the debt. */
@@ -125,23 +139,30 @@ export function customerAccount(input: {
 
   let balanceCents = 0;
   let creditCents = 0;
+  let receivedCents = 0;
+  let refundedCents = 0;
   for (const payment of input.payments) {
     assertInteger(payment.amountCents, 'payment amountCents', 1);
     if (payment.kind === 'payment') {
       balanceCents -= payment.amountCents;
       creditCents += payment.amountCents;
+      receivedCents += payment.amountCents;
     } else {
       balanceCents += payment.amountCents;
       creditCents -= payment.amountCents;
+      receivedCents -= payment.amountCents;
+      refundedCents += payment.amountCents;
     }
   }
 
   const invoices: AccountInvoice[] = [];
+  let purchasesCents = 0;
   for (const sale of input.sales) {
     if (sale.voided) continue;
     const paidCents = appliedBySale.get(sale.saleId) ?? 0;
     const totalCents = sale.totalCents - (sale.returnedCents ?? 0);
     balanceCents += totalCents;
+    purchasesCents += totalCents;
     creditCents -= paidCents;
     const dueCents = totalCents - paidCents;
     invoices.push({
@@ -149,6 +170,7 @@ export function customerAccount(input: {
       date: sale.date,
       dueDate: sale.dueDate,
       totalCents,
+      returnedCents: sale.returnedCents ?? 0,
       paidCents,
       dueCents,
       writtenOff: sale.writtenOff,
@@ -156,18 +178,23 @@ export function customerAccount(input: {
     });
   }
 
-  const open = invoices
-    .filter((invoice) => invoice.dueCents > 0)
-    .sort((a, b) => a.date.localeCompare(b.date) || a.saleId.localeCompare(b.saleId));
+  const oldestFirst = (a: AccountInvoice, b: AccountInvoice) =>
+    a.date.localeCompare(b.date) || a.saleId.localeCompare(b.saleId);
+  invoices.sort(oldestFirst);
+  const open = invoices.filter((invoice) => invoice.dueCents > 0);
   const collectible = open.filter((invoice) => !invoice.writtenOff);
   const sum = (list: readonly AccountInvoice[]) =>
     list.reduce((total, invoice) => total + invoice.dueCents, 0);
   return {
     balanceCents,
+    purchasesCents,
+    receivedCents,
+    refundedCents,
     collectibleCents: sum(collectible),
     writtenOffCents: sum(open.filter((invoice) => invoice.writtenOff)),
     creditCents,
     overdueCents: sum(collectible.filter((invoice) => invoice.overdue)),
+    invoices,
     openInvoices: open,
     oldestOpenDate: collectible[0]?.date ?? null,
   };

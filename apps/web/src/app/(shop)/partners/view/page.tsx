@@ -1,15 +1,6 @@
-import type { Metadata } from 'next';
-import { Suspense } from 'react';
-import { PartnerAccountScreen } from '@/features/partners';
-import { messages } from '@/i18n';
+import { RedirectTo } from '@/shared/lib/redirect';
 
-export const metadata: Metadata = { title: messages.partners.account };
-
-/** /partners/view?id=<uuid>: one cached page for both partners (offline). */
-export default function PartnerAccountPage() {
-  return (
-    <Suspense>
-      <PartnerAccountScreen />
-    </Suspense>
-  );
+/** /partners/view?id=… moved into Settings (ADR 0017); the partner's id travels with it. */
+export default function Page() {
+  return <RedirectTo href="/settings/partners/view" keepSearch />;
 }

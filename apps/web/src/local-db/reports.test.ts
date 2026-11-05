@@ -4,6 +4,7 @@ import { ShopDatabase } from './db';
 import { createRepositories, type Repositories } from './repositories';
 import { DEVICE_CODE } from './session';
 import { LocalStore } from './store';
+import { seedBatch, seedProduct } from './test-helpers';
 
 let db: ShopDatabase;
 let repos: Repositories;
@@ -23,29 +24,22 @@ afterEach(async () => {
 
 describe('reports on the device (BUILD_PROMPTS 5.2)', () => {
   it('from the device’s records: a sale, an expense, the stock left', async () => {
-    const fabricId = await repos.fabrics.save({
-      name: 'روزا',
-      refPricePerMeterCents: dh(20),
+    const productId = await seedProduct(repos, {
+      pricePerMeterCents: dh(20),
       minPricePerMeterCents: dh(15),
     });
-    const variantId = await repos.variants.save({ fabricId, colorName: 'أحمر' });
-    const purchaseId = await repos.purchases.create({
-      method: 'meter',
-      date: '2026-10-01',
-      pricePerMeterCents: dh(16),
-      rolls: [{ variantId, lengthCm: 5000 }],
-    });
-    const [roll] = await repos.purchases.rollsOf(purchaseId);
+    const batchId = await seedBatch(repos, productId, 5000, { costPerMeterCents: dh(16) });
     await repos.sales.create({
       date: '2026-10-05',
       customerId: null,
       lines: [
         {
-          rollId: roll?.id ?? '',
-          soldCm: 1000,
-          price: { perMeterCents: dh(18) },
-          refPricePerMeterCents: dh(20),
-          minPricePerMeterCents: dh(15),
+          batchId: batchId,
+          unit: 'meter',
+          quantity: 1000,
+          price: { perUnitCents: dh(18) },
+          refPriceCents: dh(20),
+          minPriceCents: dh(15),
         },
       ],
       paidCents: dh(180),
@@ -64,8 +58,12 @@ describe('reports on the device (BUILD_PROMPTS 5.2)', () => {
         ['2026-11', 0, 0],
       ],
     );
-    expect(view.colors[0]).toMatchObject({ colorName: 'أحمر', soldCm: 1000, profitCents: dh(20) });
-    expect(view.byFabric[0]).toMatchObject({
+    expect(view.products[0]).toMatchObject({
+      productName: 'روزا',
+      soldCm: 1000,
+      profitCents: dh(20),
+    });
+    expect(view.byProduct[0]).toMatchObject({
       name: 'روزا',
       discountCents: dh(20),
       discountBp: 1000,

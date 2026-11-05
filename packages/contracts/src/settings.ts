@@ -1,9 +1,13 @@
 import { DEFAULT_EST_CM_PER_KG_POLICY, DEFAULT_ZAKAT_SETTINGS, NISAB_GRAMS } from '@fabric/core';
 import { z } from 'zod';
 import { isoDateSchema } from './common.js';
+import { photoImageSchema } from './photos.js';
 
 /** A metal price entered by hand, with the day it was seen (SPEC §10). */
 const metalPriceSchema = z.object({ pricePerGramCents: z.int().min(1), date: isoDateSchema });
+
+/** The longest business name (a shared invoice's heading and the sidebar have room for this). */
+export const SHOP_NAME_MAX = 80;
 
 /**
  * Every setting the app reads (SPEC §0.7: rules marked [قابل للإعداد] live in the `setting`
@@ -18,7 +22,13 @@ export const SETTINGS = {
     default: DEFAULT_EST_CM_PER_KG_POLICY,
   },
   /** SPEC §4: the shop's name at the top of a shared invoice. */
-  shop_name: { schema: z.string().trim().min(1).max(80), default: 'غيث' },
+  shop_name: { schema: z.string().trim().min(1).max(SHOP_NAME_MAX), default: 'غيث' },
+  /**
+   * The shop's logo (ADR 0017): the small JPEG a device builds for a product photo (ADR 0009),
+   * null while there is none (the built-in brand mark shows). One value for the whole shop; the
+   * sidebar, the header and anything else branded read it from here and from nowhere else.
+   */
+  shop_logo: { schema: photoImageSchema.nullable(), default: null },
   /** SPEC §5: expense categories, a stable key and the label shown (keys stay on old expenses). */
   expense_categories: {
     schema: z
@@ -71,6 +81,16 @@ export type SettingKey = keyof typeof SETTINGS;
 export type SettingValue<K extends SettingKey> = z.infer<(typeof SETTINGS)[K]['schema']>;
 export const SETTING_KEYS = Object.keys(SETTINGS) as [SettingKey, ...SettingKey[]];
 export const settingKeySchema = z.enum(SETTING_KEYS);
+
+/**
+ * A setting's value as the audit log keeps it: the logo's bytes stay out of it, as a photo's do
+ * (ADR 0009), leaving its size. Every other value is kept as it is.
+ */
+export function settingAuditValue(key: string, value: unknown): unknown {
+  if (key !== 'shop_logo' || value === null || typeof value !== 'object') return value;
+  const image = value as { byteLength?: unknown };
+  return { ...value, data: `[JPEG ${String(image.byteLength)} bytes]` };
+}
 
 /** Validates a value for its key; throws a ZodError when it does not fit. */
 export function parseSettingValue<K extends SettingKey>(key: K, value: unknown): SettingValue<K> {

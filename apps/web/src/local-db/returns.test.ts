@@ -6,6 +6,7 @@ import { NotAllowedError, ValidationError } from './errors';
 import { createRepositories, type Repositories } from './repositories';
 import { DEVICE_CODE } from './session';
 import { LocalStore } from './store';
+import { seedPartners, seedProduct } from './test-helpers';
 
 let db: ShopDatabase;
 let store: LocalStore;
@@ -21,18 +22,10 @@ beforeEach(async () => {
   store = new LocalStore(db, () => new Date(Date.UTC(2026, 9, 30, 9, minute++)));
   repos = createRepositories(store);
   await store.setMeta(DEVICE_CODE, 'A');
-  const fabricId = await repos.fabrics.save({
-    name: 'روزا',
-    refPricePerMeterCents: 2000,
-    minPricePerMeterCents: 1700,
-  });
-  red = await repos.variants.save({ fabricId, colorName: 'أحمر' });
+  red = await seedProduct(repos);
   supplier = await repos.suppliers.save({ name: 'مورد الأقمشة' });
   customer = await repos.customers.save({ name: 'فاطمة' });
-  await repos.partners.saveBoth({
-    owner: { name: 'أنا', ownershipBp: 5000 },
-    partner: { name: 'شريكي' },
-  });
+  await seedPartners(repos);
   const [owner] = await repos.partners.list();
   await repos.partners.recordCapitalMove({
     partnerId: owner?.partner.id ?? '',
@@ -46,30 +39,34 @@ afterEach(async () => {
   await db.delete();
 });
 
-/** A roll of `lengthCm` at 16 dh/m. */
+/** A batch of `lengthCm` at 16 dh/m. */
 async function buy(lengthCm: number, extra: { supplierId?: string; paidCents?: number } = {}) {
   const purchaseId = await repos.purchases.create({
-    method: 'meter',
     date: '2026-10-01',
-    pricePerMeterCents: 1600,
-    rolls: [{ variantId: red, lengthCm }],
+    productId: red,
+    unit: 'meter',
+    quantity: lengthCm,
+    totalCostCents: lengthCm * 16,
     ...extra,
   });
-  const [roll] = await repos.purchases.rollsOf(purchaseId);
-  if (!roll) throw new Error('no roll');
-  return { rollId: roll.id, purchaseId };
+  const [batch] = await repos.purchases.batchesOf(purchaseId);
+  if (!batch) throw new Error('no batch');
+  return { rollId: batch.id, purchaseId };
 }
 
-const line = (rollId: string, soldCm: number, perMeterCents = 2000) => ({
-  rollId,
-  soldCm,
-  price: { perMeterCents },
-  refPricePerMeterCents: 2000,
-  minPricePerMeterCents: 1700,
+const line = (batchId: string, soldCm: number, perMeterCents = 2000) => ({
+  batchId,
+  unit: 'meter' as const,
+  quantity: soldCm,
+  price: { perUnitCents: perMeterCents },
+  refPriceCents: 2000,
+  minPriceCents: 1700,
 });
 
-const remaining = async (rollId: string) =>
-  (await repos.inventory.roll(rollId))?.ledger.remainingCm;
+const remaining = async (batchId: string) => {
+  const quantity = (await repos.stock.view(batchId))?.ledger.available.meter;
+  return quantity?.unit === 'meter' ? quantity.centimeters : undefined;
+};
 const integrity = async () => (await repos.integrity.report()).ok;
 
 describe('returns on the device (BUILD_PROMPTS 5.3)', () => {
@@ -87,7 +84,7 @@ describe('returns on the device (BUILD_PROMPTS 5.3)', () => {
       saleId,
       date: day,
       reason: 'x',
-      lines: [{ lineId, returnedCm: 400 }],
+      lines: [{ lineId, quantity: 400 }],
       refundCents: 8000,
     });
     expect(preview).toMatchObject({ creditCents: 8000, maxRefundCents: 8000, issues: [] });
@@ -96,7 +93,7 @@ describe('returns on the device (BUILD_PROMPTS 5.3)', () => {
       saleId,
       date: day,
       reason: 'لم يعجبها اللون',
-      lines: [{ lineId, returnedCm: 400 }],
+      lines: [{ lineId, quantity: 400 }],
       refundCents: 8000,
     });
     expect(await remaining(rollId)).toBe(5000 - 1000 + 400);
@@ -124,12 +121,12 @@ describe('returns on the device (BUILD_PROMPTS 5.3)', () => {
       paidCents: 10_000,
     });
     const lineId = (await repos.sales.get(saleId))?.lines[0]?.line.id ?? '';
-    const attempt = (returnedCm: number, refundCents: number) =>
+    const attempt = (quantity: number, refundCents: number) =>
       repos.sales.giveBack({
         saleId,
         date: day,
         reason: 'x',
-        lines: [{ lineId, returnedCm }],
+        lines: [{ lineId, quantity }],
         refundCents,
       });
     await expect(attempt(501, 0)).rejects.toEqual(
@@ -156,7 +153,7 @@ describe('returns on the device (BUILD_PROMPTS 5.3)', () => {
       saleId,
       date: day,
       reason: 'قصيرة',
-      lines: [{ lineId, returnedCm: 200 }],
+      lines: [{ lineId, quantity: 200 }],
       refundCents: 0,
     });
     expect((await repos.accounts.account(customer))?.account).toMatchObject({
@@ -181,7 +178,7 @@ describe('returns on the device (BUILD_PROMPTS 5.3)', () => {
       saleId,
       date: day,
       reason: 'x',
-      lines: [{ lineId, returnedCm: 500 }],
+      lines: [{ lineId, quantity: 500 }],
       refundCents: 0, // kept as credit on the account
     });
     expect((await repos.accounts.account(customer))?.account).toMatchObject({
@@ -205,7 +202,7 @@ describe('returns on the device (BUILD_PROMPTS 5.3)', () => {
       saleId,
       date: day,
       reason: 'x',
-      lines: [{ lineId, returnedCm: 100 }],
+      lines: [{ lineId, quantity: 100 }],
       refundCents: 2000,
     });
     await expect(repos.sales.voidSale(saleId, 'خطأ')).rejects.toEqual(
@@ -227,11 +224,11 @@ describe('returns on the device (BUILD_PROMPTS 5.3)', () => {
       saleId,
       date: day,
       reason: 'x',
-      lines: [{ lineId, returnedCm: 150 }],
+      lines: [{ lineId, quantity: 150 }],
       refundCents: 3000,
     });
-    await repos.inventory.setRemnant(rollId, true);
-    expect((await repos.inventory.roll(rollId))?.roll.status).toBe('remnant');
+    await repos.stock.setRemnant(rollId, true);
+    expect((await repos.stock.view(rollId))?.batch.status).toBe('remnant');
   });
 });
 
@@ -249,7 +246,7 @@ describe('supplier payables on the device (BUILD_PROMPTS 5.3)', () => {
       date: day,
       purchaseId,
     });
-    const statement = await repos.supplierAccounts.statement(supplier);
+    const statement = await repos.supplierAccounts.account(supplier);
     expect(statement?.account.balanceCents).toBe(30_000);
     expect(statement?.statement.map((entry) => entry.kind)).toEqual([
       'purchase',
@@ -298,7 +295,7 @@ describe('a cashier’s device (BUILD_PROMPTS 5.3, RL3)', () => {
       repos.expenses.save({ date: day, category: 'rent', amountCents: 100 }),
     ).rejects.toBeInstanceOf(NotAllowedError);
     await expect(buy(100)).rejects.toBeInstanceOf(NotAllowedError);
-    await expect(repos.inventory.setRemnant(rollId, true)).rejects.toBeInstanceOf(NotAllowedError);
+    await expect(repos.stock.setRemnant(rollId, true)).rejects.toBeInstanceOf(NotAllowedError);
   });
 
   it('a partner’s device changes nothing', async () => {

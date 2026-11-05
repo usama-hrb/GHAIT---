@@ -1,6 +1,13 @@
-import type { Sale, SaleLine, SaleReturn, SaleVoid } from '@fabric/contracts';
+import {
+  returnLineSchema,
+  type Sale,
+  type SaleLine,
+  type SaleReturn,
+  type SaleVoid,
+} from '@fabric/contracts';
 import { Injectable } from '@nestjs/common';
 import { asc, desc, eq, gt, inArray } from 'drizzle-orm';
+import { z } from 'zod';
 import { baseOf, baseValues, schema, TransactionHost } from '../../database/index.js';
 import type { SyncedRow } from '../sync/index.js';
 
@@ -106,13 +113,15 @@ function lineOf(row: LineRow): SyncedRow<SaleLine> {
     record: {
       ...baseOf(row),
       saleId: row.saleId,
-      rollId: row.rollId,
-      soldCm: row.soldCm,
-      refPricePerMeterCents: row.refPricePerMeterCents,
-      minPricePerMeterCents: row.minPricePerMeterCents,
-      actualPricePerMeterCents: row.actualPricePerMeterCents,
+      batchId: row.batchId,
+      unit: row.unit,
+      quantity: row.quantity,
+      refPriceCents: row.refPriceCents,
+      minPriceCents: row.minPriceCents,
+      actualPriceCents: row.actualPriceCents,
       wholePiece: row.wholePiece,
       lineTotalCents: row.lineTotalCents,
+      minOverrideBy: row.minOverrideBy,
     },
   };
 }
@@ -132,13 +141,15 @@ export class SaleLineRepository {
       lines.map((line) => ({
         ...baseValues(line),
         saleId: line.saleId,
-        rollId: line.rollId,
-        soldCm: line.soldCm,
-        refPricePerMeterCents: line.refPricePerMeterCents,
-        minPricePerMeterCents: line.minPricePerMeterCents,
-        actualPricePerMeterCents: line.actualPricePerMeterCents,
+        batchId: line.batchId,
+        unit: line.unit,
+        quantity: line.quantity,
+        refPriceCents: line.refPriceCents,
+        minPriceCents: line.minPriceCents,
+        actualPriceCents: line.actualPriceCents,
         wholePiece: line.wholePiece,
         lineTotalCents: line.lineTotalCents,
+        minOverrideBy: line.minOverrideBy,
       })),
     );
   }
@@ -225,6 +236,9 @@ export class SaleVoidRepository {
 
 type ReturnRow = typeof schema.saleReturn.$inferSelect;
 
+/** Returns recorded before batches kept `returnedCm` in their lines: read as `quantity`. */
+const returnLinesSchema = z.array(returnLineSchema);
+
 function returnOf(row: ReturnRow): SyncedRow<SaleReturn> {
   return {
     serverSeq: row.serverSeq,
@@ -233,7 +247,7 @@ function returnOf(row: ReturnRow): SyncedRow<SaleReturn> {
       saleId: row.saleId,
       date: row.date,
       reason: row.reason,
-      lines: row.lines,
+      lines: returnLinesSchema.parse(row.lines),
       creditCents: row.creditCents,
       refundId: row.refundId,
     },

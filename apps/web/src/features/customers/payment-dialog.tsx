@@ -23,6 +23,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 
 const t = messages.customers;
 const OLDEST = 'oldest';
+
+/** What the dialog needs of an invoice: where it is, from when, what is left and whether it is a bad debt. */
+export type PayableInvoice = Pick<AccountInvoice, 'saleId' | 'date' | 'dueCents' | 'writtenOff'>;
 const METHODS = ['cash', 'bank', 'other'] as const;
 
 const issueText = (error: unknown) =>
@@ -31,20 +34,25 @@ const issueText = (error: unknown) =>
 
 /**
  * Records a customer's payment, full or partial (BUILD_PROMPTS 3.5): to the chosen invoice first,
- * then the oldest; the dialog shows where the money goes and what stays as credit (P6).
+ * then the oldest; the dialog shows where the money goes, what stays as credit (P6) and what the
+ * customer still owes afterwards. Where the money goes is the repository's preview, the same
+ * `buildPayment` the save runs; nothing is worked out here.
  */
 export function PaymentDialog({
   open,
   onOpenChange,
   customerId,
   invoices,
+  owedCents,
   defaultTarget = null,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   customerId: string;
   /** The customer's open invoices (to choose one). */
-  invoices: readonly AccountInvoice[];
+  invoices: readonly PayableInvoice[];
+  /** What can still be collected from the customer (the account's); the invoices' sum when not given. */
+  owedCents?: number;
   defaultTarget?: string | null;
 }) {
   const id = useId();
@@ -76,6 +84,19 @@ export function PaymentDialog({
     [repositories, input],
   );
   const dateOf = new Map(invoices.map((invoice) => [invoice.saleId, invoice.date]));
+  const owed =
+    owedCents ??
+    invoices.reduce((sum, invoice) => sum + (invoice.writtenOff ? 0 : invoice.dueCents), 0);
+  const targetInvoice = invoices.find((invoice) => invoice.saleId === target);
+  // A payment on a written-off invoice is a recovery: it does not lower what is still expected.
+  const writtenOffIds = new Set(
+    invoices.filter((invoice) => invoice.writtenOff).map((invoice) => invoice.saleId),
+  );
+  const collected = (preview?.allocations ?? []).reduce(
+    (sum, allocation) => sum + (writtenOffIds.has(allocation.saleId) ? 0 : allocation.amountCents),
+    0,
+  );
+  const stillOwed = Math.max(0, owed - collected);
 
   const close = (next: boolean) => {
     if (!next) {
@@ -116,6 +137,10 @@ export function PaymentDialog({
             <DialogTitle>{t.recordPayment}</DialogTitle>
             <DialogDescription>{t.paymentDescription}</DialogDescription>
           </DialogHeader>
+          <p className="flex items-baseline justify-between gap-2 rounded-md bg-muted px-3 py-2 text-sm">
+            <span className="text-muted-foreground">{t.owedNow}</span>
+            <Money cents={owed} className="text-base font-semibold" />
+          </p>
           <FieldGroup>
             <Field>
               <FieldLabel htmlFor={`${id}-amount`}>{t.amount}</FieldLabel>
@@ -126,6 +151,38 @@ export function PaymentDialog({
                 value={amount}
                 onValueChange={setAmount}
               />
+              {(owed > 0 || (targetInvoice && targetInvoice.dueCents > 0)) && (
+                <div
+                  className="flex flex-wrap items-center gap-2"
+                  role="group"
+                  aria-label={t.amountShortcuts}
+                >
+                  {targetInvoice && targetInvoice.dueCents > 0 && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setAmount(targetInvoice.dueCents);
+                      }}
+                    >
+                      {t.thisInvoice} · <Money cents={targetInvoice.dueCents} />
+                    </Button>
+                  )}
+                  {owed > 0 && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setAmount(owed);
+                      }}
+                    >
+                      {t.allOwed} · <Money cents={owed} />
+                    </Button>
+                  )}
+                </div>
+              )}
             </Field>
             <Field>
               <FieldLabel htmlFor={`${id}-target`}>{t.target}</FieldLabel>
@@ -206,6 +263,10 @@ export function PaymentDialog({
                   <Money cents={preview.unappliedCents} tone="capital" />
                 </li>
               )}
+              <li className="mt-1 flex justify-between gap-2 border-t pt-2 font-semibold">
+                <span>{stillOwed > 0 ? t.afterPayment : t.paidUp}</span>
+                {stillOwed > 0 && <Money cents={stillOwed} />}
+              </li>
             </ul>
           )}
 

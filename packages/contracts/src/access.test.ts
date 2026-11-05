@@ -7,6 +7,7 @@ import {
   mayPush,
   mayRead,
   mayReadCosts,
+  minimumOverrideIssues,
   redactForRole,
   SYNC_ENTITIES,
   type SyncEntity,
@@ -65,18 +66,23 @@ describe('what each role may see and change (SPEC §11, RL1–RL5)', () => {
     ]);
   });
 
-  it('redacts the roll’s cost for a cashier and leaves the others whole', () => {
-    const roll = {
+  it('redacts the batch’s cost for a cashier and leaves the others whole', () => {
+    const batch = {
       ...base('2026-10-01'),
       id: crypto.randomUUID(),
       costTotalCents: dh(800),
-      lengthCmInitial: 5000,
+      receivedQuantity: 5000,
     };
-    expect(redactForRole('cashier', 'roll', roll)).toEqual({ ...roll, costTotalCents: 0 });
-    expect(redactForRole('owner', 'roll', roll)).toBe(roll);
-    expect(redactForRole('partner', 'roll', roll)).toBe(roll);
-    expect(redactForRole('cashier', 'purchase', roll)).toBeNull();
-    expect(redactForRole('cashier', 'sale', roll)).toBe(roll);
+    expect(redactForRole('cashier', 'product_batch', batch)).toEqual({
+      ...batch,
+      costTotalCents: 0,
+    });
+    expect(redactForRole('owner', 'product_batch', batch)).toBe(batch);
+    expect(redactForRole('partner', 'product_batch', batch)).toBe(batch);
+    expect(redactForRole('cashier', 'purchase', batch)).toBeNull();
+    // The rolls the stock was kept on before batches are history the till is not sent at all.
+    expect(redactForRole('cashier', 'roll', batch)).toBeNull();
+    expect(redactForRole('cashier', 'sale', batch)).toBe(batch);
   });
 
   it('gives a cashier only the settings the till needs', () => {
@@ -115,5 +121,34 @@ describe('what each role may see and change (SPEC §11, RL1–RL5)', () => {
     ]);
     expect(cashierPushIssues('payment', { payment: { kind: 'payment' } })).toEqual([]);
     expect(cashierPushIssues('customer', {})).toEqual([]);
+  });
+
+  it('a cashier cannot sell under the minimum price: no op of theirs carries an override', () => {
+    const line = (minOverrideBy: string | null) => ({ minOverrideBy });
+    expect(cashierPushIssues('sale', { sale: {}, lines: [line(null), line('oussama')] })).toEqual([
+      {
+        path: ['lines', 1, 'minOverrideBy'],
+        message: ACCESS_ISSUES.belowMinimumByCashier,
+        code: 'custom',
+      },
+    ]);
+    expect(cashierPushIssues('sale', { sale: {}, lines: [line(null)] })).toEqual([]);
+  });
+
+  it('only the signed-in owner can name themselves on an override', () => {
+    const lines = [{ minOverrideBy: null }, { minOverrideBy: 'oussama' }];
+    expect(minimumOverrideIssues(lines, { role: 'owner', username: 'oussama' })).toEqual([]);
+    expect(minimumOverrideIssues(lines, { role: 'owner', username: 'someone' })).toEqual([
+      expect.objectContaining({
+        path: ['lines', 1, 'minOverrideBy'],
+        message: ACCESS_ISSUES.overrideNotByOwner,
+      }),
+    ]);
+    expect(minimumOverrideIssues(lines, { role: 'cashier', username: 'oussama' })).toEqual([
+      expect.objectContaining({ message: ACCESS_ISSUES.belowMinimumByCashier }),
+    ]);
+    expect(
+      minimumOverrideIssues([{ minOverrideBy: null }], { role: 'cashier', username: 'c' }),
+    ).toEqual([]);
   });
 });

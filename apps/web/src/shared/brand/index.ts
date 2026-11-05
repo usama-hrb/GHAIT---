@@ -1,4 +1,6 @@
 export { AppShell, type AppShellAccount, type AppShellNavItem } from './app-shell';
+export { Avatar } from './avatar';
+export { BrandMark, type BrandIdentity } from './brand-mark';
 export { ConnectivityStatus, useOnlineStatus } from './connectivity-status';
 export { DiamondBullet } from './diamond-bullet';
 export { Logo } from './logo';

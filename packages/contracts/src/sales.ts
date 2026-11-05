@@ -1,10 +1,11 @@
 import {
   amountDueCents,
-  computeSaleLine,
+  type BatchSaleLine,
+  computeBatchSaleLine,
   effectiveAllocations,
+  isBelowMinimum,
   paymentParts,
-  type RollLedger,
-  type SaleLine as PricedLine,
+  type ProductStockBatchLedger,
   type SaleSplit,
   shareOfLineCents,
   splitSaleCapitalProfit,
@@ -28,14 +29,22 @@ import {
 import { firstDifference } from './diff.js';
 import type { ValidationIssue } from './errors.js';
 import { syncOrder } from './order.js';
-import { rollLedgerOf, type SequencedMove } from './inventory.js';
-import { type Roll, type StockMove, stockMoveSchema } from './purchasing.js';
+import { PRODUCT_SELLING_UNITS } from './products.js';
 import {
-  returnedCmByLine,
   returnedCreditCents,
+  returnedQuantityByLine,
   type SaleReturn,
   storedSaleReturnSchema,
 } from './returns.js';
+import {
+  availableIn,
+  type BatchHistory,
+  batchLedgerOf,
+  netCostsOf,
+  type ProductStockMove,
+  productStockMoveSchema,
+  type SequencedProductMove,
+} from './stock.js';
 
 /** SPEC §13 `sale`. What was paid is derived from its payment allocations (SPEC §4.1). */
 export const saleSchema = recordBaseSchema.extend({
@@ -52,22 +61,35 @@ export const saleSchema = recordBaseSchema.extend({
 });
 export type Sale = z.output<typeof saleSchema>;
 
+/** Who confirmed selling a line under the product's minimum price: the owner's user name. */
+const overrideBySchema = z.string().trim().min(1).max(80);
+
 /**
- * SPEC §13 `sale_line`: one roll each, append-only. Its cost is not stored: it is the roll
+ * SPEC §13 `sale_line`: one batch each, append-only. Its cost is not stored: it is the batch
  * ledger's cost of the line's stock move, derived like a loss's (docs/accounting-assumptions.md P9).
+ * Prices are per `unit` (a meter line is priced per meter, a piece line per piece).
  */
 export const saleLineSchema = recordBaseSchema.extend({
   saleId: idSchema,
-  rollId: idSchema,
-  soldCm: z.int().min(1),
-  /** The fabric's prices at the time, kept for negotiation analysis (SPEC §3). */
-  refPricePerMeterCents: amountCentsSchema,
-  minPricePerMeterCents: amountCentsSchema,
-  /** For a whole piece: the piece price per metre, rounded (display and analysis only). */
-  actualPricePerMeterCents: amountCentsSchema,
+  batchId: idSchema,
+  /** What `quantity` counts and the prices are per: a length sold by the meter, or pieces. */
+  unit: z.enum(PRODUCT_SELLING_UNITS),
+  /** cm for a meter line, pieces for a piece line. */
+  quantity: z.int().min(1),
+  /** The product's prices at the time, kept for negotiation analysis (SPEC §3). */
+  refPriceCents: amountCentsSchema,
+  minPriceCents: amountCentsSchema,
+  /** For a whole piece: the piece price per meter, rounded (display and analysis only). */
+  actualPriceCents: amountCentsSchema,
   /** Sold as the whole, untouched ready piece at its piece price (SPEC §2.3, P5). */
   wholePiece: z.boolean(),
   lineTotalCents: amountCentsSchema,
+  /**
+   * Set when the line was sold under the product's minimum price: the owner who confirmed it
+   * (ADR 0012). The applied price is `actualPriceCents` (`lineTotalCents` for a whole piece).
+   * A cashier can never produce one.
+   */
+  minOverrideBy: overrideBySchema.nullable().default(null),
 });
 export type SaleLine = z.output<typeof saleLineSchema>;
 
@@ -85,7 +107,7 @@ export type SaleVoid = z.output<typeof saleVoidSchema>;
 export const saleAggregateSchema = z.object({
   sale: saleSchema,
   lines: z.array(saleLineSchema).min(1).max(SALE_MAX_LINES),
-  moves: z.array(stockMoveSchema).min(1).max(SALE_MAX_LINES),
+  moves: z.array(productStockMoveSchema).min(1).max(SALE_MAX_LINES),
   payment: paymentSchema.nullable(),
   allocation: paymentAllocationSchema.nullable(),
 });
@@ -94,23 +116,26 @@ export type SaleAggregate = z.output<typeof saleAggregateSchema>;
 /** One void op: the cancellation, a reversal per line, and the refund. */
 export const saleVoidAggregateSchema = z.object({
   saleVoid: saleVoidSchema,
-  reversals: z.array(stockMoveSchema).min(1).max(SALE_MAX_LINES),
+  reversals: z.array(productStockMoveSchema).min(1).max(SALE_MAX_LINES),
   refund: paymentSchema.nullable(),
 });
 export type SaleVoidAggregate = z.output<typeof saleVoidAggregateSchema>;
 
 const linePriceSchema = z.union([
-  z.object({ perMeterCents: amountCentsSchema }).strict(),
+  z.object({ perUnitCents: amountCentsSchema }).strict(),
   z.object({ wholePieceCents: amountCentsSchema }).strict(),
 ]);
 
-/** A line as the POS fills it in: one roll, a length, a price (SPEC §3, §4). */
+/** A line as the POS fills it in: one batch, a quantity in a unit, a price (SPEC §3, §4). */
 export const newSaleLineSchema = z.object({
-  rollId: idSchema,
-  soldCm: z.int().min(1),
+  batchId: idSchema,
+  unit: z.enum(PRODUCT_SELLING_UNITS),
+  quantity: z.int().min(1),
   price: linePriceSchema,
-  refPricePerMeterCents: amountCentsSchema,
-  minPricePerMeterCents: amountCentsSchema,
+  refPriceCents: amountCentsSchema,
+  minPriceCents: amountCentsSchema,
+  /** The owner confirmed selling this line under the minimum price (never a cashier). */
+  minOverrideBy: overrideBySchema.nullable().default(null),
 });
 
 /** What the user enters on the POS screen. */
@@ -129,7 +154,10 @@ export type NewSale = z.output<typeof newSaleSchema>;
 export type NewSaleInput = z.input<typeof newSaleSchema>;
 
 export const SALE_ISSUES = {
-  unknownRoll: 'sale_unknown_roll',
+  unknownBatch: 'sale_unknown_batch',
+  unitNotAvailable: 'sale_unit_not_available',
+  belowMinimum: 'sale_below_min_price',
+  overrideNotNeeded: 'sale_min_override_not_needed',
   wholePieceTouched: 'sale_whole_piece_not_untouched',
   discountAboveTotal: 'sale_discount_above_total',
   paidAboveTotal: 'sale_paid_above_total',
@@ -143,20 +171,19 @@ export const SALE_ISSUES = {
   hasReturns: 'sale_has_returns',
 } as const;
 
-/** A roll and every move it has so far: what pricing and costing need to know about it. */
-export interface RollHistory {
-  roll: Roll;
-  /** With their server_seq where known: history order (syncOrder). */
-  moves: readonly SequencedMove[];
-}
-
 export interface PricedSale {
-  /** One per input line, in order (missing for a roll that is not known). */
-  lines: (PricedLine & { rollId: string })[];
+  /** One per input line, in order (missing for a batch that is not known). */
+  lines: (BatchSaleLine & {
+    batchId: string;
+    /** The batch's length is still an estimate: the profit may change (SPEC §2.3). */
+    provisional: boolean;
+  })[];
   /** Null while a line or the discount is invalid. */
   split: SaleSplit | null;
   /** A line or the invoice is under cost: it needs an explicit confirmation (SPEC §3, P2). */
   requiresConfirmation: boolean;
+  /** At least one line is under the product's minimum price (its owner override is recorded). */
+  belowMinimum: boolean;
   issues: ValidationIssue[];
 }
 
@@ -166,57 +193,96 @@ const issue = (path: (string | number)[], message: string): ValidationIssue => (
   code: 'custom',
 });
 
+/** After every real move: a line of this sale is costed after the lines before it on its batch. */
+function pendingSaleMove(
+  index: number,
+  line: Pick<NewSale['lines'][number], 'batchId' | 'unit' | 'quantity'>,
+  date: string,
+): SequencedProductMove {
+  const createdAt = `9999-12-31T23:59:59.${String(index).padStart(3, '0')}Z`;
+  return {
+    id: `pending-${String(index)}`,
+    createdAt,
+    updatedAt: createdAt,
+    deviceId: 'pending',
+    voidedAt: null,
+    batchId: line.batchId,
+    type: 'sale',
+    unit: line.unit,
+    delta: -line.quantity,
+    refId: null,
+    date,
+    note: null,
+    actor: null,
+  };
+}
+
 /**
- * Prices a sale on the rolls as they stand (SPEC §3, §4, T5, T11): each line with @fabric/core
- * computeSaleLine, costed after the lines before it on the same roll; the invoice with
- * splitSaleCapitalProfit. The POS shows it live; buildSaleAggregate and the server's check use it.
+ * Prices a sale on the batches as they stand (SPEC §3, §4, T5, T11): each line with @fabric/core
+ * computeBatchSaleLine, costed by the batch's ledger after the lines before it on the same batch;
+ * the invoice with splitSaleCapitalProfit. The POS shows it live; buildSaleAggregate and the
+ * server's check use it. A line under the product's minimum price is refused unless its owner
+ * override is set (ADR 0012); selling under cost stays a separate confirmation (SPEC §3).
  */
-export function priceSale(input: NewSale, histories: ReadonlyMap<string, RollHistory>): PricedSale {
+export function priceSale(
+  input: NewSale,
+  histories: ReadonlyMap<string, BatchHistory>,
+): PricedSale {
   const issues: ValidationIssue[] = [];
-  const state = new Map<
-    string,
-    { roll: Roll; ledger: RollLedger; remainingCm: number; costs: number[] }
-  >();
+  const state = new Map<string, { history: BatchHistory; moves: SequencedProductMove[] }>();
   const lines: PricedSale['lines'] = [];
   input.lines.forEach((line, index) => {
-    let rollState = state.get(line.rollId);
-    if (!rollState) {
-      const history = histories.get(line.rollId);
+    let batchState = state.get(line.batchId);
+    if (!batchState) {
+      const history = histories.get(line.batchId);
       if (!history) {
-        issues.push(issue(['lines', index, 'rollId'], SALE_ISSUES.unknownRoll));
+        issues.push(issue(['lines', index, 'batchId'], SALE_ISSUES.unknownBatch));
         return;
       }
-      const ledger = rollLedgerOf(history.roll, history.moves);
-      rollState = {
-        roll: history.roll,
-        ledger,
-        remainingCm: ledger.remainingCm,
-        costs: ledger.costs.map((cost) => cost.costCents),
-      };
-      state.set(line.rollId, rollState);
+      batchState = { history, moves: [...history.moves] };
+      state.set(line.batchId, batchState);
     }
-    let priced: PricedLine;
-    try {
-      priced = computeSaleLine({
-        roll: {
-          costTotalCents: rollState.roll.costTotalCents,
-          basisLengthCm: rollState.ledger.basisLengthCm,
-          remainingCm: rollState.remainingCm,
-          lengthEstimated: rollState.ledger.lengthEstimated,
-        },
-        soldCm: line.soldCm,
-        price: line.price,
-        refPricePerMeterCents: line.refPricePerMeterCents,
-        minPricePerMeterCents: line.minPricePerMeterCents,
-        previousCostsCents: rollState.costs,
-      });
-    } catch {
-      issues.push(issue(['lines', index, 'price'], SALE_ISSUES.wholePieceTouched));
+    const before = batchLedgerOf(batchState.history.batch, batchState.moves);
+    const available = availableIn(before, line.unit);
+    // A weight still waiting for its length has no meters to sell (it reads 0, not absent).
+    if (before.available[line.unit] === undefined || before.measurementStatus === 'pending') {
+      issues.push(issue(['lines', index, 'unit'], SALE_ISSUES.unitNotAvailable));
       return;
     }
-    rollState.remainingCm -= line.soldCm;
-    rollState.costs.push(priced.lineCostCents);
-    lines.push({ ...priced, rollId: line.rollId });
+    if ('wholePieceCents' in line.price) {
+      // The piece price is for the untouched piece; once cut, the rest sells by the meter.
+      if (
+        line.unit !== 'meter' ||
+        line.quantity !== available ||
+        line.quantity !== before.lengthBasisCm
+      ) {
+        issues.push(issue(['lines', index, 'price'], SALE_ISSUES.wholePieceTouched));
+        return;
+      }
+    }
+    const pending = pendingSaleMove(index, line, input.date);
+    batchState.moves.push(pending);
+    const after = batchLedgerOf(batchState.history.batch, batchState.moves);
+    const costCents = after.costs.find((cost) => cost.moveId === pending.id)?.costCents ?? 0;
+    const priced = computeBatchSaleLine({
+      unit: line.unit,
+      quantity: line.quantity,
+      price:
+        'wholePieceCents' in line.price ? line.price : { perUnitCents: line.price.perUnitCents },
+      refPriceCents: line.refPriceCents,
+      minPriceCents: line.minPriceCents,
+      costCents,
+    });
+    if (priced.belowMin && line.minOverrideBy === null) {
+      issues.push(issue(['lines', index, 'price'], SALE_ISSUES.belowMinimum));
+    } else if (!priced.belowMin && line.minOverrideBy !== null) {
+      issues.push(issue(['lines', index, 'minOverrideBy'], SALE_ISSUES.overrideNotNeeded));
+    }
+    lines.push({
+      ...priced,
+      batchId: line.batchId,
+      provisional: before.measurementStatus === 'estimated',
+    });
   });
 
   let split: SaleSplit | null = null;
@@ -245,6 +311,7 @@ export function priceSale(input: NewSale, histories: ReadonlyMap<string, RollHis
     split,
     requiresConfirmation:
       lines.some((line) => line.requiresConfirmation) || split?.belowCost === true,
+    belowMinimum: lines.some((line) => line.belowMin),
     issues,
   };
 }
@@ -259,13 +326,13 @@ export interface SaleIds {
 }
 
 /**
- * The records a sale creates (SPEC §4): the sale, a line and a `sale` stock move per roll, and
+ * The records a sale creates (SPEC §4): the sale, a line and a `sale` stock move per batch, and
  * the cash paid now as a payment applied to the sale. The device builds them to save offline;
- * the server rebuilds them on its own view of the rolls (checkSaleAggregate).
+ * the server rebuilds them on its own view of the batches (checkSaleAggregate).
  */
 export function buildSaleAggregate(
   input: NewSale,
-  histories: ReadonlyMap<string, RollHistory>,
+  histories: ReadonlyMap<string, BatchHistory>,
   ids: SaleIds,
   meta: { deviceId: string; now: string },
 ):
@@ -311,24 +378,28 @@ export function buildSaleAggregate(
       ...base,
       id: ids.lineIds[index] ?? '',
       saleId: sale.id,
-      rollId: line.rollId,
-      soldCm: line.soldCm,
-      refPricePerMeterCents: line.refPricePerMeterCents,
-      minPricePerMeterCents: line.minPricePerMeterCents,
-      actualPricePerMeterCents: pricedLine.actualPricePerMeterCents,
+      batchId: line.batchId,
+      unit: line.unit,
+      quantity: line.quantity,
+      refPriceCents: line.refPriceCents,
+      minPriceCents: line.minPriceCents,
+      actualPriceCents: pricedLine.actualPriceCents,
       wholePiece: 'wholePieceCents' in line.price,
       lineTotalCents: pricedLine.lineTotalCents,
+      minOverrideBy: line.minOverrideBy,
     };
   });
-  const moves: StockMove[] = lines.map((line, index) => ({
+  const moves: ProductStockMove[] = lines.map((line, index) => ({
     ...base,
     id: ids.moveIds[index] ?? '',
-    rollId: line.rollId,
+    batchId: line.batchId,
     type: 'sale',
-    deltaCm: -line.soldCm,
+    unit: line.unit,
+    delta: -line.quantity,
     refId: line.id,
     date: input.date,
     note: null,
+    actor: null,
   }));
   let payment: Payment | null = null;
   let allocation: PaymentAllocation | null = null;
@@ -361,13 +432,15 @@ function inputOf({ sale, lines, payment }: SaleAggregate): NewSale {
     date: sale.date,
     customerId: sale.customerId,
     lines: lines.map((line) => ({
-      rollId: line.rollId,
-      soldCm: line.soldCm,
+      batchId: line.batchId,
+      unit: line.unit,
+      quantity: line.quantity,
       price: line.wholePiece
         ? { wholePieceCents: line.lineTotalCents }
-        : { perMeterCents: line.actualPricePerMeterCents },
-      refPricePerMeterCents: line.refPricePerMeterCents,
-      minPricePerMeterCents: line.minPricePerMeterCents,
+        : { perUnitCents: line.actualPriceCents },
+      refPriceCents: line.refPriceCents,
+      minPriceCents: line.minPriceCents,
+      minOverrideBy: line.minOverrideBy,
     })),
     discountCents: sale.discountCents,
     paidCents: payment?.amountCents ?? 0,
@@ -379,12 +452,13 @@ function inputOf({ sale, lines, payment }: SaleAggregate): NewSale {
 
 /**
  * Re-checks a pushed sale (BUILD_PROMPTS 3.4): its lines, totals, moves and payment must be what
- * buildSaleAggregate gives for what was typed, priced on the server's view of the rolls. An
- * unconfirmed sale under cost is refused (SPEC §3). Empty when it is consistent.
+ * buildSaleAggregate gives for what was typed, priced on the server's view of the batches. An
+ * unconfirmed sale under cost is refused (SPEC §3), and so is a line under the minimum price
+ * without its owner override. Empty when it is consistent.
  */
 export function checkSaleAggregate(
   aggregate: SaleAggregate,
-  histories: ReadonlyMap<string, RollHistory>,
+  histories: ReadonlyMap<string, BatchHistory>,
 ): ValidationIssue[] {
   if (aggregate.lines.length !== aggregate.moves.length) {
     return [issue(['moves'], SALE_ISSUES.inconsistent)];
@@ -406,11 +480,52 @@ export function checkSaleAggregate(
   return path ? [issue(path, SALE_ISSUES.notCore)] : [];
 }
 
+/** The lowest price a product may be sold at, per unit, as the server has it (0 = no minimum). */
+export interface UnitMinimums {
+  meter: number;
+  piece: number;
+}
+
+/**
+ * The authoritative minimum-price check (ADR 0012): the server judges every line against its
+ * product's current minimum, never against the figure the device stored on the line. A line under
+ * it is refused unless the owner confirmed it (`minOverrideBy`); who the owner is, is checked
+ * where the request's user is known. `minimumsOf` is by batch id (a batch belongs to one product).
+ */
+export function checkSaleMinimums(
+  lines: readonly Pick<
+    SaleLine,
+    | 'batchId'
+    | 'unit'
+    | 'quantity'
+    | 'wholePiece'
+    | 'lineTotalCents'
+    | 'actualPriceCents'
+    | 'minOverrideBy'
+  >[],
+  minimumsOf: (batchId: string) => UnitMinimums | undefined,
+): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  lines.forEach((line, index) => {
+    if (line.minOverrideBy !== null) return;
+    const minPriceCents = minimumsOf(line.batchId)?.[line.unit] ?? 0;
+    const below = isBelowMinimum({
+      quantity: line.quantity,
+      price: line.wholePiece
+        ? { wholePieceCents: line.lineTotalCents }
+        : { perUnitCents: line.actualPriceCents },
+      minPriceCents,
+    });
+    if (below) issues.push(issue(['lines', index, 'price'], SALE_ISSUES.belowMinimum));
+  });
+  return issues;
+}
+
 /** What voiding a sale needs to know about it. */
 export interface SaleRecords {
   sale: Sale;
   /** Its `sale` stock moves. */
-  moves: readonly StockMove[];
+  moves: readonly ProductStockMove[];
   /** The payments applied to it. */
   allocations: readonly PaymentAllocation[];
   /** The goods given back from it (RT1); a sale with returns is not voided (RT7). */
@@ -428,7 +543,7 @@ export function saleVoidIssues(records: Pick<SaleRecords, 'returns'>): Validatio
 }
 
 /**
- * Cancels a sale (BUILD_PROMPTS 3.4, P13): a `reversal` per line puts its length back (the roll
+ * Cancels a sale (BUILD_PROMPTS 3.4, P13): a `reversal` per line puts its goods back (the batch
  * is then costed as if the line had never been made), and what was paid on the sale is refunded.
  * Reversals follow the sale's moves in id order; `ids.reversalIds` must match that order.
  */
@@ -477,12 +592,14 @@ export function buildSaleVoid(
     reversals: moves.map((move, index) => ({
       ...base,
       id: ids.reversalIds[index] ?? '',
-      rollId: move.rollId,
+      batchId: move.batchId,
       type: 'reversal',
-      deltaCm: -move.deltaCm,
+      unit: move.unit,
+      delta: -move.delta,
       refId: move.id,
       date: input.date,
       note: input.reason,
+      actor: null,
     })),
     refund,
   };
@@ -527,10 +644,10 @@ export const saleFiguresSchema = z.object({
       costCents: z.int().nullable(),
       /** What the kept part of the line earned. */
       profitCents: z.int().nullable(),
-      /** The roll's length is still an estimate: the profit may change (SPEC §2.3). */
+      /** The batch's length is still an estimate: the profit may change (SPEC §2.3). */
       provisional: z.boolean(),
-      /** Given back so far. */
-      returnedCm: z.int().default(0),
+      /** Given back so far, in the line's own unit. */
+      returnedQuantity: z.int().default(0),
     }),
   ),
   linesTotalCents: z.int(),
@@ -566,33 +683,35 @@ export const saleFiguresSchema = z.object({
 export type SaleFigures = z.output<typeof saleFiguresSchema>;
 
 /**
- * A sale's figures, derived (P9, P10): each line's cost from its roll's ledger (net of what was
+ * A sale's figures, derived (P9, P10): each line's cost from its batch's ledger (net of what was
  * returned), the invoice's worth, capital and profit now, and what was paid and is still due.
  */
 export function saleFigures(
   sale: Sale,
   lines: readonly SaleLine[],
-  moves: readonly StockMove[],
-  ledgers: ReadonlyMap<string, RollLedger>,
+  moves: readonly ProductStockMove[],
+  ledgers: ReadonlyMap<string, ProductStockBatchLedger>,
   allocations: readonly (PaymentAllocation & { serverSeq?: number | null })[],
   returns: readonly SaleReturn[] = [],
 ): SaleFigures {
   const voided = sale.voidedAt !== null;
   const moveOfLine = new Map(moves.map((move) => [move.refId, move.id]));
-  const returnedCm = returnedCmByLine(returns);
+  const returnedQuantity = returnedQuantityByLine(returns);
   const figures = lines.map((line) => {
-    const ledger = ledgers.get(line.rollId);
+    const ledger = ledgers.get(line.batchId);
     const moveId = moveOfLine.get(line.id);
-    const cost = voided ? undefined : ledger?.costs.find((entry) => entry.id === moveId);
-    const given = returnedCm.get(line.id) ?? 0;
+    const cost = voided
+      ? undefined
+      : (ledger ? netCostsOf(ledger) : []).find((entry) => entry.moveId === moveId);
+    const given = returnedQuantity.get(line.id) ?? 0;
     const keptCents =
-      line.lineTotalCents - shareOfLineCents(line.lineTotalCents, line.soldCm, given);
+      line.lineTotalCents - shareOfLineCents(line.lineTotalCents, line.quantity, given);
     return {
       lineId: line.id,
       costCents: cost?.costCents ?? null,
       profitCents: cost ? keptCents - cost.costCents : null,
-      provisional: ledger?.lengthEstimated ?? false,
-      returnedCm: given,
+      provisional: ledger?.measurementStatus === 'estimated',
+      returnedQuantity: given,
     };
   });
   const linesTotalCents = lines.reduce((sum, line) => sum + line.lineTotalCents, 0);

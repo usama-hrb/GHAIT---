@@ -1,23 +1,30 @@
 import {
+  batchLedgerOf,
   buildSaleAggregate,
   buildSaleReturn,
   buildSaleVoid,
   checkSaleAggregate,
+  checkSaleMinimums,
   checkSaleReturn,
   checkSaleVoid,
+  coreBatchOf,
+  coreMovesOf,
   type Customer,
-  type Fabric,
+  customerAccountOf,
+  minimumOverrideIssues,
   type NewSaleInput,
   type NewSaleReturnInput,
   newSaleReturnSchema,
   newSaleSchema,
   type PricedReturn,
   type PricedSale,
+  type Product,
+  type ProductBatch,
+  type ProductStockMove,
   priceSale,
   priceSaleReturn,
+  quantityOf,
   returnedCreditCents,
-  type Roll,
-  rollLedgerOf,
   type Sale,
   type SaleFigures,
   saleFigures,
@@ -26,32 +33,33 @@ import {
   type SaleReturnRecords,
   saleVoidIssues,
   type SaleVoid,
-  type StockMove,
-  type Variant,
   voidPayloadSchema,
   type WriteOff,
 } from '@fabric/contracts';
 import {
-  amountDueCents,
-  proposeRolls,
-  type RollLedger,
+  type AccountInvoice,
+  type ProductStockBatchLedger,
+  type ProductStockTake,
+  proposeProductStockSale,
   type RollState,
   rollState,
-  rollsOldestFirst,
-  type RollTake,
 } from '@fabric/core';
 import { shopToday } from '@/shared/lib/dates';
 import type { Local, ShopDatabase } from './db';
 import { parseOrThrow, ValidationError } from './errors';
-import { withFrozenCosts } from './ledgers';
+import { batchHistories, ledgersOf } from './stock';
 import type { LocalStore } from './store';
 import type { SettingsRepository } from './tables';
 
-/** A roll of a colour as the POS offers it. */
-export interface RollChoice {
-  roll: Local<Roll>;
-  ledger: RollLedger;
+/** A batch of a product as the POS offers it. */
+export interface BatchChoice {
+  batch: Local<ProductBatch>;
+  ledger: ProductStockBatchLedger;
+  /** Remnant or not, by what is left in meters (the owner's threshold). */
   state: RollState;
+  /** What is left to sell in meters (cm) and in pieces. */
+  remainingCm: number;
+  remainingPieces: number;
   purchaseDate: string;
   /** Nothing taken off yet: a ready piece can still be sold whole (P5). */
   untouched: boolean;
@@ -59,9 +67,8 @@ export interface RollChoice {
 
 export interface SaleLineView {
   line: Local<SaleLine>;
-  roll: Local<Roll> | undefined;
-  variant: Local<Variant> | undefined;
-  fabric: Local<Fabric> | undefined;
+  batch: Local<ProductBatch> | undefined;
+  product: Local<Product> | undefined;
   figures: SaleFigures['lines'][number] | undefined;
 }
 
@@ -83,42 +90,24 @@ export interface SaleSummary {
   lineCount: number;
   /** The invoice's worth now: its total less what goods given back took off (RT2). */
   netTotalCents: number;
+  /** What is applied to it: at most its worth now (RT3). Nothing on a voided sale. */
+  paidCents: number;
+  /** What is still due: `netTotalCents - paidCents`; 0 on a voided sale. */
   dueCents: number;
+  /** Written off as a bad debt: still due on paper, no longer expected (S5). */
+  writtenOff: boolean;
+  /** Something is due, it is not written off, and its due date has passed. */
+  overdue: boolean;
 }
 
 const newest = (a: Local<Sale>, b: Local<Sale>) =>
   b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt);
 
-interface LocalHistory {
-  roll: Local<Roll>;
-  moves: Local<StockMove>[];
-}
-
-async function historiesOf(
-  db: ShopDatabase,
-  rollIds: readonly string[],
-): Promise<Map<string, LocalHistory>> {
-  const ids = [...new Set(rollIds)];
-  const [rolls, moves] = await Promise.all([
-    db.rolls.bulkGet(ids),
-    db.stockMoves
-      .where('rollId')
-      .anyOf(ids)
-      .toArray()
-      .then((all) => withFrozenCosts(db, all)),
-  ]);
-  const histories = new Map<string, LocalHistory>();
-  for (const roll of rolls) {
-    if (roll) histories.set(roll.id, { roll, moves: moves.filter((m) => m.rollId === roll.id) });
-  }
-  return histories;
-}
-
 /** What a return of this sale is priced and checked against, from this device's records. */
 async function returnRecordsOf(db: ShopDatabase, sale: Local<Sale>): Promise<SaleReturnRecords> {
   const lines = await db.saleLines.where('saleId').equals(sale.id).toArray();
   const [moves, allocations, returns, writeOffs] = await Promise.all([
-    db.stockMoves
+    db.productStockMoves
       .where('refId')
       .anyOf(lines.map((line) => line.id))
       .toArray(),
@@ -152,78 +141,117 @@ export class SalesRepository {
     private readonly settings: SettingsRepository,
   ) {}
 
-  /** The colour's rolls that still have cloth, oldest purchase first (as proposeRolls takes them). */
-  async rollsOfColor(variantId: string): Promise<RollChoice[]> {
+  /** The product's batches that still have something to sell, oldest purchase first (PB1). */
+  async batchesOfProduct(productId: string): Promise<BatchChoice[]> {
     const { db } = this.store;
-    const rolls = await db.rolls.where('variantId').equals(variantId).toArray();
-    const [histories, purchases, threshold] = await Promise.all([
-      historiesOf(
+    const batches = await db.productBatches.where('productId').equals(productId).toArray();
+    const [histories, threshold] = await Promise.all([
+      batchHistories(
         db,
-        rolls.map((roll) => roll.id),
+        batches.map((batch) => batch.id),
       ),
-      db.purchases.bulkGet([...new Set(rolls.map((roll) => roll.purchaseId))]),
       this.settings.get('remnant_threshold_cm', shopToday()),
     ]);
-    const dateOf = new Map(
-      purchases.flatMap((purchase) => (purchase ? [[purchase.id, purchase.date] as const] : [])),
-    );
-    const choices = rolls.flatMap((roll): RollChoice[] => {
-      const history = histories.get(roll.id);
-      if (!history) return [];
-      const ledger = rollLedgerOf(roll, history.moves);
-      if (ledger.remainingCm <= 0) return [];
+    const choices = batches.flatMap((batch): BatchChoice[] => {
+      const history = histories.get(batch.id);
+      if (!history || batch.voidedAt !== null) return [];
+      let ledger: ProductStockBatchLedger;
+      try {
+        ledger = batchLedgerOf(batch, history.moves);
+      } catch {
+        return []; // A history the ledger cannot read is never offered for sale.
+      }
+      // A weight still waiting for its length reads 0 meters: nothing to sell by the meter yet.
+      const remainingCm = ledger.measurementStatus === 'pending' ? 0 : meters(ledger);
+      const remainingPieces = pieces(ledger);
+      if (remainingCm <= 0 && remainingPieces <= 0) return [];
       return [
         {
-          roll,
+          batch,
           ledger,
-          state: rollState(ledger.remainingCm, roll.status === 'remnant', threshold),
-          purchaseDate: dateOf.get(roll.purchaseId) ?? roll.createdAt.slice(0, 10),
-          untouched: ledger.remainingCm === ledger.basisLengthCm && ledger.costs.length === 0,
+          state: rollState(remainingCm, batch.status === 'remnant', threshold),
+          remainingCm,
+          remainingPieces,
+          purchaseDate: batch.purchaseDate,
+          untouched:
+            history.moves.every((move) => move.type === 'purchase') &&
+            ledger.lengthBasisCm !== null &&
+            remainingCm === ledger.lengthBasisCm,
         },
       ];
     });
-    const byId = new Map(choices.map((choice) => [choice.roll.id, choice]));
-    return rollsOldestFirst(choices.map(onHand)).flatMap((roll) => {
-      const choice = byId.get(roll.id);
-      return choice ? [choice] : [];
-    });
+    return choices.sort(
+      (a, b) =>
+        a.purchaseDate.localeCompare(b.purchaseDate) ||
+        a.batch.createdAt.localeCompare(b.batch.createdAt) ||
+        a.batch.id.localeCompare(b.batch.id),
+    );
   }
 
-  /** Which rolls a length of this colour takes (SPEC §4, P11); `taken` is already in the cart. */
+  /**
+   * Which batches a quantity of this product takes (SPEC §4, PB1: the oldest purchase first).
+   * `taken` is what the cart already holds, by batch, in `unit`. `shortfall` is what no batch has.
+   */
   async propose(
-    variantId: string,
-    wantedCm: number,
+    productId: string,
+    unit: 'meter' | 'piece',
+    wanted: number,
     taken: ReadonlyMap<string, number> = new Map(),
-  ): Promise<{ takes: (RollTake & { choice: RollChoice })[]; shortCm: number }> {
-    const choices = await this.rollsOfColor(variantId);
-    const byId = new Map(choices.map((choice) => [choice.roll.id, choice]));
-    const proposal = proposeRolls(
-      choices.map((choice) => ({
-        ...onHand(choice),
-        remainingCm: choice.ledger.remainingCm - (taken.get(choice.roll.id) ?? 0),
-      })),
-      wantedCm,
+  ): Promise<{ takes: { take: ProductStockTake; choice: BatchChoice }[]; shortfall: number }> {
+    const choices = await this.batchesOfProduct(productId);
+    const histories = await batchHistories(
+      this.store.db,
+      choices.map((choice) => choice.batch.id),
     );
+    // The lines already in the cart come after everything on the shelf. The bill holds batches of
+    // other products too (and of this one's that have since run out): only what it holds of the
+    // batches read here can come off them, so the rest is left out. Handing the core a move on a
+    // batch it was not given is an error, and it must stay one.
+    const offered = new Set(choices.map((choice) => choice.batch.id));
+    const cartMoves = coreMovesOf(
+      [...taken]
+        .filter(([batchId]) => offered.has(batchId))
+        .map(([batchId, quantity]) => cartSale(batchId, unit, quantity)),
+    );
+    const product = await this.store.db.products.get(productId);
+    const proposal = proposeProductStockSale(
+      choices.map((choice) => coreBatchOf(choice.batch)),
+      [
+        ...choices.flatMap((choice) => coreMovesOf(histories.get(choice.batch.id)?.moves ?? [])),
+        ...cartMoves,
+      ],
+      quantityOf(unit, wanted),
+      product?.sellingUnits ?? [unit],
+    );
+    const byId = new Map(choices.map((choice) => [choice.batch.id, choice]));
     return {
       takes: proposal.takes.flatMap((take) => {
-        const choice = byId.get(take.rollId);
-        return choice ? [{ ...take, choice }] : [];
+        const choice = byId.get(take.batchId);
+        return choice ? [{ take, choice }] : [];
       }),
-      shortCm: proposal.shortCm,
+      shortfall:
+        proposal.shortfall.unit === 'meter'
+          ? proposal.shortfall.centimeters
+          : proposal.shortfall.unit === 'piece'
+            ? proposal.shortfall.pieces
+            : 0,
     };
   }
 
-  /** The sale priced on the rolls as they are on this device (live POS figures and warnings). */
+  /** The sale priced on the batches as they are on this device (live POS figures and warnings). */
   async preview(input: NewSaleInput): Promise<PricedSale> {
     const parsed = parseOrThrow(newSaleSchema, input);
-    const histories = await historiesOf(
+    const histories = await batchHistories(
       this.store.db,
-      parsed.lines.map((line) => line.rollId),
+      parsed.lines.map((line) => line.batchId),
     );
     return priceSale(parsed, histories);
   }
 
-  /** Saves the sale; throws ValidationError when it is invalid or unconfirmed under cost. */
+  /**
+   * Saves the sale; throws ValidationError when it is invalid, unconfirmed under cost, under a
+   * product's minimum price without the owner's override, or an override not made by the owner.
+   */
   async create(input: NewSaleInput): Promise<string> {
     this.store.assertWritable();
     const parsed = parseOrThrow(newSaleSchema, input);
@@ -235,8 +263,9 @@ export class SalesRepository {
     await db.transaction(
       'rw',
       [
-        db.rolls,
-        db.stockMoves,
+        db.products,
+        db.productBatches,
+        db.productStockMoves,
         db.lockedCosts,
         db.sales,
         db.saleLines,
@@ -245,9 +274,9 @@ export class SalesRepository {
         db.outbox,
       ],
       async () => {
-        const histories = await historiesOf(
+        const histories = await batchHistories(
           db,
-          parsed.lines.map((line) => line.rollId),
+          parsed.lines.map((line) => line.batchId),
         );
         const built = buildSaleAggregate(
           parsed,
@@ -263,12 +292,37 @@ export class SalesRepository {
         );
         if (!built.ok) throw new ValidationError(built.issues);
         const { aggregate } = built;
-        // The server's own check, here too: a bug shows up before it reaches the outbox.
-        const issues = checkSaleAggregate(aggregate, histories);
+        // The server's own checks, here too: a bug shows up before it reaches the outbox.
+        const products = new Map(
+          (
+            await db.products.bulkGet([...histories.values()].map((h) => h.batch.productId))
+          ).flatMap((product) => (product ? [[product.id, product] as const] : [])),
+        );
+        const role = this.store.currentRole();
+        const issues = [
+          ...checkSaleAggregate(aggregate, histories),
+          ...(role === null
+            ? []
+            : minimumOverrideIssues(aggregate.lines, {
+                role,
+                username: this.store.username() ?? '',
+              })),
+          ...checkSaleMinimums(aggregate.lines, (batchId) => {
+            const product = products.get(histories.get(batchId)?.batch.productId ?? '');
+            return product
+              ? {
+                  meter: product.minPricePerMeterCents ?? 0,
+                  piece: product.minPricePerPieceCents ?? 0,
+                }
+              : undefined;
+          }),
+        ];
         if (issues.length > 0) throw new ValidationError(issues);
         await db.sales.put({ ...aggregate.sale, serverSeq: null });
         await db.saleLines.bulkPut(aggregate.lines.map((line) => ({ ...line, serverSeq: null })));
-        await db.stockMoves.bulkPut(aggregate.moves.map((move) => ({ ...move, serverSeq: null })));
+        await db.productStockMoves.bulkPut(
+          aggregate.moves.map((move) => ({ ...move, serverSeq: null })),
+        );
         if (aggregate.payment) await db.payments.put({ ...aggregate.payment, serverSeq: null });
         if (aggregate.allocation) {
           await db.paymentAllocations.put({ ...aggregate.allocation, serverSeq: null });
@@ -292,7 +346,7 @@ export class SalesRepository {
   }
 
   /**
-   * Cancels a sale (P13): its cloth goes back on the rolls (a reversal per line) and what was
+   * Cancels a sale (P13): its goods go back on their batches (a reversal per line) and what was
    * paid on it is refunded. The reason is required and goes to the audit log.
    */
   async voidSale(saleId: string, reason: string): Promise<void> {
@@ -306,7 +360,7 @@ export class SalesRepository {
       [
         db.sales,
         db.saleLines,
-        db.stockMoves,
+        db.productStockMoves,
         db.payments,
         db.paymentAllocations,
         db.saleVoids,
@@ -323,7 +377,7 @@ export class SalesRepository {
         const lineIds = (await db.saleLines.where('saleId').equals(saleId).toArray()).map(
           (line) => line.id,
         );
-        const moves = (await db.stockMoves.where('refId').anyOf(lineIds).toArray()).filter(
+        const moves = (await db.productStockMoves.where('refId').anyOf(lineIds).toArray()).filter(
           (move) => move.type === 'sale',
         );
         const records = {
@@ -348,7 +402,7 @@ export class SalesRepository {
         const issues = checkSaleVoid(aggregate, records);
         if (issues.length > 0) throw new ValidationError(issues);
         await db.saleVoids.put({ ...aggregate.saleVoid, serverSeq: null });
-        await db.stockMoves.bulkPut(
+        await db.productStockMoves.bulkPut(
           aggregate.reversals.map((move) => ({ ...move, serverSeq: null })),
         );
         if (aggregate.refund) await db.payments.put({ ...aggregate.refund, serverSeq: null });
@@ -382,8 +436,8 @@ export class SalesRepository {
   }
 
   /**
-   * Records goods a customer gave back (RT1): a `return` stock move per line puts the length on
-   * its roll, the credit lowers the invoice, and cash handed back is a refund payment, with one
+   * Records goods a customer gave back (RT1): a `return` stock move per line puts the goods on
+   * their batch, the credit lowers the invoice, and cash handed back is a refund payment, with one
    * outbox op. The server prices it again (checkSaleReturn). Returns the return's id.
    */
   async giveBack(input: NewSaleReturnInput): Promise<string> {
@@ -400,7 +454,7 @@ export class SalesRepository {
       [
         db.sales,
         db.saleLines,
-        db.stockMoves,
+        db.productStockMoves,
         db.payments,
         db.paymentAllocations,
         db.saleReturns,
@@ -427,7 +481,9 @@ export class SalesRepository {
         const issues = checkSaleReturn(aggregate, records);
         if (issues.length > 0) throw new ValidationError(issues);
         await db.saleReturns.put({ ...aggregate.saleReturn, serverSeq: null });
-        await db.stockMoves.bulkPut(aggregate.moves.map((move) => ({ ...move, serverSeq: null })));
+        await db.productStockMoves.bulkPut(
+          aggregate.moves.map((move) => ({ ...move, serverSeq: null })),
+        );
         if (aggregate.refund) await db.payments.put({ ...aggregate.refund, serverSeq: null });
         await db.outbox.add({
           opId: crypto.randomUUID(),
@@ -456,46 +512,38 @@ export class SalesRepository {
     const lines = (await db.saleLines.where('saleId').equals(id).toArray()).sort(
       (a, b) => (a.serverSeq ?? unsynced) - (b.serverSeq ?? unsynced) || a.id.localeCompare(b.id),
     );
-    const rollIds = lines.map((line) => line.rollId);
+    const batchIds = lines.map((line) => line.batchId);
     const [histories, allocations, saleVoid, customer, moves, writeOff, returns] =
       await Promise.all([
-        historiesOf(db, rollIds),
+        batchHistories(db, batchIds),
         db.paymentAllocations.where('saleId').equals(id).toArray(),
         db.saleVoids.where('saleId').equals(id).first(),
         sale.customerId ? db.customers.get(sale.customerId) : undefined,
-        db.stockMoves
+        db.productStockMoves
           .where('refId')
           .anyOf(lines.map((line) => line.id))
           .toArray(),
         db.writeOffs.where('saleId').equals(id).first(),
         db.saleReturns.where('saleId').equals(id).toArray(),
       ]);
-    const ledgers = new Map(
-      [...histories].map(([rollId, history]) => [
-        rollId,
-        rollLedgerOf(history.roll, history.moves),
-      ]),
-    );
     const figures = saleFigures(
       sale,
       lines,
       moves.filter((move) => move.type === 'sale'),
-      ledgers,
+      ledgersOf(histories),
       allocations,
       returns,
     );
-    const variants = await db.variants.bulkGet(
-      lines.map((line) => histories.get(line.rollId)?.roll.variantId ?? ''),
+    const products = await db.products.bulkGet(
+      lines.map((line) => histories.get(line.batchId)?.batch.productId ?? ''),
     );
-    const fabrics = await db.fabrics.bulkGet(variants.map((variant) => variant?.fabricId ?? ''));
     return {
       sale,
       customer,
       lines: lines.map((line, index) => ({
         line,
-        roll: histories.get(line.rollId)?.roll,
-        variant: variants[index],
-        fabric: fabrics[index],
+        batch: histories.get(line.batchId)?.batch as Local<ProductBatch> | undefined,
+        product: products[index],
         figures: figures.lines.find((entry) => entry.lineId === line.id),
       })),
       figures,
@@ -515,46 +563,113 @@ export class SalesRepository {
     return returnedCreditCents(returns);
   }
 
-  /** Newest first, with the customer's name and what is still due. */
+  /**
+   * Newest first, with the customer's name and each invoice's figures. They come from the
+   * customer's account (`customerAccountOf`, the function the customer screens call), so what is
+   * paid, due, overdue or written off here is what the account says. A walk-in customer's sales
+   * are one more group: they have no account, but their payments are applied the same way.
+   */
   async list(): Promise<SaleSummary[]> {
     const { db } = this.store;
-    const [sales, lines, allocations, customers, returns] = await Promise.all([
+    const today = shopToday(this.store.now());
+    const [sales, lines, payments, allocations, customers, returns, writeOffs] = await Promise.all([
       db.sales.toArray(),
       db.saleLines.toArray(),
+      db.payments.toArray(),
       db.paymentAllocations.toArray(),
       db.customers.toArray(),
       db.saleReturns.toArray(),
+      db.writeOffs.toArray(),
     ]);
     const customerName = new Map(customers.map((customer) => [customer.id, customer.name]));
+    const linesOf = new Map<string, number>();
+    for (const line of lines) linesOf.set(line.saleId, (linesOf.get(line.saleId) ?? 0) + 1);
+    const returnsOf = groupBy(returns, (given) => given.saleId);
+    const writeOffsOf = groupBy(writeOffs, (writeOff) => writeOff.saleId);
+    const salesOf = groupBy(sales, (sale) => sale.customerId);
+    const paymentsOf = groupBy(payments, (payment) => payment.customerId);
+    const allocationsOf = groupBy(allocations, (allocation) => allocation.paymentId);
+
+    const invoices = new Map<string, AccountInvoice>();
+    for (const [customerId, own] of salesOf) {
+      const paid = paymentsOf.get(customerId) ?? [];
+      const account = customerAccountOf(
+        {
+          sales: own,
+          payments: paid,
+          allocations: paid.flatMap((payment) => allocationsOf.get(payment.id) ?? []),
+          writeOffs: own.flatMap((sale) => writeOffsOf.get(sale.id) ?? []),
+          returns: own.flatMap((sale) => returnsOf.get(sale.id) ?? []),
+        },
+        today,
+      );
+      for (const invoice of account.invoices) invoices.set(invoice.saleId, invoice);
+    }
+
     return sales.sort(newest).map((sale) => {
+      const invoice = invoices.get(sale.id);
+      // A voided sale is out of the account: nothing paid, nothing due, whatever it was worth.
       const netTotalCents =
-        sale.totalCents - returnedCreditCents(returns.filter((r) => r.saleId === sale.id));
+        invoice?.totalCents ?? sale.totalCents - returnedCreditCents(returnsOf.get(sale.id) ?? []);
       return {
         sale,
         customerName: sale.customerId ? (customerName.get(sale.customerId) ?? null) : null,
-        lineCount: lines.filter((line) => line.saleId === sale.id).length,
+        lineCount: linesOf.get(sale.id) ?? 0,
         netTotalCents,
-        dueCents:
-          sale.voidedAt === null
-            ? Math.max(
-                0,
-                amountDueCents(
-                  netTotalCents,
-                  allocations.filter((a) => a.saleId === sale.id).map((a) => a.amountCents),
-                ),
-              )
-            : 0,
+        paidCents: invoice?.paidCents ?? 0,
+        dueCents: invoice?.dueCents ?? 0,
+        writtenOff: invoice?.writtenOff ?? false,
+        overdue: invoice?.overdue ?? false,
       };
     });
   }
 }
 
-function onHand(choice: RollChoice) {
+/** The items by a key, each group in the order the items came. */
+function groupBy<T, K>(items: readonly T[], keyOf: (item: T) => K): Map<K, T[]> {
+  const groups = new Map<K, T[]>();
+  for (const item of items) {
+    const key = keyOf(item);
+    const group = groups.get(key);
+    if (group) group.push(item);
+    else groups.set(key, [item]);
+  }
+  return groups;
+}
+
+const meters = (ledger: ProductStockBatchLedger): number => {
+  const quantity = ledger.available.meter;
+  return quantity?.unit === 'meter' ? quantity.centimeters : 0;
+};
+const pieces = (ledger: ProductStockBatchLedger): number => {
+  const quantity = ledger.available.piece;
+  return quantity?.unit === 'piece' ? quantity.pieces : 0;
+};
+
+/**
+ * What the cart already holds of a batch, as a sale move on it (after everything real). The batch
+ * is the move's identity: the bill holds a batch once however many lines take from it.
+ */
+function cartSale(
+  batchId: string,
+  unit: 'meter' | 'piece',
+  quantity: number,
+): ProductStockMove & { serverSeq: null } {
+  const createdAt = '9999-12-31T23:59:59.999Z';
   return {
-    id: choice.roll.id,
-    remainingCm: choice.ledger.remainingCm,
-    purchaseDate: choice.purchaseDate,
-    createdAt: choice.roll.createdAt,
-    shortCode: choice.roll.shortCode,
+    id: `cart-${batchId}`,
+    createdAt,
+    updatedAt: createdAt,
+    deviceId: 'cart',
+    voidedAt: null,
+    batchId,
+    type: 'sale',
+    unit,
+    delta: -quantity,
+    refId: null,
+    date: '9999-12-31',
+    note: null,
+    actor: null,
+    serverSeq: null,
   };
 }

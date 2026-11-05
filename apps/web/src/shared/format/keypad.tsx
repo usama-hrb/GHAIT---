@@ -18,6 +18,9 @@ export interface PadRules {
 const DEFAULT_MAX_LENGTH = 9;
 const SEPARATOR = /[.,٫]/;
 
+/** Pieces are typed as whole numbers. */
+export const COUNT_PAD: PadRules = { maxDecimals: 0, maxLength: 6 };
+
 /** Lengths are typed in metres to the centimetre: 2.75. */
 export const LENGTH_PAD: PadRules = { maxDecimals: 2 };
 

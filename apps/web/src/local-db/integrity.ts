@@ -114,13 +114,16 @@ export class IntegrityRepository {
       settlements,
       returns,
       supplierPayments,
+      batches,
     ] = await Promise.all([
       db.sales.toArray(),
       db.saleVoids.toArray(),
       db.payments.toArray(),
       db.expenses.toArray(),
       db.purchases.toArray(),
-      db.stockMoves.filter((move) => move.type !== 'purchase' && move.type !== 'sale').toArray(),
+      db.productStockMoves
+        .filter((move) => move.type !== 'purchase' && move.type !== 'sale')
+        .toArray(),
       db.capitalMoves.toArray(),
       db.partnerDraws.toArray(),
       db.writeOffs.toArray(),
@@ -128,7 +131,9 @@ export class IntegrityRepository {
       db.settlements.toArray(),
       db.saleReturns.toArray(),
       db.supplierPayments.toArray(),
+      db.productBatches.toArray(),
     ]);
+    const productOf = new Map(batches.map((batch) => [batch.id, batch.productId]));
     const event = (
       entity: SyncEntity,
       record: { id: string; updatedAt: string; voidedAt: string | null },
@@ -162,12 +167,32 @@ export class IntegrityRepository {
       ...purchases.map((p) =>
         event('purchase', p, p.date, -p.paidCents, `/purchases/view?id=${p.id}`),
       ),
-      ...moves.map((m) => event('stock_move', m, m.date, null, `/inventory/roll?id=${m.rollId}`)),
+      ...moves.map((m) =>
+        event(
+          'product_stock_move',
+          m,
+          m.date,
+          null,
+          `/inventory/product?id=${productOf.get(m.batchId) ?? ''}`,
+        ),
+      ),
       ...capitalMoves.map((m) =>
-        event('capital_move', m, m.date, m.amountCents, `/partners/view?id=${m.partnerId}`),
+        event(
+          'capital_move',
+          m,
+          m.date,
+          m.amountCents,
+          `/settings/partners/view?id=${m.partnerId}`,
+        ),
       ),
       ...draws.map((d) =>
-        event('partner_draw', d, d.date, -d.amountCents, `/partners/view?id=${d.partnerId}`),
+        event(
+          'partner_draw',
+          d,
+          d.date,
+          -d.amountCents,
+          `/settings/partners/view?id=${d.partnerId}`,
+        ),
       ),
       ...writeOffs.map((w) => event('write_off', w, w.date, null, `/pos/view?id=${w.saleId}`)),
       ...counts.map((c) => event('cash_adjustment', c, c.date, c.diffCents, '/integrity')),

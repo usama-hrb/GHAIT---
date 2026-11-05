@@ -1,27 +1,27 @@
 'use client';
 
 import type { Customer, PricedSale } from '@fabric/contracts';
-import { PencilIcon, ReceiptTextIcon, Trash2Icon, TriangleAlertIcon } from 'lucide-react';
+import { PencilIcon, ReceiptTextIcon, Trash2Icon } from 'lucide-react';
 import { messages } from '@/i18n';
 import type { Local } from '@/local-db';
-import { Meters, Money } from '@/shared/format';
+import { Money, Quantity } from '@/shared/format';
 import { ProductPhoto } from '@/shared/brand';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
-import { type CartItem, itemLengthCm, itemPrice, type PricedItem } from './cart';
+import { type CartItem, itemOverrideBy, itemPrice, itemQuantity, type PricedItem } from './cart';
 import { CustomerPicker } from './customer-picker';
 
 const t = messages.pos;
 
 /**
  * The bill at the side (SPEC §4): its customer, a card per thing bought (tap it to change the
- * length or the price), the discount, the total and the one big Pay button. A cashier sees no
- * cost or profit (SPEC §11).
+ * length or the price), the discount, the total and the one big Pay button. No cost and no profit
+ * is shown here, to anyone: the till sells; the profit is read in the reports (SPEC §11).
  */
 export function BillPanel({
   items,
   priced,
-  seesCosts,
+  saving,
   photos,
   customers,
   customerId,
@@ -38,8 +38,9 @@ export function BillPanel({
 }: {
   items: readonly PricedItem[];
   priced: PricedSale | null | undefined;
-  seesCosts: boolean;
-  /** Each colour's picture (a data: URL), by variant id. */
+  /** A sale is being saved: paying again waits for it. */
+  saving: boolean;
+  /** Each product's picture (a data: URL), by product id. */
   photos: ReadonlyMap<string, string>;
   customers: readonly Local<Customer>[];
   customerId: string | null;
@@ -98,83 +99,78 @@ export function BillPanel({
         <p className="flex-1 p-6 text-center text-muted-foreground">{t.bill.empty}</p>
       ) : (
         <ul className="grid min-h-0 flex-1 content-start gap-2 overflow-y-auto p-3">
-          {items.map(({ item, totalCents, profitCents, warnings, provisional }) => {
+          {items.map(({ item, totalCents, belowCost }) => {
             const price = itemPrice(item);
             return (
               <li
                 key={item.key}
-                className="group grid grid-cols-[48px_minmax(0,1fr)_auto] items-center gap-3 rounded-lg border border-dotted border-border/80 bg-background p-3 transition-colors hover:border-primary/30 hover:bg-muted/20"
+                className="grid grid-cols-[2.75rem_minmax(0,1fr)_auto] items-center gap-2.5 rounded-lg border border-border/80 bg-background p-2"
               >
                 {/* Product image */}
                 <ProductPhoto
-                  src={photos.get(item.variant.id)}
-                  className="size-12 shrink-0 rounded-md"
+                  src={photos.get(item.product.id)}
+                  className="size-11 shrink-0 rounded-md"
                 />
 
                 {/* Product information */}
                 <button
                   type="button"
-                  aria-label={`${t.bill.edit}: ${item.fabric.name} · ${item.variant.colorName}`}
-                  className="flex min-w-0 flex-col justify-center gap-1.5 text-start outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-                  onClick={() => onEdit(item)}
+                  aria-label={`${t.bill.edit}: ${item.product.name}`}
+                  className="flex min-h-11 min-w-0 flex-col justify-center gap-0.5 rounded-sm text-start outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+                  onClick={() => {
+                    onEdit(item);
+                  }}
                 >
                   {/* Product name */}
                   <span className="flex min-w-0 items-center gap-1.5">
-                    <span className="truncate text-sm font-semibold">
-                      {item.fabric.name} · {item.variant.colorName}
-                    </span>
+                    <span className="truncate text-sm font-semibold">{item.product.name}</span>
                     <PencilIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
                   </span>
 
-                  {/* Length and unit price */}
+                  {/* Quantity and unit price */}
                   <span className="text-xs font-medium text-muted-foreground tabular-nums">
                     {price && 'wholePieceCents' in price ? (
                       <>
-                        {t.bill.wholePiece} · <Meters cm={itemLengthCm(item)} />
+                        {t.bill.wholePiece} ·{' '}
+                        <Quantity unit={item.unit} amount={itemQuantity(item)} />
                       </>
                     ) : (
                       <>
-                        <Meters cm={itemLengthCm(item)} />
-                        {price && 'perMeterCents' in price && (
+                        <Quantity unit={item.unit} amount={itemQuantity(item)} />
+                        {price && 'perUnitCents' in price && (
                           <>
                             {' × '}
-                            <Money cents={price.perMeterCents} />
+                            <Money cents={price.perUnitCents} />
                           </>
                         )}
                       </>
                     )}
                   </span>
 
+                  {(itemOverrideBy(item) !== null || (belowCost && item.belowCostConfirmed)) && (
+                    <span className="flex flex-wrap gap-1">
+                      {itemOverrideBy(item) !== null && (
+                        <Badge variant="outline" className="border-warning">
+                          {t.bill.overrideBy(itemOverrideBy(item) ?? '')}
+                        </Badge>
+                      )}
+                      {belowCost && item.belowCostConfirmed && (
+                        <Badge variant="outline" className="border-warning">
+                          {t.bill.costConfirmed}
+                        </Badge>
+                      )}
+                    </span>
+                  )}
+
                   {item.lines.length > 1 && (
                     <span className="text-xs text-muted-foreground">
                       {t.splitAcross(item.lines.length)}
                     </span>
                   )}
-
-                  {warnings.length > 0 && (
-                    <span className="flex flex-wrap gap-1">
-                      {warnings.map((warning) => (
-                        <Badge
-                          key={warning}
-                          variant={warning === 'below_cost' ? 'destructive' : 'warning'}
-                        >
-                          {t.warnings[warning]}
-                        </Badge>
-                      ))}
-                    </span>
-                  )}
-
-                  {seesCosts && (
-                    <span className="text-xs text-muted-foreground">
-                      {t.profit}:{' '}
-                      <Money cents={profitCents} tone={profitCents < 0 ? 'loss' : 'profit'} />
-                      {provisional && ` · ${t.provisional}`}
-                    </span>
-                  )}
                 </button>
 
                 {/* Total and remove action */}
-                <div className="flex h-full min-w-[76px] flex-col items-end justify-between gap-2">
+                <div className="flex min-w-16 flex-col items-end gap-0.5">
                   <span className="whitespace-nowrap text-sm font-bold tabular-nums">
                     <Money cents={totalCents} />
                   </span>
@@ -183,9 +179,11 @@ export function BillPanel({
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="size-8 text-muted-foreground hover:text-destructive"
-                    aria-label={`${t.remove}: ${item.fabric.name} · ${item.variant.colorName}`}
-                    onClick={() => onRemove(item)}
+                    className="size-9 text-muted-foreground hover:text-destructive pointer-coarse:size-11"
+                    aria-label={`${t.remove}: ${item.product.name}`}
+                    onClick={() => {
+                      onRemove(item);
+                    }}
                   >
                     <Trash2Icon className="size-4" aria-hidden />
                   </Button>
@@ -197,12 +195,12 @@ export function BillPanel({
       )}
 
       <footer className="grid gap-3 border-t border-dashed border-border bg-muted/10 p-3">
-        <dl className="grid gap-1.5">
+        <dl className="grid gap-1">
           {split && split.discountCents > 0 && (
-            <div className="flex items-baseline justify-between gap-2 border-t border-dashed border-border pt-3">
-              <dt className="text-sm font-semibold uppercase tracking-wide">{t.total}</dt>{' '}
-              <dd className="font-heading text-2xl font-bold tabular-nums tracking-tight">
-                {total === null ? '—' : <Money cents={total} />}
+            <div className="flex items-baseline justify-between gap-2 text-sm">
+              <dt className="text-muted-foreground">{t.linesTotal}</dt>
+              <dd>
+                <Money cents={split.linesTotalCents} />
               </dd>
             </div>
           )}
@@ -213,6 +211,7 @@ export function BillPanel({
                 type="button"
                 variant="ghost"
                 size="sm"
+                className="pointer-coarse:h-11"
                 disabled={empty}
                 onClick={onDiscount}
                 aria-label={discount === null ? t.bill.addDiscount : t.bill.editDiscount}
@@ -222,28 +221,14 @@ export function BillPanel({
               </Button>
             </dd>
           </div>
-          <div className="flex items-baseline justify-between gap-2 text-2xl font-semibold">
-            <dt>{t.total}</dt>
+          <div className="flex items-baseline justify-between gap-2 border-t border-dashed border-border pt-2 font-heading text-3xl font-bold tabular-nums">
+            <dt className="text-base font-semibold">{t.total}</dt>
             <dd>{total === null ? '—' : <Money cents={total} />}</dd>
           </div>
-          {seesCosts && split && (
-            <div className="flex justify-between gap-2 text-sm">
-              <dt className="text-muted-foreground">{t.profit}</dt>
-              <dd>
-                <Money cents={split.profitCents} tone={split.profitCents < 0 ? 'loss' : 'profit'} />
-              </dd>
-            </div>
-          )}
         </dl>
         {issue && (
           <p role="alert" className="text-sm text-destructive">
             {issue}
-          </p>
-        )}
-        {priced?.requiresConfirmation && (
-          <p className="flex items-start gap-2 text-sm text-destructive">
-            <TriangleAlertIcon className="mt-0.5 size-4 shrink-0" aria-hidden />
-            {t.bill.belowCost}
           </p>
         )}
         <div className="grid gap-2">
@@ -251,8 +236,8 @@ export function BillPanel({
             type="button"
             variant="accent"
             size="lg"
-            className="h-12 w-full text-base font-semibold shadow-sm"
-            disabled={empty || issue !== undefined || total === null}
+            className="h-14 w-full text-lg font-semibold shadow-sm"
+            disabled={empty || issue !== undefined || total === null || saving}
             onClick={onPay}
           >
             {t.bill.pay}
@@ -268,8 +253,8 @@ export function BillPanel({
             type="button"
             variant="outline"
             onClick={onPartialPay}
-            disabled={empty || issue !== undefined || total === null}
-            className="h-10 w-full border-dashed"
+            disabled={empty || issue !== undefined || total === null || saving}
+            className="h-10 w-full pointer-coarse:h-12"
           >
             {t.bill.partialPay}
           </Button>

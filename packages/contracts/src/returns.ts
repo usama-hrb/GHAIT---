@@ -6,23 +6,36 @@ import type { Payment, PaymentAllocation } from './customers.js';
 import { paymentSchema } from './customers.js';
 import { firstDifference } from './diff.js';
 import type { ValidationIssue } from './errors.js';
-import { type StockMove, stockMoveSchema } from './purchasing.js';
+import type { ProductSellingUnit } from './products.js';
+import { type ProductStockMove, productStockMoveSchema } from './stock.js';
 
 const reasonSchema = z.string().trim().min(1).max(500);
 
-/** One line of a return: how much of a sale line came back, and the stock move that restores it. */
-export const returnLineSchema = z.object({
+const returnLineFields = {
   lineId: idSchema,
-  /** The `return` stock_move this line creates (it puts the length back on the roll, RT1). */
+  /** The `return` stock move this line creates (it puts the goods back on the batch, RT1). */
   moveId: idSchema,
-  returnedCm: z.int().min(1),
-});
+};
+
+/**
+ * One line of a return: how much of a sale line came back (cm for a line sold by the meter,
+ * pieces for one sold by the piece), and the stock move that restores it. Returns recorded
+ * before ADR 0012 kept the length as `returnedCm`; they are read as `quantity`, unchanged.
+ */
+export const returnLineSchema = z.union([
+  z.object({ ...returnLineFields, quantity: z.int().min(1) }),
+  z
+    .object({ ...returnLineFields, returnedCm: z.int().min(1) })
+    .transform(({ returnedCm, ...rest }) => ({ ...rest, quantity: returnedCm })),
+]);
 export type ReturnLine = z.output<typeof returnLineSchema>;
+/** A line as stored: new returns say `quantity`, older ones `returnedCm`. */
+export type ReturnLineInput = z.input<typeof returnLineSchema>;
 
 /**
  * SPEC §13 `sale_return`: goods a customer gave back from one sale, append-only (RT1). The sale
  * and its lines are never edited: the invoice's worth after returns is its total less the
- * credits of its live returns. Its length goes back on the rolls through `return` stock moves,
+ * credits of its live returns. Its goods go back on the batches through `return` stock moves,
  * and the cash handed back now is a `refund` payment.
  */
 export const saleReturnSchema = recordBaseSchema.extend({
@@ -40,7 +53,7 @@ export type SaleReturn = z.output<typeof saleReturnSchema>;
 /** One return op: the return, a `return` move per line, and the refund. */
 export const saleReturnAggregateSchema = z.object({
   saleReturn: saleReturnSchema,
-  moves: z.array(stockMoveSchema).min(1).max(SALE_MAX_LINES),
+  moves: z.array(productStockMoveSchema).min(1).max(SALE_MAX_LINES),
   refund: paymentSchema.nullable(),
 });
 export type SaleReturnAggregate = z.output<typeof saleReturnAggregateSchema>;
@@ -51,7 +64,7 @@ export const newSaleReturnSchema = z.object({
   date: isoDateSchema,
   reason: reasonSchema,
   lines: z
-    .array(z.object({ lineId: idSchema, returnedCm: z.int().min(1) }))
+    .array(z.object({ lineId: idSchema, quantity: z.int().min(1) }))
     .min(1)
     .max(SALE_MAX_LINES),
   /** Cash handed back now; the rest of the overpayment stays as the customer's credit (RT3). */
@@ -82,12 +95,12 @@ const issue = (path: (string | number)[], message: string): ValidationIssue => (
 const live = <T extends { voidedAt: string | null }>(records: readonly T[]): T[] =>
   records.filter((record) => record.voidedAt === null);
 
-/** What each sale line has had returned, by line id (voided returns left out). */
-export function returnedCmByLine(returns: readonly SaleReturn[]): Map<string, number> {
+/** What each sale line has had returned (in the line's own unit), by line id; voided returns left out. */
+export function returnedQuantityByLine(returns: readonly SaleReturn[]): Map<string, number> {
   const returned = new Map<string, number>();
   for (const given of live(returns)) {
     for (const line of given.lines) {
-      returned.set(line.lineId, (returned.get(line.lineId) ?? 0) + line.returnedCm);
+      returned.set(line.lineId, (returned.get(line.lineId) ?? 0) + line.quantity);
     }
   }
   return returned;
@@ -111,8 +124,10 @@ export interface ReturnableSale {
 /** The part of a sale line a return reads (a SaleLine satisfies it). */
 export interface ReturnableSaleLine {
   id: string;
-  rollId: string;
-  soldCm: number;
+  batchId: string;
+  /** What `quantity` counts: cm or pieces. */
+  unit: ProductSellingUnit;
+  quantity: number;
   lineTotalCents: number;
 }
 
@@ -121,7 +136,7 @@ export interface SaleReturnRecords {
   sale: ReturnableSale;
   lines: readonly ReturnableSaleLine[];
   /** The sale's `sale` stock moves (refId = the line). */
-  moves: readonly StockMove[];
+  moves: readonly ProductStockMove[];
   /** This sale's earlier returns (voided ones are ignored). */
   returns: readonly SaleReturn[];
   /** The payments applied to the sale. */
@@ -155,7 +170,7 @@ export function priceSaleReturn(input: NewSaleReturn, records: SaleReturnRecords
   if (records.writtenOff) issues.push(issue(['saleId'], RETURN_ISSUES.writtenOff));
   if (input.date < sale.date) issues.push(issue(['date'], RETURN_ISSUES.beforeSale));
 
-  const before = returnedCmByLine(records.returns);
+  const before = returnedQuantityByLine(records.returns);
   const byId = new Map(records.lines.map((line) => [line.id, line]));
   const returning = new Map<string, number>();
   input.lines.forEach((entry, index) => {
@@ -168,9 +183,9 @@ export function priceSaleReturn(input: NewSaleReturn, records: SaleReturnRecords
       issues.push(issue(['lines', index, 'lineId'], RETURN_ISSUES.duplicateLine));
       return;
     }
-    returning.set(entry.lineId, entry.returnedCm);
-    if ((before.get(line.id) ?? 0) + entry.returnedCm > line.soldCm) {
-      issues.push(issue(['lines', index, 'returnedCm'], RETURN_ISSUES.aboveSold));
+    returning.set(entry.lineId, entry.quantity);
+    if ((before.get(line.id) ?? 0) + entry.quantity > line.quantity) {
+      issues.push(issue(['lines', index, 'quantity'], RETURN_ISSUES.aboveSold));
     }
   });
 
@@ -190,10 +205,10 @@ export function priceSaleReturn(input: NewSaleReturn, records: SaleReturnRecords
   const creditCents = returnCreditCents({
     discountCents: sale.discountCents,
     lines: records.lines.map((line) => ({
-      soldCm: line.soldCm,
+      soldQuantity: line.quantity,
       lineTotalCents: line.lineTotalCents,
-      returnedCm: before.get(line.id) ?? 0,
-      returningCm: returning.get(line.id) ?? 0,
+      returnedQuantity: before.get(line.id) ?? 0,
+      returningQuantity: returning.get(line.id) ?? 0,
     })),
   });
   const totalAfterCents = priced.totalAfterCents - creditCents;
@@ -221,7 +236,7 @@ export interface SaleReturnIds {
 
 /**
  * The records a return creates (RT1): the return, a `return` stock move per line putting the
- * length back on its roll, and the refund of the cash handed back. The device builds them to
+ * goods back on their batch, and the refund of the cash handed back. The device builds them to
  * save offline; the server rebuilds them on its own records (checkSaleReturn).
  */
 export function buildSaleReturn(
@@ -250,7 +265,7 @@ export function buildSaleReturn(
   const saleMoveOf = new Map(
     records.moves.filter((move) => move.type === 'sale').map((move) => [move.refId, move.id]),
   );
-  const moves: StockMove[] = input.lines.map((entry, index) => {
+  const moves: ProductStockMove[] = input.lines.map((entry, index) => {
     const line = lines.get(entry.lineId);
     const saleMoveId = saleMoveOf.get(entry.lineId);
     if (!line || saleMoveId === undefined)
@@ -258,12 +273,14 @@ export function buildSaleReturn(
     return {
       ...base,
       id: ids.moveIds[index] ?? '',
-      rollId: line.rollId,
+      batchId: line.batchId,
       type: 'return',
-      deltaCm: entry.returnedCm,
+      unit: line.unit,
+      delta: entry.quantity,
       refId: saleMoveId,
       date: input.date,
       note: input.reason,
+      actor: null,
     };
   });
   const refund: Payment | null =
@@ -292,7 +309,7 @@ export function buildSaleReturn(
         lines: input.lines.map((entry, index) => ({
           lineId: entry.lineId,
           moveId: ids.moveIds[index] ?? '',
-          returnedCm: entry.returnedCm,
+          quantity: entry.quantity,
         })),
         creditCents: priced.creditCents,
         refundId: refund?.id ?? null,
@@ -321,7 +338,7 @@ export function checkSaleReturn(
       saleId: saleReturn.saleId,
       date: saleReturn.date,
       reason: saleReturn.reason,
-      lines: saleReturn.lines.map((line) => ({ lineId: line.lineId, returnedCm: line.returnedCm })),
+      lines: saleReturn.lines.map((line) => ({ lineId: line.lineId, quantity: line.quantity })),
       refundCents: refund?.amountCents ?? 0,
     },
     records,

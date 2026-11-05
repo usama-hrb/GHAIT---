@@ -1,7 +1,7 @@
-import type { DataExport, RecordBase } from '@fabric/contracts';
+import type { DataExport, ProductUnit, RecordBase } from '@fabric/contracts';
 import { Injectable } from '@nestjs/common';
-import { count, sql } from 'drizzle-orm';
-import { schema, TransactionHost } from '../../database/index.js';
+import { count, eq, sql } from 'drizzle-orm';
+import { schema, stockBackfillSql, TransactionHost } from '../../database/index.js';
 
 /** Where each exported entity goes, in insertion order (EXPORT_ENTITIES). */
 const TABLES = {
@@ -9,10 +9,13 @@ const TABLES = {
   supplier: schema.supplier,
   fabric: schema.fabric,
   variant: schema.variant,
+  product: schema.product,
   photo: schema.photo,
   purchase: schema.purchase,
   roll: schema.roll,
   stock_move: schema.stockMove,
+  product_batch: schema.productBatch,
+  product_stock_move: schema.productStockMove,
   supplier_payment: schema.supplierPayment,
   customer: schema.customer,
   sale: schema.sale,
@@ -22,6 +25,8 @@ const TABLES = {
   sale_void: schema.saleVoid,
   sale_return: schema.saleReturn,
   write_off: schema.writeOff,
+  employee: schema.employee,
+  employee_salary: schema.employeeSalary,
   recurring_expense: schema.recurringExpense,
   expense: schema.expense,
   cash_adjustment: schema.cashAdjustment,
@@ -77,6 +82,67 @@ export class DataRepository {
       // drizzle cannot type that link for a table picked at runtime.
       await this.tx.db.insert(table).values(chunk as never);
     }
+  }
+
+  /** Backfills old exports that predate Product after their legacy transactions have been loaded. */
+  async backfillLegacyProducts(): Promise<number> {
+    const [catalog, purchaseHistory] = await Promise.all([
+      this.tx.db
+        .select({ variant: schema.variant, fabric: schema.fabric })
+        .from(schema.variant)
+        .innerJoin(schema.fabric, eq(schema.variant.fabricId, schema.fabric.id)),
+      this.tx.db
+        .select({ variantId: schema.roll.variantId, unit: schema.purchase.method })
+        .from(schema.roll)
+        .innerJoin(schema.purchase, eq(schema.roll.purchaseId, schema.purchase.id)),
+    ]);
+
+    const unitsByVariant = new Map<string, Set<ProductUnit>>();
+    for (const { variantId, unit } of purchaseHistory) {
+      const units = unitsByVariant.get(variantId) ?? new Set<ProductUnit>();
+      units.add(unit);
+      unitsByVariant.set(variantId, units);
+    }
+
+    const products: (typeof schema.product.$inferInsert)[] = catalog.map(({ variant, fabric }) => ({
+      id: variant.id,
+      createdAt: variant.createdAt,
+      updatedAt: variant.updatedAt,
+      deviceId: variant.deviceId,
+      name: `${fabric.name} - ${variant.colorName}`,
+      sku: null,
+      description: fabric.notes,
+      tags: fabric.tags,
+      purchaseUnits: [...(unitsByVariant.get(variant.id) ?? [])].sort(),
+      sellingUnits: fabric.sellableAsPiece ? ['meter', 'piece'] : ['meter'],
+      kgToMeterWeightG: fabric.estCmPerKg === null ? null : 1000,
+      kgToMeterLengthCm: fabric.estCmPerKg,
+      kgToMeterSource: fabric.estCmPerKg === null ? null : ('estimated' as const),
+      pricePerMeterCents: fabric.refPricePerMeterCents,
+      minPricePerMeterCents: fabric.minPricePerMeterCents,
+      pricePerPieceCents: fabric.sellableAsPiece ? fabric.piecePriceCents : null,
+      minPricePerPieceCents: fabric.sellableAsPiece ? 0 : null,
+      lowStockThreshold: variant.lowStockThresholdCm,
+      active: variant.voidedAt === null && fabric.voidedAt === null,
+    }));
+
+    if (products.length === 0) return 0;
+    const inserted = await this.tx.db
+      .insert(schema.product)
+      .values(products)
+      .onConflictDoNothing({ target: schema.product.id })
+      .returning({ id: schema.product.id });
+    return inserted.length;
+  }
+
+  /**
+   * Old exports have rolls and moves but no batches: carries them over with the SQL migration 0029
+   * ran (it only adds what is missing) and checks that nothing was lost.
+   */
+  async backfillLegacyStock(): Promise<void> {
+    const { backfill, reconcile } = await stockBackfillSql();
+    for (const statement of backfill) await this.tx.db.execute(sql.raw(statement));
+    await this.tx.db.execute(sql.raw(reconcile));
   }
 
   /** Devices with their codes; the code sequence continues after the highest one. */

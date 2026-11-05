@@ -1,6 +1,23 @@
+import { PRODUCT_SELLING_UNITS, PRODUCT_UNITS, type ProductSellingUnit } from '@fabric/contracts';
 import { sql } from 'drizzle-orm';
-import { bigint, boolean, check, index, integer, pgTable, text, uuid } from 'drizzle-orm/pg-core';
+import {
+  bigint,
+  boolean,
+  check,
+  index,
+  integer,
+  pgEnum,
+  pgTable,
+  text,
+  uuid,
+} from 'drizzle-orm/pg-core';
 import { baseColumns } from './columns.js';
+
+export const productUnit = pgEnum('product_unit', PRODUCT_UNITS);
+export const productConversionSource = pgEnum('product_conversion_source', [
+  'estimated',
+  'measured',
+]);
 
 /** SPEC §13 `supplier`. Synced, mutable (last write wins). */
 export const supplier = pgTable('supplier', {
@@ -56,5 +73,49 @@ export const variant = pgTable(
   (table) => [
     index('variant_fabric_idx').on(table.fabricId),
     check('variant_threshold_valid', sql`${table.lowStockThresholdCm} >= 0`),
+  ],
+);
+
+/** Product identity is independent from legacy fabric and variant records. */
+export const product = pgTable(
+  'product',
+  {
+    ...baseColumns('product'),
+    name: text().notNull(),
+    sku: text(),
+    description: text(),
+    tags: text()
+      .array()
+      .notNull()
+      .default(sql`'{}'::text[]`),
+    purchaseUnits: productUnit()
+      .array()
+      .notNull()
+      .default(sql`'{}'::product_unit[]`),
+    // The CHECK below keeps weight out of it; the column is the shared enum.
+    sellingUnits: productUnit().array().$type<ProductSellingUnit[]>().notNull(),
+    kgToMeterWeightG: integer(),
+    kgToMeterLengthCm: integer(),
+    kgToMeterSource: productConversionSource(),
+    pricePerMeterCents: bigint('price_per_m_cents', { mode: 'number' }),
+    minPricePerMeterCents: bigint('min_price_per_m_cents', { mode: 'number' }),
+    pricePerPieceCents: bigint('price_per_piece_cents', { mode: 'number' }),
+    minPricePerPieceCents: bigint('min_price_per_piece_cents', { mode: 'number' }),
+    lowStockThreshold: integer(),
+    active: boolean().notNull().default(true),
+  },
+  (table) => [
+    index('product_name_idx').on(table.name),
+    check('product_name_valid', sql`length(trim(${table.name})) > 0`),
+    check('product_units_valid', sql`cardinality(${table.sellingUnits}) > 0`),
+    check(
+      'product_selling_units_valid',
+      sql`${table.sellingUnits} <@ ARRAY[${sql.raw(PRODUCT_SELLING_UNITS.map((unit) => `'${unit}'`).join(', '))}]::product_unit[]`,
+    ),
+    check(
+      'product_conversion_valid',
+      sql`(${table.kgToMeterWeightG} IS NULL AND ${table.kgToMeterLengthCm} IS NULL AND ${table.kgToMeterSource} IS NULL)
+        OR (${table.kgToMeterWeightG} > 0 AND ${table.kgToMeterLengthCm} > 0 AND ${table.kgToMeterSource} IS NOT NULL)`,
+    ),
   ],
 );

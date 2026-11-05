@@ -113,6 +113,8 @@ make up STACK=prod
 
 `make up` builds the new images and replaces the containers. The API applies pending migrations before it accepts requests. Open devices see a "new version" notice and reload; work they hold is in IndexedDB and syncs as usual.
 
+**The release that moves stock to product batches** ([ADR 0012](../adr/0012-product-batches-single-stock-source.md), migrations 0028–0030) copies the rolls, stock moves and sale lines into batches. Before it: `make backup STACK=prod`, then `make backup-verify STACK=prod`. The migrations check their own work and abort, leaving the database as it was, if anything differs; the old tables are kept. Rolling back means restoring the dump (below): the old code cannot read sales made on batches. Each open device upgrades its own database in place on reload, offline too.
+
 ## 7. Roll back
 
 If the new release misbehaves:

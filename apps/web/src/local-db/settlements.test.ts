@@ -11,22 +11,23 @@ import { ShopDatabase } from './db';
 import { ValidationError } from './errors';
 import { createRepositories, type Repositories } from './repositories';
 import { DEVICE_CODE } from './session';
-import { NeedsServerError, type ServerLink } from './settlements';
+import { NeedsServerError, openPeriodEnds, type ServerLink } from './settlements';
 import { LocalStore } from './store';
+import { seedBatch, seedPartners, seedProduct } from './test-helpers';
 
 let db: ShopDatabase;
 let repos: Repositories;
 /** The device's clock: 3 November 2026, a minute later at each call. */
 let now = Date.UTC(2026, 10, 3, 9, 0);
 let seq = 0;
-let variantId: string;
+let productId: string;
 
 /** Everything a settlement reads, from this device's tables. */
 async function recordsOf(): Promise<SettlementRecords> {
-  const [rolls, stockMoves, sales, saleLines, saleReturns, allocations, writeOffs, expenses] =
+  const [batches, stockMoves, sales, saleLines, saleReturns, allocations, writeOffs, expenses] =
     await Promise.all([
-      db.rolls.toArray(),
-      db.stockMoves.toArray(),
+      db.productBatches.toArray(),
+      db.productStockMoves.toArray(),
       db.sales.toArray(),
       db.saleLines.toArray(),
       db.saleReturns.toArray(),
@@ -42,7 +43,7 @@ async function recordsOf(): Promise<SettlementRecords> {
     db.partners.toArray(),
   ]);
   return {
-    rolls,
+    batches,
     stockMoves,
     sales,
     saleLines,
@@ -125,45 +126,29 @@ beforeEach(async () => {
   server = fakeServer();
   repos = createRepositories(store, server);
   await store.setMeta(DEVICE_CODE, 'A');
-  await repos.partners.saveBoth({
-    owner: { name: 'أنا', ownershipBp: 5000 },
-    partner: { name: 'شريكي' },
-  });
-  const fabricId = await repos.fabrics.save({
-    name: 'روزا',
-    refPricePerMeterCents: 2000,
-    minPricePerMeterCents: 1000,
-    estCmPerKg: 500,
-  });
-  variantId = await repos.variants.save({ fabricId, colorName: 'أحمر' });
+  await seedPartners(repos);
+  productId = await seedProduct(repos, { minPricePerMeterCents: 1000 });
 });
 
 afterEach(async () => {
   await db.delete();
 });
 
-async function buy(input: object): Promise<string> {
-  const purchaseId = await repos.purchases.create({
-    variantId,
-    date: '2026-10-01',
-    ...input,
-  } as never);
-  const [roll] = await repos.purchases.rollsOf(purchaseId);
-  if (!roll) throw new Error('no roll');
-  return roll.id;
-}
+const buy = (lengthCm: number, date = '2026-10-01') =>
+  seedBatch(repos, productId, lengthCm, { date });
 
-const sell = (rollId: string, date: string, soldCm: number, perMeterCents: number) =>
+const sell = (batchId: string, date: string, soldCm: number, perMeterCents: number) =>
   repos.sales.create({
     date,
     customerId: null,
     lines: [
       {
-        rollId,
-        soldCm,
-        price: { perMeterCents },
-        refPricePerMeterCents: 2000,
-        minPricePerMeterCents: 1000,
+        batchId,
+        unit: 'meter',
+        quantity: soldCm,
+        price: { perUnitCents: perMeterCents },
+        refPriceCents: 2000,
+        minPriceCents: 1000,
       },
     ],
     paidCents: Math.round((perMeterCents * soldCm) / 100),
@@ -171,13 +156,25 @@ const sell = (rollId: string, date: string, soldCm: number, perMeterCents: numbe
 
 const lockedIssue = { issues: [expect.objectContaining({ message: 'period_locked' })] };
 
+/** The shop with a third person: the owner and the first partner make room for them (40/40/20). */
+async function withThirdPartner() {
+  const rows = await db.partners.toArray();
+  const owner = rows.find((row) => row.isOwner);
+  const first = rows.find((row) => !row.isOwner);
+  if (!owner || !first) throw new Error('the seeded partners');
+  const ids = await repos.partners.saveAll([
+    { id: owner.id, name: owner.name, ownershipBp: 4000, isOwner: true },
+    { id: first.id, name: first.name, ownershipBp: 4000, isOwner: false },
+    { name: 'سارة', ownershipBp: 2000, isOwner: false },
+  ]);
+  const thirdId = ids[2];
+  if (thirdId === undefined) throw new Error('a third partner');
+  return { firstId: first.id, thirdId };
+}
+
 describe('settlement on the device (BUILD_PROMPTS 4.3)', () => {
   it('previewed offline, approved through the server; what is dated in it is then refused', async () => {
-    const roll = await buy({
-      method: 'meter',
-      pricePerMeterCents: 1600,
-      rolls: [{ variantId, lengthCm: 20_000 }],
-    });
+    const roll = await buy(20_000);
     const october = await sell(roll, '2026-10-05', 10_000, 2000);
     await repos.expenses.save({
       date: '2026-10-10',
@@ -216,11 +213,11 @@ describe('settlement on the device (BUILD_PROMPTS 4.3)', () => {
       }),
     ).rejects.toBeInstanceOf(ValidationError);
     await expect(
-      repos.inventory.record({
+      repos.stock.act({
         type: 'loss',
-        rollId: roll,
+        batchId: roll,
         date: '2026-10-31',
-        lengthCm: 10,
+        quantity: 10,
         reason: 'تلف',
       }),
     ).rejects.toMatchObject(lockedIssue);
@@ -234,11 +231,7 @@ describe('settlement on the device (BUILD_PROMPTS 4.3)', () => {
   });
 
   it('a stale preview is refused by the server, and settling needs it', async () => {
-    const roll = await buy({
-      method: 'meter',
-      pricePerMeterCents: 1600,
-      rolls: [{ variantId, lengthCm: 5000 }],
-    });
+    const roll = await buy(5000);
     await sell(roll, '2026-10-05', 1000, 2000);
     const preview = await repos.settlements.preview('2026-10-31');
     if (!preview.ok) throw new Error('a preview');
@@ -256,27 +249,27 @@ describe('settlement on the device (BUILD_PROMPTS 4.3)', () => {
     );
   });
 
-  it('a settled sale keeps its cost on this device when the roll is measured later (P9)', async () => {
+  it('a settled sale keeps its cost on this device when the batch is measured later (P9)', async () => {
     // 2 kg at 500 cm/kg: an estimated 1000 cm for 100 dh; half sold in October.
-    const roll = await buy({
-      method: 'kg',
-      weightG: 2000,
+    const purchaseId = await repos.purchases.create({
+      date: '2026-10-01',
+      productId,
+      unit: 'kg',
+      quantity: 2000,
       totalCostCents: 10_000,
-      estCmPerKg: 500,
+      conversion: { weightG: 2000, lengthCm: 1000, source: 'estimated' },
     });
+    const [batch] = await repos.purchases.batchesOf(purchaseId);
+    const roll = batch?.id ?? '';
     await sell(roll, '2026-10-05', 500, 1600);
     const preview = await repos.settlements.preview('2026-10-31');
     if (!preview.ok) throw new Error('a preview');
     await repos.settlements.approve('2026-10-31', preview.preview.breakdown);
 
-    await repos.inventory.record({
-      type: 'length_correction',
-      rollId: roll,
-      date: '2026-11-02',
-      measuredRemainingCm: 300,
-    });
-    expect((await repos.inventory.roll(roll))?.ledger).toMatchObject({
-      basisLengthCm: 800,
+    // Measured at 800 cm in all: unfrozen, the settled half would now cost 62.50 dh.
+    await repos.productInventory.measure(roll, 800);
+    expect((await repos.stock.view(roll))?.ledger).toMatchObject({
+      lengthBasisCm: 800,
       costs: [expect.objectContaining({ costCents: 5000 })],
       unallocatedCostCents: 5000,
     });
@@ -310,6 +303,138 @@ describe('settlement on the device (BUILD_PROMPTS 4.3)', () => {
     expect((await db.outbox.toArray()).map((op) => [op.entity, op.kind]).slice(-2)).toEqual([
       ['profit_split_rule', 'upsert'],
       ['profit_split_rule', 'void'],
+    ]);
+  });
+
+  it('a partner is given a weight from a future date: the others keep theirs, one rule per day (S15, S17)', async () => {
+    const { firstId, thirdId } = await withThirdPartner();
+    const change = { partnerId: thirdId, weight: 1, effectiveFrom: '2026-12-01' };
+
+    // The default rule names no partner, so it is the first one's; the third is added beside them.
+    const preview = await repos.settlements.previewPartnerWeight(change);
+    expect(preview).toEqual({
+      id: null,
+      rule: {
+        effectiveFrom: '2026-12-01',
+        ownerWeight: 1,
+        partnerWeight: 2,
+        shopWeight: 1,
+        partnerWeights: [
+          { partnerId: firstId, weight: 1 },
+          { partnerId: thirdId, weight: 1 },
+        ],
+      },
+    });
+    expect(await repos.settlements.splitRules()).toHaveLength(1); // a preview saves nothing
+
+    const id = await repos.settlements.setPartnerWeight(change);
+    const saved = (await repos.settlements.splitRules()).at(-1);
+    expect(saved).toMatchObject({ effectiveFrom: '2026-12-01', partnerWeight: 2, future: true });
+    expect(saved?.partnerWeights).toEqual(preview.rule.partnerWeights);
+
+    // The same day again changes that rule instead of adding a second one.
+    expect((await repos.settlements.previewPartnerWeight({ ...change, weight: 3 })).id).toBe(id);
+    await repos.settlements.setPartnerWeight({ ...change, weight: 3 });
+    const rows = await repos.settlements.splitRules();
+    expect(rows).toHaveLength(2);
+    expect(rows.at(-1)?.partnerWeights).toEqual([
+      { partnerId: firstId, weight: 1 },
+      { partnerId: thirdId, weight: 3 },
+    ]);
+    expect(rows.at(-1)?.partnerWeight).toBe(4);
+  });
+
+  it('a weight cannot start today or on a day that has passed: a settled period never changes (S15)', async () => {
+    const { thirdId } = await withThirdPartner();
+    await expect(
+      repos.settlements.setPartnerWeight({
+        partnerId: thirdId,
+        weight: 1,
+        effectiveFrom: '2026-11-03',
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    expect(await repos.settlements.splitRules()).toHaveLength(1);
+  });
+
+  it('what a settled period shows does not move when records and rules change after it', async () => {
+    const roll = await buy(5000);
+    await sell(roll, '2026-10-05', 1000, 2000);
+    const preview = await repos.settlements.preview('2026-10-31');
+    if (!preview.ok) throw new Error('a preview');
+    const id = await repos.settlements.approve('2026-10-31', preview.preview.breakdown);
+    const approved = await repos.settlements.detail(id);
+    expect(approved?.settlement).toMatchObject({
+      periodStart: '2026-10-01',
+      ownerWeight: 1,
+      partnerWeight: 1,
+      shopWeight: 1,
+    });
+
+    // Afterwards: a new rule for a future date, and records in the open period.
+    await repos.settlements.saveSplitRule({
+      effectiveFrom: '2026-12-01',
+      ownerWeight: 4,
+      partnerWeight: 4,
+      shopWeight: 2,
+    });
+    await sell(roll, '2026-11-02', 1000, 2000);
+    await repos.expenses.save({
+      date: '2026-11-02',
+      category: 'rent',
+      amountCents: 5000,
+      paidDate: '2026-11-02',
+    });
+    expect(await repos.settlements.detail(id)).toEqual(approved);
+    expect((await repos.settlements.history()).map((row) => row.id)).toEqual([id]);
+  });
+
+  it('the period ends on offer: each ended month after the last settled day, the oldest first', async () => {
+    // 3 November 2026 here: October is the last ended month.
+    expect(await repos.settlements.openPeriodEnds()).toEqual(['2026-10-31']);
+    const roll = await buy(5000);
+    await sell(roll, '2026-10-05', 1000, 2000);
+    const preview = await repos.settlements.preview('2026-10-31');
+    if (!preview.ok) throw new Error('a preview');
+    await repos.settlements.approve('2026-10-31', preview.preview.breakdown);
+    expect(await repos.settlements.openPeriodEnds()).toEqual([]);
+  });
+});
+
+describe('openPeriodEnds (S7: a period starts the day after the last settlement)', () => {
+  it('offers only the last ended month when nothing is settled: the first period takes all before it', () => {
+    expect(openPeriodEnds(null, '2026-11-03')).toEqual(['2026-10-31']);
+    expect(openPeriodEnds(null, '2027-01-01')).toEqual(['2026-12-31']);
+  });
+
+  it('lists every ended month after the settled day, the oldest first', () => {
+    expect(openPeriodEnds('2026-08-31', '2026-11-03')).toEqual(['2026-09-30', '2026-10-31']);
+    expect(openPeriodEnds('2026-07-31', '2026-11-03')).toEqual([
+      '2026-08-31',
+      '2026-09-30',
+      '2026-10-31',
+    ]);
+  });
+
+  it('a period settled to a day inside a month leaves that month open', () => {
+    expect(openPeriodEnds('2026-09-15', '2026-11-03')).toEqual(['2026-09-30', '2026-10-31']);
+    expect(openPeriodEnds('2026-10-15', '2026-11-03')).toEqual(['2026-10-31']);
+  });
+
+  it('is empty when every ended month is settled, and never offers a month that has not ended', () => {
+    expect(openPeriodEnds('2026-10-31', '2026-11-03')).toEqual([]);
+    expect(openPeriodEnds('2026-10-31', '2026-11-30')).toEqual([]);
+    expect(openPeriodEnds('2026-10-31', '2026-12-01')).toEqual(['2026-11-30']);
+  });
+
+  it('crosses a year end', () => {
+    expect(openPeriodEnds('2026-11-30', '2027-02-02')).toEqual(['2026-12-31', '2027-01-31']);
+  });
+
+  it('is capped, keeping the oldest', () => {
+    expect(openPeriodEnds('2020-12-31', '2026-11-03', 3)).toEqual([
+      '2021-01-31',
+      '2021-02-28',
+      '2021-03-31',
     ]);
   });
 });

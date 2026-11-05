@@ -127,16 +127,59 @@ describe('partners, capital and draws (BUILD_PROMPTS 4.2)', () => {
     expect(partners.map((p) => p.name)).toEqual(['المالك', 'الشريك']);
   });
 
-  it('a third partner is refused (S4): a device that set them up again adds nothing', async () => {
-    const refused = await as(t.http().put(`/partners/${crypto.randomUUID()}`))
-      .send({ name: 'المالك', ownershipBp: 5000, isOwner: true })
+  it('several partners (S17): one owner who stays the owner, and no more than 100% between them', async () => {
+    const errors = (body: unknown) =>
+      (body as { error: { issues: { message: string }[] } }).error.issues.map((i) => i.message);
+    // A device that set the owner up again before it had pulled them would add a second owner.
+    const second = await as(t.http().put(`/partners/${crypto.randomUUID()}`))
+      .send({ name: 'المالك', ownershipBp: 0, isOwner: true })
       .expect(400);
-    expect((refused.body as { error: { issues: { message: string }[] } }).error.issues).toEqual([
-      expect.objectContaining({ message: PARTNER_ISSUES.alreadySetUp }),
-    ]);
-    // Editing one of the two still works.
-    await as(t.http().put(`/partners/${owner}`))
-      .send({ name: 'المالك', ownershipBp: 6000, isOwner: true })
+    expect(errors(second.body)).toEqual([PARTNER_ISSUES.secondOwner]);
+    // 50% + 50% + 10% is more than the whole shop.
+    const third = crypto.randomUUID();
+    const over = await as(t.http().put(`/partners/${third}`))
+      .send({ name: 'الثالث', ownershipBp: 1000, isOwner: false })
+      .expect(400);
+    expect(errors(over.body)).toEqual([PARTNER_ISSUES.ownershipOver]);
+    // The partner makes room, and the third fits, with their details.
+    await as(t.http().put(`/partners/${partner}`))
+      .send({ name: 'الشريك', ownershipBp: 4000, isOwner: false })
       .expect(200);
+    await as(t.http().put(`/partners/${third}`))
+      .send({
+        name: 'الثالث',
+        ownershipBp: 1000,
+        isOwner: false,
+        phone: '0600000000',
+        title: 'شريك صامت',
+        startDate: '2026-10-01',
+        notes: 'دخل بعد الافتتاح',
+      })
+      .expect(200);
+    // Nobody swaps places with the owner.
+    const swap = await as(t.http().put(`/partners/${partner}`))
+      .send({ name: 'الشريك', ownershipBp: 4000, isOwner: true })
+      .expect(400);
+    expect(errors(swap.body)).toEqual([PARTNER_ISSUES.ownerFixed]);
+    const partners = (await as(t.http().get('/partners')).expect(200)).body as {
+      name: string;
+      ownershipBp: number;
+      phone: string | null;
+      title: string | null;
+      startDate: string | null;
+      notes: string | null;
+    }[];
+    expect(partners.map((p) => [p.name, p.ownershipBp])).toEqual([
+      ['المالك', 5000],
+      ['الشريك', 4000],
+      ['الثالث', 1000],
+    ]);
+    expect(partners[2]).toMatchObject({
+      phone: '0600000000',
+      title: 'شريك صامت',
+      startDate: '2026-10-01',
+      notes: 'دخل بعد الافتتاح',
+    });
+    expect(partners[0]).toMatchObject({ phone: null, title: null, startDate: null, notes: null });
   });
 });

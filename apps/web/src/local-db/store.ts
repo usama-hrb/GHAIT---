@@ -19,6 +19,7 @@ export class LocalStore {
   private readonly listeners = new Set<() => void>();
   private readOnly = false;
   private role: Role | null = null;
+  private user: string | null = null;
 
   constructor(
     readonly db: ShopDatabase,
@@ -44,6 +45,22 @@ export class LocalStore {
   setRole(role: Role | null): void {
     this.role = role;
     this.readOnly = role === 'partner';
+  }
+
+  /** The signed-in account: its role, and the user name an override of a minimum price carries. */
+  setUser(user: { role: Role; username: string } | null): void {
+    this.setRole(user?.role ?? null);
+    this.user = user?.username ?? null;
+  }
+
+  /** The signed-in user name (null before sign-in). */
+  username(): string | null {
+    return this.user;
+  }
+
+  /** The signed-in role (null before sign-in). */
+  currentRole(): Role | null {
+    return this.role;
   }
 
   /** A change the role may not push is refused before it is saved. */

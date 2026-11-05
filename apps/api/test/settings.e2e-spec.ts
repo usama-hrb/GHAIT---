@@ -129,4 +129,73 @@ describe('settings', () => {
     );
     expect(second.items[0]?.id).not.toBe(first.items[1]?.id);
   });
+
+  describe('the shop logo (ADR 0017)', () => {
+    /** A base64 text that decodes to `bytes` bytes and starts like a JPEG. */
+    const jpeg = (bytes: number) => {
+      const triples = Math.ceil(bytes / 3);
+      const text = `/9j/${'A'.repeat(triples * 4 - 4)}`;
+      const drop = triples * 3 - bytes;
+      return drop === 0 ? text : `${text.slice(0, text.length - drop)}${'='.repeat(drop)}`;
+    };
+    const logo = (bytes: number) => ({
+      contentType: 'image/jpeg',
+      width: 240,
+      height: 120,
+      byteLength: bytes,
+      data: jpeg(bytes),
+    });
+
+    it('is stored, replaced and removed, each audited without its bytes', async () => {
+      const first = logo(3000);
+      const second = logo(4500);
+      await put('/settings/shop_logo').send({ value: first }).expect(200);
+      await put('/settings/shop_logo').send({ value: second }).expect(200);
+      expect(
+        settingSchema.parse((await get('/settings/shop_logo').expect(200)).body),
+      ).toMatchObject({ value: second, isDefault: false });
+      await put('/settings/shop_logo').send({ value: null }).expect(200);
+      expect(settingSchema.parse((await get('/settings/shop_logo').expect(200)).body).value).toBe(
+        null,
+      );
+
+      const { items } = auditListResponseSchema.parse(
+        (await get('/audit?entity=setting&limit=50').expect(200)).body,
+      );
+      const logos = items.filter(
+        (item) => (item.after as { key?: string } | null)?.key === 'shop_logo',
+      );
+      expect(logos.map((item) => item.action)).toEqual(['update', 'update', 'create']);
+      expect(logos[2]?.after).toMatchObject({
+        value: { byteLength: 3000, data: '[JPEG 3000 bytes]' },
+      });
+      expect(logos[1]?.before).toMatchObject({ value: { data: '[JPEG 3000 bytes]' } });
+      expect(logos[0]?.after).toMatchObject({ value: null });
+      // Not a byte of the image is in the log.
+      expect(JSON.stringify(items)).not.toContain(first.data);
+      expect(JSON.stringify(items)).not.toContain(second.data);
+      const { rows } = await t.sql.query<{ stored: number }>(
+        `SELECT length((before::text) || (after::text)) AS stored FROM audit_log WHERE entity = 'setting' AND (after::text LIKE '%shop_logo%')`,
+      );
+      expect(Math.max(...rows.map((row) => row.stored))).toBeLessThan(1500);
+    });
+
+    it('refuses what is not a small JPEG, and keeps the logo it has', async () => {
+      const kept = logo(2400);
+      await put('/settings/shop_logo').send({ value: kept }).expect(200);
+      await put('/settings/shop_logo')
+        .send({ value: { ...logo(2400), data: `iVBO${'A'.repeat(3196)}` } })
+        .expect(400);
+      await put('/settings/shop_logo')
+        .send({ value: { ...logo(2400), byteLength: 2401 } })
+        .expect(400);
+      await put('/settings/shop_logo')
+        .send({ value: logo(300_000) })
+        .expect(400);
+      await put('/settings/shop_logo').send({ value: 'logo.png' }).expect(400);
+      expect(
+        settingSchema.parse((await get('/settings/shop_logo').expect(200)).body).value,
+      ).toEqual(kept);
+    });
+  });
 });

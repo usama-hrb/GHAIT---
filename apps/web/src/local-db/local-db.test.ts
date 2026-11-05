@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto';
-import type { SyncOpResult } from '@fabric/contracts';
+import type { ProductInput, SyncOpResult } from '@fabric/contracts';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ApiClient, type FetchLike } from './api';
 import { ShopDatabase } from './db';
@@ -9,7 +9,13 @@ import { Session } from './session';
 import { LocalStore } from './store';
 import { applyPulledChanges, applyPushResults, SyncEngine } from './sync';
 
-const ROSA = { name: 'روزا', refPricePerMeterCents: 2000, minPricePerMeterCents: 1800 };
+const ROSA: ProductInput = {
+  name: 'روزا',
+  purchaseUnits: ['meter'],
+  sellingUnits: ['meter'],
+  pricePerMeterCents: 2000,
+  minPricePerMeterCents: 1800,
+};
 let clock = new Date('2026-10-29T10:00:00.000Z');
 
 let db: ShopDatabase;
@@ -28,9 +34,9 @@ afterEach(async () => {
 
 describe('repositories', () => {
   it('saves the record and queues its op in one go', async () => {
-    const id = await repos.fabrics.save(ROSA);
-    const fabric = await repos.fabrics.get(id);
-    expect(fabric).toMatchObject({
+    const id = await repos.products.save(ROSA);
+    const product = await repos.products.get(id);
+    expect(product).toMatchObject({
       ...ROSA,
       id,
       serverSeq: null,
@@ -39,22 +45,44 @@ describe('repositories', () => {
     });
     const [op] = await db.outbox.toArray();
     expect(op).toMatchObject({
-      entity: 'fabric',
+      entity: 'product',
       entityId: id,
       kind: 'upsert',
       baseServerSeq: null,
       state: 'pending',
-      payload: { ...ROSA, id },
     });
+    expect(op?.payload).toMatchObject({ ...ROSA, id });
+  });
+
+  it('saves products offline and updates an existing product without duplicating it', async () => {
+    const id = crypto.randomUUID();
+    const input: ProductInput = {
+      name: 'Rosa',
+      purchaseUnits: ['kg', 'meter'],
+      sellingUnits: ['meter'],
+      pricePerMeterCents: 300,
+      minPricePerMeterCents: 200,
+    };
+    await repos.products.save(input, id);
+    await repos.products.save({ ...input, name: 'Rosa updated' }, id);
+
+    expect(await db.products.count()).toBe(1);
+    expect(await repos.products.get(id)).toMatchObject({
+      id,
+      name: 'Rosa updated',
+      purchaseUnits: ['kg', 'meter'],
+      serverSeq: null,
+    });
+    expect(await db.outbox.filter((op) => op.entity === 'product').count()).toBe(2);
   });
 
   it('keeps createdAt on update and bases the op on the synced version', async () => {
-    const id = await repos.fabrics.save(ROSA);
-    await db.fabrics.update(id, { serverSeq: 7 });
+    const id = await repos.products.save(ROSA);
+    await db.products.update(id, { serverSeq: 7 });
     clock = new Date('2026-10-29T11:00:00.000Z');
-    await repos.fabrics.save({ ...ROSA, name: 'روزا 2' }, id);
-    const fabric = await repos.fabrics.get(id);
-    expect(fabric).toMatchObject({
+    await repos.products.save({ ...ROSA, name: 'روزا 2' }, id);
+    const product = await repos.products.get(id);
+    expect(product).toMatchObject({
       name: 'روزا 2',
       createdAt: '2026-10-29T10:00:00.000Z',
       updatedAt: '2026-10-29T11:00:00.000Z',
@@ -65,55 +93,42 @@ describe('repositories', () => {
   });
 
   it('refuses invalid input with the contract’s issues and writes nothing', async () => {
-    const error: unknown = await repos.fabrics
+    const error: unknown = await repos.products
       .save({ ...ROSA, minPricePerMeterCents: 2500 })
       .catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ValidationError);
     expect((error as ValidationError).issues).toEqual([
       expect.objectContaining({
         path: ['minPricePerMeterCents'],
-        message: 'min_price_above_ref_price',
+        message: 'product_min_price_above_price',
       }),
     ]);
-    expect(await db.fabrics.count()).toBe(0);
+    expect(await db.products.count()).toBe(0);
     expect(await db.outbox.count()).toBe(0);
   });
 
   it('voids instead of deleting, once, with the reason in the op', async () => {
-    const id = await repos.fabrics.save(ROSA);
-    await repos.fabrics.void(id, 'أُدخل مرتين');
-    await repos.fabrics.void(id, 'again');
-    expect((await repos.fabrics.get(id))?.voidedAt).toBe(clock.toISOString());
+    const id = await repos.products.save(ROSA);
+    await repos.products.void(id, 'أُدخل مرتين');
+    await repos.products.void(id, 'again');
+    expect((await repos.products.get(id))?.voidedAt).toBe(clock.toISOString());
     const ops = await db.outbox.orderBy('seq').toArray();
     expect(ops.map((op) => [op.kind, op.payload])).toEqual([
       ['upsert', expect.anything()],
       ['void', { reason: 'أُدخل مرتين' }],
     ]);
-    await expect(repos.fabrics.void(id, ' ')).rejects.toBeInstanceOf(ValidationError);
-    await expect(repos.fabrics.void(crypto.randomUUID(), 'x')).rejects.toThrow(/No fabric/);
+    await expect(repos.products.void(id, ' ')).rejects.toBeInstanceOf(ValidationError);
+    await expect(repos.products.void(crypto.randomUUID(), 'x')).rejects.toThrow(/No product/);
   });
 
   it('lists live records, searched the Arabic-friendly way', async () => {
-    await repos.fabrics.save({ ...ROSA, name: 'كريب كوريا', type: 'كريب' });
-    const voided = await repos.fabrics.save({ ...ROSA, name: 'قديم' });
-    await repos.fabrics.void(voided, 'x');
-    await repos.fabrics.save({ ...ROSA, name: 'أرجوان', tags: ['صيفي'] });
-    expect((await repos.fabrics.list()).map((f) => f.name)).toEqual(['أرجوان', 'كريب كوريا']);
-    expect((await repos.fabrics.list('ارجوان')).map((f) => f.name)).toEqual(['أرجوان']);
-    expect((await repos.fabrics.list('صيفي')).map((f) => f.name)).toEqual(['أرجوان']);
-  });
-
-  it('lists and counts colours per fabric', async () => {
-    const fabricId = await repos.fabrics.save(ROSA);
-    await repos.variants.save({ fabricId, colorName: 'أحمر' });
-    const blue = await repos.variants.save({ fabricId, colorName: 'أزرق' });
-    await repos.variants.save({ fabricId, colorName: 'أخضر' });
-    await repos.variants.void(blue, 'لا يوجد');
-    expect((await repos.variants.listByFabric(fabricId)).map((v) => v.colorName)).toEqual([
-      'أحمر',
-      'أخضر',
-    ]);
-    expect((await repos.variants.countByFabric()).get(fabricId)).toBe(2);
+    await repos.products.save({ ...ROSA, name: 'كريب كوريا', description: 'كريب' });
+    const voided = await repos.products.save({ ...ROSA, name: 'قديم' });
+    await repos.products.void(voided, 'x');
+    await repos.products.save({ ...ROSA, name: 'أرجوان', tags: ['صيفي'] });
+    expect((await repos.products.list()).map((f) => f.name)).toEqual(['أرجوان', 'كريب كوريا']);
+    expect((await repos.products.list('ارجوان')).map((f) => f.name)).toEqual(['أرجوان']);
+    expect((await repos.products.list('صيفي')).map((f) => f.name)).toEqual(['أرجوان']);
   });
 
   it('reads a pulled setting by effective date, with the default otherwise', async () => {
@@ -136,9 +151,9 @@ describe('repositories', () => {
 
 describe('applying the server’s answers', () => {
   it('push results: applied and conflict leave the outbox, rejected stays marked', async () => {
-    const a = await repos.fabrics.save(ROSA);
-    const b = await repos.fabrics.save({ ...ROSA, name: 'ب' });
-    const c = await repos.fabrics.save({ ...ROSA, name: 'ج' });
+    const a = await repos.products.save(ROSA);
+    const b = await repos.products.save({ ...ROSA, name: 'ب' });
+    const c = await repos.products.save({ ...ROSA, name: 'ج' });
     const entries = await db.outbox.orderBy('seq').toArray();
     const results: SyncOpResult[] = [
       { opId: entries[0]?.opId ?? '', status: 'applied', serverSeq: 11, error: null },
@@ -152,8 +167,8 @@ describe('applying the server’s answers', () => {
       },
     ];
     await applyPushResults(db, entries, results);
-    expect((await repos.fabrics.get(a))?.serverSeq).toBe(11);
-    expect((await repos.fabrics.get(b))?.serverSeq).toBeNull();
+    expect((await repos.products.get(a))?.serverSeq).toBe(11);
+    expect((await repos.products.get(b))?.serverSeq).toBeNull();
     const left = await db.outbox.toArray();
     expect(left).toEqual([
       expect.objectContaining({ entityId: c, state: 'rejected', error: results[2]?.error }),
@@ -161,21 +176,21 @@ describe('applying the server’s answers', () => {
   });
 
   it('pulled changes: stored with their server_seq, except records with a pending change', async () => {
-    const local = await repos.fabrics.save({ ...ROSA, name: 'محلي' });
-    const remote = { ...(await repos.fabrics.get(local)), name: 'من الخادم' };
+    const local = await repos.products.save({ ...ROSA, name: 'محلي' });
+    const remote = { ...(await repos.products.get(local)), name: 'من الخادم' };
     const other = { ...remote, id: crypto.randomUUID(), name: 'جديد من جهاز آخر' };
     await applyPulledChanges(db, {
       changes: [
-        { entity: 'fabric', serverSeq: 21, record: remote },
-        { entity: 'fabric', serverSeq: 22, record: other },
-        { entity: 'fabric', serverSeq: 23, record: { not: 'a fabric' } },
+        { entity: 'product', serverSeq: 21, record: remote },
+        { entity: 'product', serverSeq: 22, record: other },
+        { entity: 'product', serverSeq: 23, record: { not: 'a product' } },
       ],
       nextSince: 23,
       hasMore: false,
       epoch: crypto.randomUUID(),
     });
-    expect((await repos.fabrics.get(local))?.name).toBe('محلي');
-    expect(await repos.fabrics.get(other.id)).toMatchObject({
+    expect((await repos.products.get(local))?.name).toBe('محلي');
+    expect(await repos.products.get(other.id)).toMatchObject({
       name: 'جديد من جهاز آخر',
       serverSeq: 22,
     });
@@ -265,12 +280,12 @@ describe('session and sync engine', () => {
     await session.login({ username: 'owner', password: 'x' });
     expect(session.getState()).toMatchObject({ status: 'signed_in', user: { username: 'owner' } });
 
-    const id = await repos.fabrics.save(ROSA);
+    const id = await repos.products.save(ROSA);
     const engine = new SyncEngine(store, session, { isOnline: () => true });
     await engine.syncNow();
     expect(engine.getStatus().state).toBe('idle');
     expect(await db.outbox.count()).toBe(0);
-    expect((await repos.fabrics.get(id))?.serverSeq).toBe(1);
+    expect((await repos.products.get(id))?.serverSeq).toBe(1);
 
     // A second device (another browser profile): its own database, same server.
     const otherDb = new ShopDatabase(`test-${crypto.randomUUID()}`);
@@ -278,7 +293,7 @@ describe('session and sync engine', () => {
     const otherSession = new Session(otherStore, new ApiClient(otherStore, server.fetchFn));
     await otherSession.login({ username: 'owner', password: 'x' });
     await new SyncEngine(otherStore, otherSession, { isOnline: () => true }).syncNow();
-    expect(await createRepositories(otherStore).fabrics.get(id)).toMatchObject({
+    expect(await createRepositories(otherStore).products.get(id)).toMatchObject({
       name: 'روزا',
       serverSeq: 1,
     });
@@ -291,7 +306,7 @@ describe('session and sync engine', () => {
     const session = new Session(store, new ApiClient(store, server.fetchFn));
     await session.login({ username: 'owner', password: 'x' });
     for (let index = 0; index < 450; index++) {
-      await repos.fabrics.save({ ...ROSA, name: `قماش ${String(index)}` });
+      await repos.products.save({ ...ROSA, name: `قماش ${String(index)}` });
     }
     await new SyncEngine(store, session, { isOnline: () => true }).syncNow();
     expect(server.pushSizes).toEqual([200, 200, 50]);
@@ -302,7 +317,7 @@ describe('session and sync engine', () => {
     const otherSession = new Session(otherStore, new ApiClient(otherStore, server.fetchFn));
     await otherSession.login({ username: 'owner', password: 'x' });
     await new SyncEngine(otherStore, otherSession, { isOnline: () => true }).syncNow();
-    expect(await otherDb.fabrics.count()).toBe(450);
+    expect(await otherDb.products.count()).toBe(450);
     expect(
       server.calls.filter((call) => call === 'GET /api/sync/pull').length,
     ).toBeGreaterThanOrEqual(4);
@@ -313,8 +328,8 @@ describe('session and sync engine', () => {
     const server = fakeServer();
     const session = new Session(store, new ApiClient(store, server.fetchFn));
     await session.login({ username: 'owner', password: 'x' });
-    const kept = await repos.fabrics.save({ ...ROSA, name: 'قبل النسخة' });
-    await repos.fabrics.save({ ...ROSA, name: 'بعد النسخة' });
+    const kept = await repos.products.save({ ...ROSA, name: 'قبل النسخة' });
+    await repos.products.save({ ...ROSA, name: 'بعد النسخة' });
     const engine = new SyncEngine(store, session, { isOnline: () => true });
     await engine.syncNow();
     expect(await store.getMeta('pullCursor')).toBe(2);
@@ -322,16 +337,16 @@ describe('session and sync engine', () => {
     // Restored from a backup taken after the first fabric; a new one is then added there.
     server.restore(1);
     server.records.push({
-      entity: 'fabric',
+      entity: 'product',
       serverSeq: 2,
       record: {
-        ...(await repos.fabrics.get(kept)),
+        ...(await repos.products.get(kept)),
         id: crypto.randomUUID(),
         name: 'بعد الاسترجاع',
       },
     });
     await engine.syncNow();
-    const names = (await db.fabrics.toArray()).map((fabric) => fabric.name);
+    const names = (await db.products.toArray()).map((product) => product.name);
     // Without the reset the cursor (2) would skip the server's new record 2.
     expect(names).toContain('بعد الاسترجاع');
     expect(await store.getMeta('pullCursor')).toBe(2);
@@ -344,7 +359,7 @@ describe('session and sync engine', () => {
     const engine = new SyncEngine(store, session, { isOnline: () => online, retryMinMs: 60_000 });
 
     await session.login({ username: 'owner', password: 'x' });
-    await repos.fabrics.save(ROSA);
+    await repos.products.save(ROSA);
     await engine.syncNow();
     expect(engine.getStatus().state).toBe('offline');
     expect(await db.outbox.count()).toBe(1);

@@ -6,6 +6,7 @@ import { ValidationError } from './errors';
 import { createRepositories, type Repositories } from './repositories';
 import { DEVICE_CODE } from './session';
 import { LocalStore } from './store';
+import { seedBatch, seedProduct } from './test-helpers';
 
 let db: ShopDatabase;
 let repos: Repositories;
@@ -18,19 +19,7 @@ beforeEach(async () => {
   const store = new LocalStore(db, () => new Date(Date.UTC(2026, 9, 30, 9, minute++)));
   repos = createRepositories(store);
   await store.setMeta(DEVICE_CODE, 'A');
-  const fabricId = await repos.fabrics.save({
-    name: 'روزا',
-    refPricePerMeterCents: 2000,
-    minPricePerMeterCents: 1700,
-  });
-  const variantId = await repos.variants.save({ fabricId, colorName: 'أحمر' });
-  const purchaseId = await repos.purchases.create({
-    method: 'meter',
-    date: '2026-09-01',
-    pricePerMeterCents: 1600,
-    rolls: [{ variantId, lengthCm: 50_000 }],
-  });
-  rollId = (await repos.purchases.rollsOf(purchaseId))[0]?.id ?? '';
+  rollId = await seedBatch(repos, await seedProduct(repos), 50_000, { date: '2026-09-01' });
   customerId = await repos.customers.save({ name: 'فاطمة', phone: '0612345678' });
 });
 
@@ -45,11 +34,12 @@ const creditSale = (soldCm: number, date: string) =>
     customerId,
     lines: [
       {
-        rollId,
-        soldCm,
-        price: { perMeterCents: 2000 },
-        refPricePerMeterCents: 2000,
-        minPricePerMeterCents: 1700,
+        batchId: rollId,
+        unit: 'meter',
+        quantity: soldCm,
+        price: { perUnitCents: 2000 },
+        refPriceCents: 2000,
+        minPriceCents: 1700,
       },
     ],
     paidCents: 0,
@@ -117,11 +107,12 @@ describe('customer accounts on the device (BUILD_PROMPTS 3.5)', () => {
       customerId: other,
       lines: [
         {
-          rollId,
-          soldCm: 1000,
-          price: { perMeterCents: 2000 },
-          refPricePerMeterCents: 2000,
-          minPricePerMeterCents: 1700,
+          batchId: rollId,
+          unit: 'meter',
+          quantity: 1000,
+          price: { perUnitCents: 2000 },
+          refPriceCents: 2000,
+          minPriceCents: 1700,
         },
       ],
       paidCents: 0,

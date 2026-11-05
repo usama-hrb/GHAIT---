@@ -14,7 +14,8 @@ import {
   previewSettlement,
   priceSaleReturn,
   RETURN_ISSUES,
-  returnedCmByLine,
+  returnLineSchema,
+  returnedQuantityByLine,
   saleFigures,
   saleReturnAggregateSchema,
   SALE_ISSUES,
@@ -28,7 +29,7 @@ function shopWithSale(paidCents = dh(200)) {
   const shop = new Shop();
   shop.contribute(OWNER, dh(1000));
   shop.contribute(PARTNER, dh(1000));
-  const roll = shop.roll(dh(800), 5000, false, '2026-09-01');
+  const roll = shop.batch(dh(800), 5000, false, '2026-09-01');
   const sale = shop.sale(roll, '2026-09-05', 1000, dh(200), paidCents);
   return { shop, roll, sale };
 }
@@ -36,7 +37,7 @@ function shopWithSale(paidCents = dh(200)) {
 const input = (
   shop: Shop,
   saleId: string,
-  returnedCm: number,
+  quantity: number,
   refundCents = 0,
   date = DAY,
 ): NewSaleReturn => {
@@ -45,7 +46,7 @@ const input = (
     saleId,
     date,
     reason: 'لم يعجبها اللون',
-    lines: [{ lineId: line?.id ?? '', returnedCm }],
+    lines: [{ lineId: line?.id ?? '', quantity }],
     refundCents,
   };
 };
@@ -108,26 +109,26 @@ describe('pricing a return (RT1–RT3)', () => {
     ]);
     expect(issues({}, { writtenOff: true })).toEqual([RETURN_ISSUES.writtenOff]);
     expect(issues({ date: '2026-09-04' })).toEqual([RETURN_ISSUES.beforeSale]);
-    expect(issues({ lines: [{ lineId: crypto.randomUUID(), returnedCm: 1 }] })).toEqual([
+    expect(issues({ lines: [{ lineId: crypto.randomUUID(), quantity: 1 }] })).toEqual([
       RETURN_ISSUES.unknownLine,
     ]);
     const lineId = records.lines[0]?.id ?? '';
     expect(
       issues({
         lines: [
-          { lineId, returnedCm: 1 },
-          { lineId, returnedCm: 1 },
+          { lineId, quantity: 1 },
+          { lineId, quantity: 1 },
         ],
       }),
     ).toEqual([RETURN_ISSUES.duplicateLine]);
-    expect(issues({ lines: [{ lineId, returnedCm: 1001 }] })).toEqual([RETURN_ISSUES.aboveSold]);
+    expect(issues({ lines: [{ lineId, quantity: 1001 }] })).toEqual([RETURN_ISSUES.aboveSold]);
   });
 
   it('counts what came back before: a second return cannot take more than is left', () => {
     const { shop, sale } = shopWithSale(0);
     shop.giveBack(sale, '2026-09-20', 700);
     const records = shop.returnRecordsOf(sale);
-    expect(returnedCmByLine(records.returns).get(records.lines[0]?.id ?? '')).toBe(700);
+    expect(returnedQuantityByLine(records.returns).get(records.lines[0]?.id ?? '')).toBe(700);
     expect(priceSaleReturn(input(shop, sale.id, 301), records).issues).toHaveLength(1);
     expect(priceSaleReturn(input(shop, sale.id, 300), records)).toMatchObject({
       creditCents: dh(60),
@@ -174,9 +175,10 @@ describe('building and re-checking a return (RT1)', () => {
     expect(aggregate.moves).toEqual([
       expect.objectContaining({
         type: 'return',
-        deltaCm: 400,
+        delta: 400,
+        unit: 'meter',
         refId: sold?.id,
-        rollId: sold?.rollId,
+        batchId: sold?.batchId,
         date: DAY,
       }),
     ]);
@@ -199,7 +201,7 @@ describe('building and re-checking a return (RT1)', () => {
     ]);
 
     const wrongMove = structuredClone(aggregate);
-    if (wrongMove.moves[0]) wrongMove.moves[0].deltaCm = 500;
+    if (wrongMove.moves[0]) wrongMove.moves[0].delta = 500;
     expect(checkSaleReturn(wrongMove, records)[0]?.message).toBe(RETURN_ISSUES.notCore);
 
     const noMove = { ...aggregate, moves: [] };
@@ -321,7 +323,7 @@ describe('what a return does to the books (RT1–RT4)', () => {
     const given = shop.giveBack(sale, DAY, 400, 0);
     const stored = shop.records.saleReturns.find((candidate) => candidate.id === given.id);
     if (stored) stored.voidedAt = at(DAY);
-    expect(returnedCmByLine(shop.records.saleReturns).size).toBe(0);
+    expect(returnedQuantityByLine(shop.records.saleReturns).size).toBe(0);
     expect(shop.preview('2026-10-31').returnsEffectCents).toBe(0);
   });
 
@@ -403,8 +405,8 @@ describe('the customer’s account after a return (RT3)', () => {
 
   it('the credit a return frees pays another unpaid invoice of the same customer', () => {
     const { shop, sale } = customerShop(dh(200));
-    const roll = shop.records.rolls[0];
-    if (!roll) throw new Error('a roll');
+    const roll = shop.records.batches[0];
+    if (!roll) throw new Error('a batch');
     const second = shop.sale(roll, '2026-09-08', 500, dh(100), 0);
     second.customerId = CUSTOMER;
     shop.giveBack(sale, DAY, 400, 0); // 80 dh credit
@@ -453,7 +455,7 @@ describe('the sale and its void after a return', () => {
       dueCents: dh(20),
     });
     expect(figures.lines[0]).toMatchObject({
-      returnedCm: 400,
+      returnedQuantity: 400,
       costCents: dh(96),
       profitCents: dh(24),
     });
@@ -492,5 +494,111 @@ describe('the sale and its void after a return', () => {
         returns: [{ ...given, voidedAt: at(DAY) }],
       }),
     ).toEqual([]);
+  });
+});
+
+describe('returns on batches (ADR 0012)', () => {
+  it('reads a return recorded before batches (returnedCm) as a quantity, unchanged', () => {
+    const legacy = {
+      lineId: crypto.randomUUID(),
+      moveId: crypto.randomUUID(),
+      returnedCm: 400,
+    };
+    expect(returnLineSchema.parse(legacy)).toEqual({
+      lineId: legacy.lineId,
+      moveId: legacy.moveId,
+      quantity: 400,
+    });
+    expect(returnLineSchema.parse({ ...legacy, returnedCm: undefined, quantity: 3 })).toMatchObject(
+      {
+        quantity: 3,
+      },
+    );
+  });
+
+  it('puts pieces back in pieces: the return move carries the line’s unit', () => {
+    const batchId = crypto.randomUUID();
+    const sale = {
+      id: crypto.randomUUID(),
+      date: '2026-09-05',
+      customerId: null,
+      totalCents: 2400,
+      discountCents: 0,
+      voidedAt: null,
+    };
+    const line = {
+      id: crypto.randomUUID(),
+      batchId,
+      unit: 'piece' as const,
+      quantity: 3,
+      lineTotalCents: 2400,
+    };
+    const saleMove = {
+      id: crypto.randomUUID(),
+      createdAt: at('2026-09-05'),
+      updatedAt: at('2026-09-05'),
+      deviceId: 'desk',
+      voidedAt: null,
+      batchId,
+      type: 'sale' as const,
+      unit: 'piece' as const,
+      delta: -3,
+      refId: line.id,
+      date: '2026-09-05',
+      note: null,
+      actor: null,
+    };
+    const records = {
+      sale,
+      lines: [line],
+      moves: [saleMove],
+      returns: [],
+      allocations: [],
+      refunds: [],
+      writtenOff: false,
+    };
+    const built = buildSaleReturn(
+      {
+        saleId: sale.id,
+        date: DAY,
+        reason: 'عيب',
+        lines: [{ lineId: line.id, quantity: 1 }],
+        refundCents: 0,
+      },
+      records,
+      { returnId: crypto.randomUUID(), moveIds: [crypto.randomUUID()], refundId: null },
+      { deviceId: 'desk', now: at(DAY) },
+    );
+    // Nothing was paid on the sale, so there is no cash to hand back.
+    if (!built.ok) throw new Error(JSON.stringify(built.issues));
+    expect(built.aggregate.moves).toEqual([
+      expect.objectContaining({
+        type: 'return',
+        batchId,
+        unit: 'piece',
+        delta: 1,
+        refId: saleMove.id,
+      }),
+    ]);
+    expect(built.aggregate.saleReturn).toMatchObject({
+      creditCents: 800,
+      lines: [expect.objectContaining({ lineId: line.id, quantity: 1 })],
+    });
+    const credit = buildSaleReturn(
+      {
+        saleId: sale.id,
+        date: DAY,
+        reason: 'عيب',
+        lines: [{ lineId: line.id, quantity: 4 }],
+        refundCents: 0,
+      },
+      records,
+      { returnId: crypto.randomUUID(), moveIds: [crypto.randomUUID()], refundId: null },
+      { deviceId: 'desk', now: at(DAY) },
+    );
+    expect(credit).toMatchObject({
+      ok: false,
+      issues: [expect.objectContaining({ message: RETURN_ISSUES.aboveSold })],
+    });
   });
 });

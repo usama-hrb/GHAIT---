@@ -1,16 +1,12 @@
 import {
   auditListResponseSchema,
-  buildPurchaseAggregate,
+  type BatchHistory,
+  buildBatchMove,
   buildSaleAggregate,
-  buildStockMove,
   errorResponseSchema,
   HEADERS,
+  newBatchActionSchema,
   newSaleSchema,
-  type NewPurchaseInput,
-  newPurchaseSchema,
-  newStockMoveSchema,
-  rollCode,
-  rollDetailSchema,
   SETTLEMENT_ISSUES,
   type SettlementDetail,
   settlementDetailSchema,
@@ -23,6 +19,7 @@ import {
 } from '@fabric/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestApp, type Session, type TestApp } from './support/app.js';
+import { stockKit } from './support/stock.js';
 
 const dh = (amount: number) => amount * 100;
 
@@ -31,8 +28,8 @@ describe('monthly settlement and the period lock (BUILD_PROMPTS 4.3)', () => {
   let session: Session;
   const owner = crypto.randomUUID();
   const partner = crypto.randomUUID();
-  const variantId = crypto.randomUUID();
-  let counter = 0;
+  let kit: ReturnType<typeof stockKit>;
+  let productId = '';
   let clock = Date.UTC(2026, 7, 1, 10, 0);
   const tick = () => new Date((clock += 60_000)).toISOString();
   /** T6's roll: 100 m at 16 dh/m; then a long one for the other months. */
@@ -49,23 +46,14 @@ describe('monthly settlement and the period lock (BUILD_PROMPTS 4.3)', () => {
     await as(t.http().put(`/partners/${partner}`))
       .send({ name: 'الشريك', ownershipBp: 5000, isOwner: false })
       .expect(200);
-    const fabricId = crypto.randomUUID();
-    await as(t.http().put(`/fabrics/${fabricId}`))
-      .send({ name: 'روزا', refPricePerMeterCents: 2000, minPricePerMeterCents: 1000 })
-      .expect(200);
-    await as(t.http().put(`/variants/${variantId}`))
-      .send({ fabricId, colorName: 'أحمر' })
-      .expect(200);
-    t6Roll = await buy({
-      method: 'meter',
-      pricePerMeterCents: 1600,
-      rolls: [{ variantId, lengthCm: 10_000 }],
-    });
-    roll = await buy({
-      method: 'meter',
-      pricePerMeterCents: 1600,
-      rolls: [{ variantId, lengthCm: 50_000 }],
-    });
+    kit = stockKit(t, () => session, push);
+    productId = await kit.product({ minPricePerMeterCents: 1000 });
+    t6Roll = (
+      await kit.buy({ productId, date: '2026-08-01', quantity: 10_000, totalCostCents: 160_000 })
+    ).id;
+    roll = (
+      await kit.buy({ productId, date: '2026-08-01', quantity: 50_000, totalCostCents: 800_000 })
+    ).id;
   });
 
   afterAll(async () => {
@@ -94,44 +82,26 @@ describe('monthly settlement and the period lock (BUILD_PROMPTS 4.3)', () => {
     };
   }
 
-  async function buy(input: Partial<NewPurchaseInput>): Promise<string> {
-    const aggregate = buildPurchaseAggregate(
-      newPurchaseSchema.parse({ date: '2026-08-01', ...input }),
-      {
-        purchaseId: crypto.randomUUID(),
-        rollIds: [crypto.randomUUID()],
-        moveIds: [crypto.randomUUID()],
-        shortCodes: [rollCode('A', ++counter)],
-      },
-      { deviceId: 'desk', now: tick() },
-    );
-    const [result] = await push(op('purchase', aggregate.purchase.id, aggregate));
-    expect(result?.status).toBe('applied');
-    return aggregate.rolls[0]?.id ?? '';
-  }
-
-  const rollDetail = async (id: string) =>
-    rollDetailSchema.parse((await as(t.http().get(`/rolls/${id}`)).expect(200)).body);
-
   /** A cash sale: `soldCm` at `perMeterCents`, paid in full; the op's result. */
-  async function cashSale(rollId: string, soldCm: number, perMeterCents: number, date: string) {
-    const detail = await rollDetail(rollId);
+  async function cashSale(batchId: string, soldCm: number, perMeterCents: number, date: string) {
+    const history = await kit.history(batchId);
     const built = buildSaleAggregate(
       newSaleSchema.parse({
         date,
         customerId: null,
         lines: [
           {
-            rollId,
-            soldCm,
-            price: { perMeterCents },
-            refPricePerMeterCents: 2000,
-            minPricePerMeterCents: 1000,
+            batchId,
+            unit: 'meter',
+            quantity: soldCm,
+            price: { perUnitCents: perMeterCents },
+            refPriceCents: 2000,
+            minPriceCents: 1000,
           },
         ],
         paidCents: Math.round((perMeterCents * soldCm) / 100),
       }),
-      new Map([[rollId, { roll: detail.roll, moves: detail.moves }]]),
+      new Map<string, BatchHistory>([[batchId, history]]),
       {
         saleId: crypto.randomUUID(),
         lineIds: [crypto.randomUUID()],
@@ -344,36 +314,40 @@ describe('monthly settlement and the period lock (BUILD_PROMPTS 4.3)', () => {
     expect(again.settlement).toMatchObject({ periodStart: '2026-10-11', netProfitCents: dh(300) });
   });
 
-  it('a settled sale keeps its cost when its kg roll is measured later (P9)', async () => {
+  it('a settled sale keeps its cost when its kg batch is measured later (P9)', async () => {
     // 2 kg estimated at 500 cm/kg: 1000 cm for 100 dh; half of it sold, then the period settled.
-    const kgRoll = await buy({
-      date: '2026-10-21',
-      method: 'kg',
-      variantId,
-      weightG: 2000,
-      totalCostCents: dh(100),
-      estCmPerKg: 500,
-    });
-    await cashSale(kgRoll, 500, 1600, '2026-10-21');
+    const kgBatch = (
+      await kit.buy({
+        productId,
+        date: '2026-10-21',
+        unit: 'kg',
+        quantity: 2000,
+        totalCostCents: dh(100),
+        conversion: { weightG: 2000, lengthCm: 1000, source: 'estimated' },
+      })
+    ).id;
+    await cashSale(kgBatch, 500, 1600, '2026-10-21');
     expect((await settle('2026-10-25')).lockedCostCount).toBe(1);
 
     // Measured at 800 cm in all: unfrozen, the settled half would now cost 62.50 dh.
-    const detail = await rollDetail(kgRoll);
-    const measured = buildStockMove(
-      newStockMoveSchema.parse({
-        type: 'length_correction',
-        rollId: kgRoll,
+    const before = await kit.detail(kgBatch);
+    const measured = buildBatchMove(
+      newBatchActionSchema.parse({
+        type: 'measure',
+        batchId: kgBatch,
         date: '2026-10-27',
-        measuredRemainingCm: 300,
+        lengthCm: 800,
       }),
-      detail.ledger,
-      { id: crypto.randomUUID(), deviceId: 'desk', now: tick() },
+      before.batch,
+      before.ledger,
+      { id: crypto.randomUUID(), deviceId: 'desk', now: tick(), actor: 'owner' },
     );
     if (!measured.ok) throw new Error(JSON.stringify(measured.issues));
-    const [result] = await push(op('stock_move', measured.move.id, measured.move));
+    const [result] = await push(op('product_stock_move', measured.move.id, measured.move));
     expect(result?.status).toBe('applied');
-    expect((await rollDetail(kgRoll)).ledger).toMatchObject({
-      basisLengthCm: 800,
+    expect((await kit.detail(kgBatch)).ledger).toMatchObject({
+      lengthBasisCm: 800,
+      measurementStatus: 'measured',
       costs: [expect.objectContaining({ costCents: dh(50) })],
       unallocatedCostCents: dh(50),
     });

@@ -10,8 +10,10 @@ import {
   shareOfLineCents,
 } from '@fabric/core';
 import { customerAccountOf } from './receivables.js';
-import { returnedCmByLine } from './returns.js';
+import { returnedQuantityByLine, type SaleReturn } from './returns.js';
+import type { Sale } from './sales.js';
 import { periodBasisOf } from './settlements.js';
+import { availableIn } from './stock.js';
 import type { ZakatRecords } from './zakat.js';
 
 /**
@@ -44,9 +46,15 @@ export function monthsOf(range: DateRange): string[] {
   return months;
 }
 
+/** The value of `quantity` of a line's unit at `perUnitCents`: a length in cm is priced per meter. */
+const valueOf = (unit: 'meter' | 'piece', perUnitCents: number, quantity: number) =>
+  unit === 'meter'
+    ? mulDivRoundHalfUp(perUnitCents, quantity, CM_PER_METER)
+    : perUnitCents * quantity;
+
 /**
- * Each sale line with its cost (roll ledger, frozen costs kept) and its names, net of what
- * customers gave back: the length and revenue kept, the cost it still carries.
+ * Each sale line with its cost (batch ledger, frozen costs kept) and its product, net of what
+ * customers gave back: the quantity and revenue kept, the cost it still carries.
  */
 function linesOf(records: ReportRecords) {
   const basis = periodBasisOf(records);
@@ -55,33 +63,30 @@ function linesOf(records: ReportRecords) {
     if (move.type === 'sale' && move.refId) moveOfLine.set(move.refId, move.id);
   }
   const liveSales = new Map(basis.sales.map(({ sale }) => [sale.id, sale]));
-  const returnedCm = returnedCmByLine(records.saleReturns);
-  const rolls = new Map(records.rolls.map((roll) => [roll.id, roll]));
-  const variants = new Map(records.variants.map((variant) => [variant.id, variant]));
-  const fabrics = new Map(records.fabrics.map((fabric) => [fabric.id, fabric]));
+  const returned = returnedQuantityByLine(records.saleReturns);
+  const batches = new Map(records.batches.map((batch) => [batch.id, batch]));
+  const products = new Map(records.products.map((product) => [product.id, product]));
   const lines = records.saleLines.flatMap((line) => {
     const sale = liveSales.get(line.saleId);
-    const roll = rolls.get(line.rollId);
-    const variant = roll ? variants.get(roll.variantId) : undefined;
-    const fabric = variant ? fabrics.get(variant.fabricId) : undefined;
+    const batch = batches.get(line.batchId);
+    const product = batch ? products.get(batch.productId) : undefined;
     const moveId = moveOfLine.get(line.id);
-    if (!sale || !variant) return [];
+    if (!sale || !product) return [];
     // What is left of the line once the goods that came back are taken off (RT1, RT2).
-    const given = returnedCm.get(line.id) ?? 0;
+    const given = returned.get(line.id) ?? 0;
     return [
       {
         line,
         sale,
-        variant,
-        fabric,
-        soldCm: line.soldCm - given,
+        product,
+        quantity: line.quantity - given,
         revenueCents:
-          line.lineTotalCents - shareOfLineCents(line.lineTotalCents, line.soldCm, given),
+          line.lineTotalCents - shareOfLineCents(line.lineTotalCents, line.quantity, given),
         costCents: (moveId === undefined ? undefined : basis.costOf.get(moveId)) ?? 0,
       },
     ];
   });
-  return { basis, lines, variants, fabrics };
+  return { basis, lines, products };
 }
 
 /**
@@ -119,117 +124,153 @@ export function profitByMonth(records: ReportRecords, range: DateRange) {
   });
 }
 
-/** What each colour sold in the range: length, revenue, cost and profit of its lines (P4). */
-export function salesByColor(records: ReportRecords, range: DateRange) {
+/** Every day (YYYY-MM-DD) of a range, oldest first. */
+export function daysOf(range: DateRange): string[] {
+  const days: string[] = [];
+  const last = Date.parse(`${range.to}T00:00:00Z`);
+  for (let at = Date.parse(`${range.from}T00:00:00Z`); at <= last; at += DAY_MS) {
+    days.push(new Date(at).toISOString().slice(0, 10));
+  }
+  return days;
+}
+
+/** What the daily sales read: no cost, so a till that is never sent costs can compute it. */
+export interface DailySalesRecords {
+  sales: readonly Sale[];
+  saleReturns: readonly SaleReturn[];
+}
+
+/**
+ * Sales day by day, every day of the range (a quiet day is a row of zeros). The same definition
+ * as `profitByMonth().salesCents`: a sale counts on its date, and goods given back lower the day
+ * of the return, not of the sale (RT4); voided sales and voided returns count for nothing. No
+ * cost is read, so the sum of a month's days is that month's sales in the profit report.
+ */
+export function salesByDay(records: DailySalesRecords, range: DateRange) {
+  const liveSales = live(records.sales);
+  const liveIds = new Set(liveSales.map((sale) => sale.id));
+  const rows = new Map(
+    daysOf(range).map((date) => [date, { date, salesCents: 0, salesCount: 0, returnedCents: 0 }]),
+  );
+  for (const sale of liveSales) {
+    const row = rows.get(sale.date);
+    if (!row) continue;
+    row.salesCents += sale.totalCents;
+    row.salesCount += 1;
+  }
+  for (const given of live(records.saleReturns)) {
+    const row = rows.get(given.date);
+    if (!row || !liveIds.has(given.saleId)) continue;
+    row.salesCents -= given.creditCents;
+    row.returnedCents += given.creditCents;
+  }
+  return [...rows.values()];
+}
+
+/**
+ * Gross profit day by day: a sale's total less its capital (batch cost, P4) on its date, less the
+ * profit goods given back take away on the day of the return (RT4). The same definition as
+ * `profitByMonth().grossProfitCents`, so a month's days add up to it. It reads the cost of every
+ * sale, so it throws, like the settlement, when a sale line has none: callers that cannot trust
+ * the costs leave the figure out instead of showing a wrong one.
+ */
+export function grossProfitByDay(records: ReportRecords, range: DateRange) {
+  const basis = periodBasisOf(records);
+  const rows = new Map(daysOf(range).map((date) => [date, { date, grossProfitCents: 0 }]));
+  for (const { period } of basis.sales) {
+    const row = rows.get(period.date);
+    if (row) row.grossProfitCents += period.totalCents - period.capitalCents;
+    for (const given of period.returns ?? []) {
+      const day = rows.get(given.date);
+      if (day) day.grossProfitCents -= given.creditCents - given.costCents;
+    }
+  }
+  return [...rows.values()];
+}
+
+/** What each product sold in the range: quantity, revenue, cost and profit of its lines (P4). */
+export function salesByProduct(records: ReportRecords, range: DateRange) {
   const { lines } = linesOf(records);
   const rows = new Map<
     string,
     {
-      variantId: string;
-      fabricId: string;
-      fabricName: string;
-      colorName: string;
+      productId: string;
+      productName: string;
+      /** Sold by the meter, in cm. */
       soldCm: number;
+      /** Sold by the piece. */
+      soldPieces: number;
       revenueCents: number;
       costCents: number;
       profitCents: number;
     }
   >();
-  for (const { sale, variant, fabric, soldCm, revenueCents, costCents } of lines) {
-    if (!inRange(sale.date, range) || soldCm === 0) continue;
-    const row = rows.get(variant.id) ?? {
-      variantId: variant.id,
-      fabricId: variant.fabricId,
-      fabricName: fabric?.name ?? '',
-      colorName: variant.colorName,
+  for (const { line, sale, product, quantity, revenueCents, costCents } of lines) {
+    if (!inRange(sale.date, range) || quantity === 0) continue;
+    const row = rows.get(product.id) ?? {
+      productId: product.id,
+      productName: product.name,
       soldCm: 0,
+      soldPieces: 0,
       revenueCents: 0,
       costCents: 0,
       profitCents: 0,
     };
-    row.soldCm += soldCm;
+    if (line.unit === 'meter') row.soldCm += quantity;
+    else row.soldPieces += quantity;
     row.revenueCents += revenueCents;
     row.costCents += costCents;
     row.profitCents += revenueCents - costCents;
-    rows.set(variant.id, row);
-  }
-  return [...rows.values()].sort((a, b) => b.revenueCents - a.revenueCents);
-}
-
-/** The same, fabric by fabric. */
-export function salesByFabric(records: ReportRecords, range: DateRange) {
-  const rows = new Map<
-    string,
-    {
-      fabricId: string;
-      fabricName: string;
-      soldCm: number;
-      revenueCents: number;
-      costCents: number;
-      profitCents: number;
-    }
-  >();
-  for (const color of salesByColor(records, range)) {
-    const row = rows.get(color.fabricId) ?? {
-      fabricId: color.fabricId,
-      fabricName: color.fabricName,
-      soldCm: 0,
-      revenueCents: 0,
-      costCents: 0,
-      profitCents: 0,
-    };
-    row.soldCm += color.soldCm;
-    row.revenueCents += color.revenueCents;
-    row.costCents += color.costCents;
-    row.profitCents += color.profitCents;
-    rows.set(color.fabricId, row);
+    rows.set(product.id, row);
   }
   return [...rows.values()].sort((a, b) => b.revenueCents - a.revenueCents);
 }
 
 /**
- * Colours in stock, the slowest first: days since the last sale (since the oldest purchase of
+ * Products in stock, the slowest first: days since the last sale (since the oldest purchase of
  * what is left when never sold), with what is left and its value at cost.
  */
 export function slowMoving(records: ReportRecords, today: string) {
-  const { basis, lines, variants, fabrics } = linesOf(records);
+  const { basis, lines, products } = linesOf(records);
   const lastSale = new Map<string, string>();
-  for (const { sale, variant, soldCm } of lines) {
-    if (soldCm === 0) continue; // everything came back: it was not sold
-    const known = lastSale.get(variant.id);
-    if (!known || sale.date > known) lastSale.set(variant.id, sale.date);
+  for (const { sale, product, quantity } of lines) {
+    if (quantity === 0) continue; // everything came back: it was not sold
+    const known = lastSale.get(product.id);
+    if (!known || sale.date > known) lastSale.set(product.id, sale.date);
   }
-  const purchases = new Map(records.purchases.map((purchase) => [purchase.id, purchase.date]));
   const rows = new Map<
     string,
     {
-      variantId: string;
-      fabricName: string;
-      colorName: string;
+      productId: string;
+      productName: string;
       remainingCm: number;
+      remainingPieces: number;
       costCents: number;
       lastSale: string | null;
       since: string;
     }
   >();
-  for (const roll of records.rolls) {
-    const ledger = basis.ledgers.get(roll.id);
-    const variant = variants.get(roll.variantId);
-    if (!ledger || ledger.remainingCm <= 0 || !variant) continue;
-    const bought = purchases.get(roll.purchaseId) ?? roll.createdAt.slice(0, 10);
-    const row = rows.get(variant.id) ?? {
-      variantId: variant.id,
-      fabricName: fabrics.get(variant.fabricId)?.name ?? '',
-      colorName: variant.colorName,
+  for (const batch of records.batches) {
+    const ledger = basis.ledgers.get(batch.id);
+    const product = products.get(batch.productId);
+    if (!ledger || !product) continue;
+    const meters = availableIn(ledger, 'meter');
+    const pieces = availableIn(ledger, 'piece');
+    if (meters <= 0 && pieces <= 0 && ledger.awaitingMeasurement === null) continue;
+    const row = rows.get(product.id) ?? {
+      productId: product.id,
+      productName: product.name,
       remainingCm: 0,
+      remainingPieces: 0,
       costCents: 0,
-      lastSale: lastSale.get(variant.id) ?? null,
-      since: bought,
+      lastSale: lastSale.get(product.id) ?? null,
+      since: batch.purchaseDate,
     };
-    row.remainingCm += ledger.remainingCm;
+    row.remainingCm += Math.max(0, meters);
+    row.remainingPieces += Math.max(0, pieces);
     row.costCents += ledger.unallocatedCostCents;
-    if (bought < row.since) row.since = bought;
-    rows.set(variant.id, row);
+    if (batch.purchaseDate < row.since) row.since = batch.purchaseDate;
+    rows.set(product.id, row);
   }
   return [...rows.values()]
     .map((row) => ({ ...row, daysIdle: daysBetween(row.lastSale ?? row.since, today) }))
@@ -241,20 +282,20 @@ export function slowMoving(records: ReportRecords, today: string) {
  * fabric. discount = reference total − sold total (negative: sold above the reference);
  * discountBp = discount ÷ reference total, in basis points, rounded half up.
  */
-export function negotiation(records: ReportRecords, range: DateRange, by: 'customer' | 'fabric') {
+export function negotiation(records: ReportRecords, range: DateRange, by: 'customer' | 'product') {
   const { lines } = linesOf(records);
   const customers = new Map(records.customers.map((customer) => [customer.id, customer.name]));
   const rows = new Map<
     string,
     { key: string; name: string; lines: number; refCents: number; soldCents: number }
   >();
-  for (const { line, sale, fabric, soldCm, revenueCents } of lines) {
-    if (!inRange(sale.date, range) || soldCm === 0) continue;
-    const key = by === 'customer' ? (sale.customerId ?? '') : (fabric?.id ?? '');
-    const name = by === 'customer' ? (customers.get(key) ?? '') : (fabric?.name ?? '');
+  for (const { line, sale, product, quantity, revenueCents } of lines) {
+    if (!inRange(sale.date, range) || quantity === 0) continue;
+    const key = by === 'customer' ? (sale.customerId ?? '') : product.id;
+    const name = by === 'customer' ? (customers.get(key) ?? '') : product.name;
     const row = rows.get(key) ?? { key, name, lines: 0, refCents: 0, soldCents: 0 };
     row.lines += 1;
-    row.refCents += mulDivRoundHalfUp(line.refPricePerMeterCents, soldCm, CM_PER_METER);
+    row.refCents += valueOf(line.unit, line.refPriceCents, quantity);
     row.soldCents += revenueCents;
     rows.set(key, row);
   }
@@ -331,39 +372,45 @@ export function receivablesAgeing(records: ReportRecords, today: string) {
     .sort((a, b) => b.over90 - a.over90 || b.totalCents - a.totalCents);
 }
 
-/** What is left in stock, per fabric, at cost and at the reference price (Z1). */
+/** What is left in stock, per product, at cost and at the normal price (Z1). */
 export function stockValue(records: ReportRecords) {
-  const { basis, variants, fabrics } = linesOf(records);
+  const { basis, products } = linesOf(records);
   const rows = new Map<
     string,
     {
-      fabricId: string;
-      fabricName: string;
+      productId: string;
+      productName: string;
       remainingCm: number;
+      remainingPieces: number;
       costCents: number;
       marketCents: number;
     }
   >();
-  for (const roll of records.rolls) {
-    const ledger = basis.ledgers.get(roll.id);
-    const variant = variants.get(roll.variantId);
-    const fabric = variant ? fabrics.get(variant.fabricId) : undefined;
-    if (!ledger || ledger.remainingCm <= 0 || !fabric) continue;
-    const row = rows.get(fabric.id) ?? {
-      fabricId: fabric.id,
-      fabricName: fabric.name,
+  for (const batch of records.batches) {
+    const ledger = basis.ledgers.get(batch.id);
+    const product = products.get(batch.productId);
+    if (!ledger || !product) continue;
+    const meters = Math.max(0, availableIn(ledger, 'meter'));
+    const pieces = Math.max(0, availableIn(ledger, 'piece'));
+    const waiting = ledger.awaitingMeasurement !== null;
+    if (meters <= 0 && pieces <= 0 && !waiting) continue;
+    const row = rows.get(product.id) ?? {
+      productId: product.id,
+      productName: product.name,
       remainingCm: 0,
+      remainingPieces: 0,
       costCents: 0,
       marketCents: 0,
     };
-    row.remainingCm += ledger.remainingCm;
+    row.remainingCm += meters;
+    row.remainingPieces += pieces;
     row.costCents += ledger.unallocatedCostCents;
-    row.marketCents += mulDivRoundHalfUp(
-      fabric.refPricePerMeterCents,
-      ledger.remainingCm,
-      CM_PER_METER,
-    );
-    rows.set(fabric.id, row);
+    // Weight with no length yet has no price per meter: it counts at its cost.
+    row.marketCents +=
+      valueOf('meter', product.pricePerMeterCents ?? 0, meters) +
+      valueOf('piece', product.pricePerPieceCents ?? 0, pieces) +
+      (meters <= 0 && pieces <= 0 ? ledger.unallocatedCostCents : 0);
+    rows.set(product.id, row);
   }
   return [...rows.values()].sort((a, b) => b.marketCents - a.marketCents);
 }

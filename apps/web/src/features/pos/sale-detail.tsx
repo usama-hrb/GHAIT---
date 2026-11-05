@@ -9,7 +9,7 @@ import { PaymentDialog } from '@/features/customers';
 import { messages } from '@/i18n';
 import { useCanSeeCosts, useLiveQuery, useRepositories, useSession } from '@/local-db';
 import { EmptyState, LoadingState, OfflineNotice, VoidDialog } from '@/shared/brand';
-import { DateText, Meters, Money, useMoneyUnit } from '@/shared/format';
+import { DateText, Money, Quantity, useMoneyUnit } from '@/shared/format';
 import { shopToday } from '@/shared/lib/dates';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
@@ -17,6 +17,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { whatsAppLink } from '@/shared/lib/whatsapp';
 import { invoiceText } from './invoice-text';
 import { ReturnDialog } from './return-dialog';
+import { shareInvoice } from './share-invoice';
 import { isLockedOn, PeriodLockHint, useLockedThrough } from '@/features/settlements';
 
 const t = messages.sales;
@@ -60,18 +61,7 @@ export function SaleDetailScreen() {
   const link = whatsAppLink(text, view.customer?.phone ?? null);
 
   const share = () => {
-    if (typeof navigator.share === 'function') {
-      navigator.share({ text }).catch(() => {
-        // Closed without sharing: nothing to do.
-      });
-      return;
-    }
-    navigator.clipboard
-      .writeText(text)
-      .then(() => toast.success(t.copied))
-      .catch(() => {
-        window.open(link, '_blank', 'noopener');
-      });
+    shareInvoice(text, link);
   };
 
   return (
@@ -102,7 +92,7 @@ export function SaleDetailScreen() {
           <TableHeader>
             <TableRow>
               <TableHead>{messages.pos.columns.item}</TableHead>
-              <TableHead>{messages.pos.columns.roll}</TableHead>
+              <TableHead>{messages.pos.columns.batch}</TableHead>
               <TableHead className="text-end">{messages.pos.columns.length}</TableHead>
               <TableHead className="text-end max-sm:hidden">{messages.pos.columns.price}</TableHead>
               <TableHead className="text-end">{messages.pos.columns.total}</TableHead>
@@ -114,26 +104,41 @@ export function SaleDetailScreen() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {view.lines.map(({ line, roll, variant, fabric, figures: lineFigures }) => (
+            {view.lines.map(({ line, batch, product, figures: lineFigures }) => (
               <TableRow key={line.id}>
                 <TableCell>
-                  {fabric?.name} · {variant?.colorName}
+                  {product?.name}
                   {line.wholePiece && (
                     <Badge variant="secondary" className="ms-1.5">
                       {t.invoice.wholePiece}
                     </Badge>
                   )}
+                  {line.minOverrideBy !== null && (
+                    // Sold under the product's minimum price: who confirmed it and the price it went at.
+                    <span className="mt-1 grid gap-0.5 text-xs text-muted-foreground">
+                      <Badge variant="warning" className="w-fit">
+                        {messages.pos.bill.overrideBy(line.minOverrideBy)}
+                      </Badge>
+                      <span>
+                        {messages.pos.minimum.price}: <Money cents={line.minPriceCents} /> ·{' '}
+                        {messages.pos.minimum.sold}:{' '}
+                        <Money
+                          cents={line.wholePiece ? line.lineTotalCents : line.actualPriceCents}
+                        />
+                      </span>
+                    </span>
+                  )}
                 </TableCell>
                 <TableCell>
                   <bdi dir="ltr" data-num>
-                    {roll?.shortCode}
+                    {batch?.code}
                   </bdi>
                 </TableCell>
                 <TableCell className="text-end">
-                  <Meters cm={line.soldCm} />
+                  <Quantity unit={line.unit} amount={line.quantity} />
                 </TableCell>
                 <TableCell className="text-end max-sm:hidden">
-                  <Money cents={line.actualPricePerMeterCents} />
+                  <Money cents={line.actualPriceCents} />
                 </TableCell>
                 <TableCell className="text-end">
                   <Money cents={line.lineTotalCents} />
@@ -293,7 +298,7 @@ export function SaleDetailScreen() {
                   {given.lines
                     .map((returned) => {
                       const found = view.lines.find((entry) => entry.line.id === returned.lineId);
-                      return `${found?.fabric?.name ?? ''} ${found?.variant?.colorName ?? ''}`.trim();
+                      return found?.product?.name ?? '';
                     })
                     .join(messages.forms.listSeparator)}
                 </p>
@@ -342,8 +347,8 @@ export function SaleDetailScreen() {
             view.writeOff === undefined &&
             figures.lines.some(
               (entry) =>
-                entry.returnedCm <
-                (view.lines.find((l) => l.line.id === entry.lineId)?.line.soldCm ?? 0),
+                entry.returnedQuantity <
+                (view.lines.find((l) => l.line.id === entry.lineId)?.line.quantity ?? 0),
             ) && (
               <Button
                 type="button"
@@ -387,12 +392,8 @@ export function SaleDetailScreen() {
             {
               saleId: sale.id,
               date: sale.date,
-              dueDate: sale.dueDate,
-              totalCents: sale.totalCents,
-              paidCents: figures.paidCents,
               dueCents: figures.dueCents,
               writtenOff: view.writeOff !== undefined,
-              overdue: false,
             },
           ]}
           defaultTarget={sale.id}

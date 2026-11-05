@@ -18,8 +18,11 @@ const serwist = new Serwist({
   precacheEntries: self.__SW_MANIFEST,
   precacheOptions: {
     // Record pages take the record as ?id= (/purchases/view?id=…): one precached page serves
-    // every record offline. Only `id` is ignored, so Next's ?_rsc= fetches still reach the network.
-    ignoreURLParametersMatching: [/^utm_/, /^fbclid$/, /^id$/],
+    // every record offline. The Home's links open a list already filtered (/inventory?filter=low,
+    // /expenses?status=unpaid, ADR 0018): the same page serves them, and so the People page's
+    // tabs (/settings/partners?tab=employees, ADR 0022). Only these are ignored, so Next's
+    // ?_rsc= fetches still reach the network.
+    ignoreURLParametersMatching: [/^utm_/, /^fbclid$/, /^id$/, /^filter$/, /^status$/, /^tab$/],
     cleanupOutdatedCaches: true,
   },
   skipWaiting: true,

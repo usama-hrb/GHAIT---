@@ -121,7 +121,6 @@
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.05);
   --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.08);
 
-
   --scrollbar-thumb: #c9bfc0;
   --scrollbar-thumb-hover: #491017;
 }
@@ -170,7 +169,6 @@
   --chart-4: #72ad83;
   --chart-5: #aaa19a;
 
-
   --scrollbar-thumb: #57494a;
   --scrollbar-thumb-hover: #987078;
 }
@@ -179,8 +177,6 @@
   scrollbar-width: thin;
   scrollbar-color: var(--scrollbar-thumb) transparent;
 }
-
-
 
 /* ---------- 4. Tailwind v4 theme mapping ---------- */
 @theme inline {
@@ -382,5 +378,3 @@ html[data-lang-pending] body {
     grid-template-columns: minmax(0, 1fr);
   }
 }
-
-

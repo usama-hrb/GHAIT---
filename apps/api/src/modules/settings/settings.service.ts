@@ -5,6 +5,7 @@ import {
   SETTINGS,
   type Setting,
   type SettingKey,
+  settingAuditValue,
   settingInEffect,
   shopDate,
   type SyncedSetting,
@@ -45,8 +46,14 @@ function syncedSetting(row: SettingRow): SyncedSetting {
   };
 }
 
+/** What the audit log keeps of a row: the logo's bytes stay out of it (ADR 0017). */
 function view(row: SettingRow) {
-  return { id: row.id, key: row.key, value: row.value, effectiveFrom: row.effectiveFrom };
+  return {
+    id: row.id,
+    key: row.key,
+    value: settingAuditValue(row.key, row.value),
+    effectiveFrom: row.effectiveFrom,
+  };
 }
 
 @Injectable()

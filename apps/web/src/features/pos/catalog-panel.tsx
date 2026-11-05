@@ -3,8 +3,8 @@
 import { CheckIcon, SearchIcon } from 'lucide-react';
 import { useState } from 'react';
 import { messages } from '@/i18n';
-import type { FabricStock } from '@/local-db';
-import { Meters, Money } from '@/shared/format';
+import type { ProductStockView } from '@/local-db';
+import { Meters, Money, Quantity } from '@/shared/format';
 import { matchesSearch } from '@/shared/lib/search';
 import { ProductPhoto } from '@/shared/brand';
 import { Badge } from '@/shared/ui/badge';
@@ -13,41 +13,36 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from '@/shared/ui/input-
 
 const t = messages.pos.catalog;
 
+/** Whether the till can sell something of this product now (a weight awaiting a length cannot). */
+export const isSellable = (product: ProductStockView): boolean =>
+  product.availableCm > 0 || product.availablePieces > 0;
+
 /**
- * What can be sold: a search box, a chip per fabric, and a tile per colour that has cloth left.
- * A tap picks the colour; its length and price are then entered on the keypad.
+ * What can be sold: a search box and a tile per product that has stock left. A tap picks the
+ * product; its quantity and price are then entered on the keypad.
  */
 export function CatalogPanel({
-  fabrics,
+  products,
   photos,
   inBill,
   onPick,
 }: {
-  fabrics: readonly FabricStock[];
-  /** Each colour's picture (a data: URL), by variant id. */
+  products: readonly ProductStockView[];
+  /** Each product's picture (a data: URL), by product id. */
   photos: ReadonlyMap<string, string>;
-  /** cm of each colour already on the bill, by variant id. */
+  /** What of each product is already on the bill, by product id (cm, or pieces). */
   inBill: ReadonlyMap<string, number>;
-  onPick: (fabricId: string, variantId: string) => void;
+  onPick: (productId: string) => void;
 }) {
   const [search, setSearch] = useState('');
-  const [fabricId, setFabricId] = useState<string | null>(null);
 
-  const selling = fabrics.filter((entry) => entry.colors.some((color) => color.remainingCm > 0));
-  const tiles = selling
-    .filter((entry) => fabricId === null || entry.fabric.id === fabricId)
-    .flatMap((entry) =>
-      entry.colors
-        .filter((color) => color.remainingCm > 0)
-        .filter((color) =>
-          matchesSearch(search, [entry.fabric.name, color.variant.colorName, ...entry.fabric.tags]),
-        )
-        .map((color) => ({ entry, color })),
-    );
+  const tiles = products
+    .filter(isSellable)
+    .filter((product) => matchesSearch(search, [product.name, product.sku, ...product.tags]));
 
   return (
     <section aria-label={messages.pos.title} className="flex min-h-0 flex-1 flex-col gap-3">
-      <InputGroup>
+      <InputGroup className="h-11 pointer-coarse:h-12">
         <InputGroupAddon>
           <SearchIcon aria-hidden />
         </InputGroupAddon>
@@ -63,75 +58,81 @@ export function CatalogPanel({
         />
       </InputGroup>
 
-      <div role="group" aria-label={t.fabrics} className="flex gap-2 overflow-x-auto pb-1">
-        {' '}
-        {[{ id: null, name: t.all }, ...selling.map((entry) => entry.fabric)].map((chip) => (
-          <Button
-            key={chip.id ?? 'all'}
-            type="button"
-            size="sm"
-            variant={fabricId === chip.id ? 'default' : 'outline'}
-            aria-pressed={fabricId === chip.id}
-            className="shrink-0 touch-manipulation pointer-coarse:h-11"
-            onClick={() => {
-              setFabricId(chip.id);
-            }}
-          >
-            {chip.name}
-          </Button>
-        ))}
-      </div>
-
       {tiles.length === 0 ? (
         <p className="py-8 text-center text-muted-foreground">{t.noMatch}</p>
       ) : (
-        <ul className="grid min-h-0 flex-1 auto-rows-min grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] content-start gap-3 overflow-y-auto pb-2">
-          {tiles.map(({ entry, color }) => {
-            const taken = inBill.get(color.variant.id);
+        <ul className="grid min-h-0 flex-1 auto-rows-min grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] content-start gap-2.5 overflow-y-auto pb-2 lg:grid-cols-[repeat(auto-fill,minmax(11rem,1fr))]">
+          {tiles.map((product) => {
+            const taken = inBill.get(product.id);
+            const meterPrice = product.pricePerMeterCents;
+            const piecePrice = product.pricePerPieceCents;
             return (
-              <li key={color.variant.id} className="flex">
+              <li key={product.id} className="flex">
                 <Button
                   type="button"
                   variant="outline"
-                  className="h-auto min-h-28 w-full touch-manipulation flex-col items-stretch justify-start gap-0 overflow-hidden p-0 text-start whitespace-normal select-none pointer-coarse:h-auto"
+                  data-selected={taken !== undefined || undefined}
+                  className="h-auto min-h-24 w-full touch-manipulation flex-col items-stretch justify-start gap-0 overflow-hidden p-0 text-start whitespace-normal select-none data-selected:border-primary data-selected:ring-2 data-selected:ring-primary/30 pointer-coarse:h-auto"
                   onClick={() => {
-                    onPick(entry.fabric.id, color.variant.id);
+                    onPick(product.id);
                   }}
                 >
-                  <ProductPhoto
-                    src={photos.get(color.variant.id)}
-                    className="aspect-[3/3] w-full"
-                  />
-                  <span className="grid w-full gap-2 p-3">
+                  <ProductPhoto src={photos.get(product.id)} className="aspect-[4/3] w-full" />
+                  <span className="grid w-full gap-1.5 p-2.5">
                     <span className="grid gap-0.5">
-                      <span className="text-lg leading-tight font-semibold">
-                        {color.variant.colorName}
+                      <span className="line-clamp-2 text-base leading-tight font-semibold">
+                        {product.name}
                       </span>
-                      <span className="text-sm font-normal text-muted-foreground">
-                        {entry.fabric.name}
-                      </span>
-                    </span>
-                    <span className="grid gap-1 text-sm font-normal">
-                      <span className="flex flex-wrap items-baseline justify-between gap-x-2">
-                        <Meters cm={color.remainingCm} />
-                        <span className="text-muted-foreground">
-                          <Money cents={entry.fabric.refPricePerMeterCents} /> /{' '}
-                          {messages.units.meter}
-                        </span>
-                      </span>
-                      {(color.state === 'low' || taken !== undefined) && (
-                        <span className="flex flex-wrap gap-1">
-                          {color.state === 'low' && (
-                            <Badge variant="warning">{messages.inventory.low}</Badge>
-                          )}
-                          {taken !== undefined && (
-                            <Badge variant="secondary">
-                              <CheckIcon aria-hidden /> {t.inBill} · <Meters cm={taken} />
-                            </Badge>
-                          )}
+                      {product.sku && (
+                        <span className="text-xs font-normal text-muted-foreground">
+                          <bdi dir="ltr" data-num>
+                            {product.sku}
+                          </bdi>
                         </span>
                       )}
                     </span>
+                    <span className="flex flex-wrap items-baseline justify-between gap-x-2 text-sm font-normal">
+                      <span className="text-base font-semibold">
+                        {meterPrice !== null && product.sellingUnits.includes('meter') && (
+                          <>
+                            <Money cents={meterPrice} />
+                            <span className="text-xs font-normal text-muted-foreground">
+                              {' '}
+                              / {messages.units.meter}
+                            </span>
+                          </>
+                        )}
+                        {piecePrice !== null &&
+                          product.sellingUnits.includes('piece') &&
+                          product.availablePieces > 0 && (
+                            <>
+                              <Money cents={piecePrice} />
+                              <span className="text-xs font-normal text-muted-foreground">
+                                {' '}
+                                / {messages.units.piece}
+                              </span>
+                            </>
+                          )}
+                      </span>
+                      <span className="flex flex-wrap gap-x-2 text-muted-foreground">
+                        {product.availableCm > 0 && <Meters cm={product.availableCm} />}
+                        {product.availablePieces > 0 && (
+                          <Quantity unit="piece" amount={product.availablePieces} />
+                        )}
+                      </span>
+                    </span>
+                    {(product.status === 'low' || taken !== undefined) && (
+                      <span className="flex flex-wrap gap-1">
+                        {product.status === 'low' && (
+                          <Badge variant="warning">{messages.inventory.low}</Badge>
+                        )}
+                        {taken !== undefined && (
+                          <Badge variant="secondary">
+                            <CheckIcon aria-hidden /> {t.inBill}
+                          </Badge>
+                        )}
+                      </span>
+                    )}
                   </span>
                 </Button>
               </li>

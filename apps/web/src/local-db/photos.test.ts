@@ -10,6 +10,7 @@ import { ShopDatabase, type OutboxEntry } from './db';
 import { ValidationError } from './errors';
 import { createRepositories, type Repositories } from './repositories';
 import { LocalStore } from './store';
+import { seedProduct } from './test-helpers';
 import { takeBatch } from './sync';
 
 let db: ShopDatabase;
@@ -44,13 +45,8 @@ const image = (bytes = 30_000): PhotoImage => ({
   data: fakeJpeg(bytes),
 });
 
-async function aColor(name = 'أحمر'): Promise<string> {
-  const fabricId = await repos.fabrics.save({
-    name: 'روزا',
-    refPricePerMeterCents: 2000,
-    minPricePerMeterCents: 1800,
-  });
-  return repos.variants.save({ fabricId, colorName: name, lowStockThresholdCm: 500 });
+async function aColor(name = 'روزا أحمر'): Promise<string> {
+  return seedProduct(repos, { name, minPricePerMeterCents: 1800, lowStockThreshold: 500 });
 }
 
 const tick = () => {
@@ -69,7 +65,7 @@ describe('colour photos on the device (ADR 0009)', () => {
     const ops = (await db.outbox.toArray()).filter((op) => op.entity === 'photo');
     expect(ops.map((op) => [op.kind, op.entityId])).toEqual([['upsert', id]]);
     expect(await repos.photos.get(id)).toMatchObject({
-      variantId,
+      productId: variantId,
       voidedAt: null,
       byteLength: 30_000,
     });
@@ -156,7 +152,7 @@ describe('a push is cut by the size of its photos', () => {
   const photoEntry = (bytes: number, seq: number) => entry('photo', { data: fakeJpeg(bytes) }, seq);
 
   it('takes every small op up to the count', () => {
-    const entries = Array.from({ length: 5 }, (_, index) => entry('fabric', { name: 'x' }, index));
+    const entries = Array.from({ length: 5 }, (_, index) => entry('product', { name: 'x' }, index));
     expect(takeBatch(entries)).toHaveLength(5);
   });
 
@@ -168,7 +164,7 @@ describe('a push is cut by the size of its photos', () => {
   });
 
   it('keeps the order, and sends one photo alone when it is over the budget by itself', () => {
-    const entries = [photoEntry(150_000, 0), entry('fabric', { name: 'x' }, 1)];
+    const entries = [photoEntry(150_000, 0), entry('product', { name: 'x' }, 1)];
     expect(takeBatch(entries).map((op) => op.seq)).toEqual([0, 1]);
     expect(takeBatch([photoEntry(PHOTO_LIMIT_BYTES, 0)])).toHaveLength(1);
   });

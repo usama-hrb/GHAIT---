@@ -1,43 +1,79 @@
 'use client';
 
-import type { AccountInvoice } from '@fabric/core';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { messages } from '@/i18n';
 import { useCanSeeCosts, useLiveQuery, useRepositories, ValidationError } from '@/local-db';
 import { EmptyState, LoadingState, OfflineNotice, VoidDialog } from '@/shared/brand';
 import { DateText, Money, useMoneyUnit } from '@/shared/format';
 import { shopToday } from '@/shared/lib/dates';
-import { whatsAppLink } from '@/shared/lib/whatsapp';
-import { Badge } from '@/shared/ui/badge';
+import { useAppNavigation } from '@/shared/lib/navigation';
 import { Button } from '@/shared/ui/button';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
-import { Balance } from './customers-screen';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/ui/tabs';
+import { ActivityTimeline } from './activity-timeline';
+import { CustomerDetails } from './customer-details';
+import { CustomerDialog } from './customer-dialog';
+import { AccountSummary, CustomerHeader } from './customer-header';
+import { CustomerOverview } from './customer-overview';
+import {
+  activityOf,
+  invoiceRowsOf,
+  isUnpaid,
+  paymentRowsOf,
+  type InvoiceRow,
+} from './customer-view';
+import { InvoiceTable } from './invoice-list';
 import { PaymentDialog, RefundDialog } from './payment-dialog';
+import { PaymentTable } from './payment-list';
+import { StatementDialog } from './statement-dialog';
 import { statementText } from './statement-text';
 
 const t = messages.customers;
+const TABS = ['overview', 'invoices', 'payments', 'activity', 'details'] as const;
+type Tab = (typeof TABS)[number];
 
-/** One customer's account (/customers/view?id=…): invoices, payments, credit and write-offs. */
+/**
+ * One customer's workspace (/customers/view?id=…): who they are and what they owe on top, then
+ * Overview, Invoices, Payments, Activity and Details. Everything is derived from the same account
+ * the sell screen and the reports use; this screen only arranges it.
+ */
 export function CustomerScreen() {
   const id = useSearchParams().get('id') ?? '';
   const repositories = useRepositories();
+  const navigation = useAppNavigation();
   const { unit } = useMoneyUnit();
-  // A cashier takes payments; refunds, applying credit and write-offs are the owner's (RL3).
-  const isCashier = !useCanSeeCosts();
-  const [paying, setPaying] = useState(false);
+  // A cashier takes payments and edits the customer; credit, refunds, write-offs and archiving
+  // are the owner's (RL3).
+  const isOwner = useCanSeeCosts();
+  const [tab, setTab] = useState<Tab>('overview');
+  const [invoiceView, setInvoiceView] = useState<'all' | 'unpaid'>('all');
+  const [paying, setPaying] = useState<{ target: string | null } | null>(null);
   const [refunding, setRefunding] = useState(false);
-  const [writingOff, setWritingOff] = useState<string | null>(null);
+  const [writingOff, setWritingOff] = useState<InvoiceRow | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   const data = useLiveQuery(async () => {
     const view = await repositories.accounts.account(id);
     if (!view) return null;
-    return { view, shopName: await repositories.settings.get('shop_name', shopToday()) };
+    return {
+      view,
+      shopName: await repositories.settings.get('shop_name', shopToday()),
+      lastActivity:
+        (await repositories.accounts.list()).find((row) => row.customer.id === id)?.lastActivity ??
+        null,
+    };
   }, [repositories, id]);
 
-  if (data === undefined) return <LoadingState />;
-  if (data === null) {
+  const view = data?.view;
+  const rows = useMemo(() => (view ? invoiceRowsOf(view) : []), [view]);
+  const paymentRows = useMemo(() => (view ? paymentRowsOf(view) : []), [view]);
+  const events = useMemo(() => (view ? activityOf(view) : []), [view]);
+
+  if (data === undefined) return <LoadingState rows={5} />;
+  if (data === null || !view) {
     return (
       <EmptyState
         title={t.notFound}
@@ -49,17 +85,11 @@ export function CustomerScreen() {
       />
     );
   }
-  const { view, shopName } = data;
   const { customer, account } = view;
+  const unpaid = rows.filter(isUnpaid).reverse();
+  const shown = invoiceView === 'unpaid' ? unpaid.slice().reverse() : rows;
+  const invoiceDates = new Map(view.sales.map((sale) => [sale.id, sale.date]));
   const today = shopToday();
-  const open = new Map(account.openInvoices.map((invoice) => [invoice.saleId, invoice]));
-  const collectible = account.openInvoices.filter((invoice) => !invoice.writtenOff);
-  // What goods given back took off each invoice (RT2).
-  const returnedCents = (saleId: string) =>
-    view.returns
-      .filter((given) => given.saleId === saleId && given.voidedAt === null)
-      .reduce((sum, given) => sum + given.creditCents, 0);
-  const statement = whatsAppLink(statementText(view, shopName, unit, today), customer.phone);
 
   const applyCredit = () => {
     repositories.accounts
@@ -74,205 +104,182 @@ export function CustomerScreen() {
   };
 
   return (
-    <div className="mx-auto grid w-full max-w-4xl gap-4">
+    <div className="mx-auto grid w-full max-w-5xl gap-4">
       <OfflineNotice />
-      <Button asChild variant="link" className="justify-self-start px-0">
-        <Link href="/customers">{t.back}</Link>
-      </Button>
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h2 className="font-heading text-xl font-semibold">{customer.name}</h2>
-        {customer.phone && (
-          <bdi dir="ltr" data-num className="text-muted-foreground">
-            {customer.phone}
-          </bdi>
-        )}
-      </div>
+      <CustomerHeader
+        view={view}
+        isOwner={isOwner}
+        onPay={() => {
+          setPaying({ target: null });
+        }}
+        onShare={() => {
+          setSharing(true);
+        }}
+        onEdit={() => {
+          setEditing(true);
+        }}
+        onApplyCredit={applyCredit}
+        onRefund={() => {
+          setRefunding(true);
+        }}
+        onArchive={() => {
+          setArchiving(true);
+        }}
+      />
+      {customer.voidedAt !== null && (
+        <p role="status" className="rounded-lg border bg-muted px-3 py-2 text-sm">
+          {t.archived}
+        </p>
+      )}
+      <AccountSummary account={account} />
 
-      <dl className="grid gap-x-6 gap-y-2 rounded-lg border bg-card p-4 sm:grid-cols-2">
-        <div className="flex justify-between gap-2">
-          <dt className="text-muted-foreground">{t.account.collectible}</dt>
-          <dd className="font-semibold">
-            <Money
-              cents={account.collectibleCents}
-              tone={account.collectibleCents > 0 ? 'debt' : undefined}
-            />
-          </dd>
-        </div>
-        <div className="flex justify-between gap-2">
-          <dt className="text-muted-foreground">{t.account.balance}</dt>
-          <dd>
-            <Balance cents={account.balanceCents} />
-          </dd>
-        </div>
-        {account.creditCents > 0 && (
-          <div className="flex justify-between gap-2">
-            <dt className="text-muted-foreground">{t.account.credit}</dt>
-            <dd>
-              <Money cents={account.creditCents} tone="capital" />
-            </dd>
-          </div>
-        )}
-        {account.overdueCents > 0 && (
-          <div className="flex justify-between gap-2">
-            <dt className="text-muted-foreground">{t.account.overdue}</dt>
-            <dd>
-              <Money cents={account.overdueCents} tone="loss" />
-            </dd>
-          </div>
-        )}
-        {account.writtenOffCents > 0 && (
-          <div className="flex justify-between gap-2">
-            <dt className="text-muted-foreground">{t.account.writtenOff}</dt>
-            <dd>
-              <Money cents={account.writtenOffCents} />
-            </dd>
-          </div>
-        )}
-      </dl>
-
-      <div className="flex flex-wrap gap-2">
-        <Button
-          variant="accent"
-          size="lg"
-          onClick={() => {
-            setPaying(true);
-          }}
+      <Tabs
+        value={tab}
+        onValueChange={(next) => {
+          setTab(next as Tab);
+        }}
+        className="gap-4"
+      >
+        <TabsList
+          variant="line"
+          aria-label={t.tabs.label}
+          className="w-full justify-start overflow-x-auto border-b"
         >
-          {t.recordPayment}
-        </Button>
-        <Button asChild variant="outline" size="lg">
-          <a href={statement} target="_blank" rel="noopener noreferrer">
-            {t.shareStatement}
-          </a>
-        </Button>
-        {!isCashier && account.creditCents > 0 && collectible.length > 0 && (
-          <Button variant="outline" size="lg" onClick={applyCredit}>
-            {t.applyCredit}
-          </Button>
-        )}
-        {!isCashier && account.creditCents > 0 && (
-          <Button
-            variant="outline"
-            size="lg"
-            onClick={() => {
-              setRefunding(true);
+          {TABS.map((name) => (
+            <TabsTrigger key={name} value={name} className="flex-none px-3">
+              {t.tabs[name]}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+
+        <TabsContent value="overview">
+          <CustomerOverview
+            unpaid={unpaid}
+            payments={paymentRows}
+            events={events}
+            invoiceDates={invoiceDates}
+            onPay={(saleId) => {
+              setPaying({ target: saleId });
             }}
-          >
-            {t.refund}
-          </Button>
-        )}
-      </div>
+            onSeeInvoices={() => {
+              setInvoiceView('unpaid');
+              setTab('invoices');
+            }}
+            onSeePayments={() => {
+              setTab('payments');
+            }}
+            onSeeActivity={() => {
+              setTab('activity');
+            }}
+          />
+        </TabsContent>
 
-      <section aria-label={t.invoices} className="grid gap-2">
-        <h3 className="font-heading font-semibold">{t.invoices}</h3>
-        {view.sales.length === 0 ? (
-          <p className="text-muted-foreground">{t.noInvoices}</p>
-        ) : (
-          <div className="rounded-lg border bg-card">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t.columns.date}</TableHead>
-                  <TableHead className="text-end">{t.columns.total}</TableHead>
-                  <TableHead className="text-end">{t.columns.due}</TableHead>
-                  <TableHead>{t.columns.status}</TableHead>
-                  <TableHead>
-                    <span className="sr-only">{t.writeOff}</span>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {view.sales.map((sale) => {
-                  const invoice = open.get(sale.id);
-                  return (
-                    <TableRow key={sale.id} className="h-12">
-                      <TableCell>
-                        <Link
-                          href={`/pos/view?id=${sale.id}`}
-                          className="underline-offset-4 hover:underline"
-                        >
-                          <DateText value={sale.date} />
-                        </Link>
-                      </TableCell>
-                      <TableCell className="text-end">
-                        <Money cents={sale.totalCents - returnedCents(sale.id)} />
-                      </TableCell>
-                      <TableCell className="text-end">
-                        {invoice ? <Money cents={invoice.dueCents} tone="debt" /> : '—'}
-                      </TableCell>
-                      <TableCell>
-                        <InvoiceStatus voided={sale.voidedAt !== null} invoice={invoice} />
-                      </TableCell>
-                      <TableCell className="text-end">
-                        {!isCashier && invoice && !invoice.writtenOff && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              setWritingOff(sale.id);
-                            }}
-                          >
-                            {t.writeOff}
-                          </Button>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+        <TabsContent value="invoices" className="grid gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="font-heading font-semibold">{t.invoices}</h3>
+            <Tabs
+              value={invoiceView}
+              onValueChange={(next) => {
+                setInvoiceView(next as 'all' | 'unpaid');
+              }}
+            >
+              <TabsList aria-label={t.invoiceFilter.label}>
+                <TabsTrigger value="all" className="px-3">
+                  {t.invoiceFilter.all}
+                  <span data-num className="text-xs text-muted-foreground">
+                    {rows.length}
+                  </span>
+                </TabsTrigger>
+                <TabsTrigger value="unpaid" className="px-3">
+                  {t.invoiceFilter.unpaid}
+                  <span data-num className="text-xs text-muted-foreground">
+                    {unpaid.length}
+                  </span>
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
           </div>
-        )}
-      </section>
+          {shown.length === 0 ? (
+            <p className="rounded-lg border border-dashed px-3 py-6 text-center text-muted-foreground">
+              {rows.length === 0 ? t.noInvoices : t.noUnpaid}
+            </p>
+          ) : (
+            <InvoiceTable
+              rows={shown}
+              canWriteOff={isOwner}
+              onPay={(saleId) => {
+                setPaying({ target: saleId });
+              }}
+              onWriteOff={setWritingOff}
+            />
+          )}
+        </TabsContent>
 
-      <section aria-label={t.payments} className="grid gap-2">
-        <h3 className="font-heading font-semibold">{t.payments}</h3>
-        {view.payments.length === 0 ? (
-          <p className="text-muted-foreground">{t.noPayments}</p>
-        ) : (
-          <div className="rounded-lg border bg-card">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t.columns.date}</TableHead>
-                  <TableHead>{t.columns.kind}</TableHead>
-                  <TableHead className="max-sm:hidden">{t.columns.method}</TableHead>
-                  <TableHead className="text-end">{t.columns.amount}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {view.payments.map((payment) => (
-                  <TableRow key={payment.id} className="h-12">
-                    <TableCell>
-                      <DateText value={payment.date} />
-                    </TableCell>
-                    <TableCell>{t.kinds[payment.kind]}</TableCell>
-                    <TableCell className="max-sm:hidden">{t.methods[payment.method]}</TableCell>
-                    <TableCell className="text-end">
-                      <Money
-                        cents={payment.amountCents}
-                        tone={payment.kind === 'payment' ? 'profit' : undefined}
-                      />
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-      </section>
+        <TabsContent value="payments" className="grid gap-3">
+          <h3 className="font-heading font-semibold">{t.payments}</h3>
+          {paymentRows.length === 0 ? (
+            <p className="rounded-lg border border-dashed px-3 py-6 text-center text-muted-foreground">
+              {t.noPayments}
+            </p>
+          ) : (
+            <PaymentTable rows={paymentRows} />
+          )}
+        </TabsContent>
+
+        <TabsContent value="activity" className="grid gap-3">
+          <h3 className="font-heading font-semibold">{t.activity.title}</h3>
+          {events.length === 0 ? (
+            <p className="rounded-lg border border-dashed px-3 py-6 text-center text-muted-foreground">
+              {t.activity.empty}
+            </p>
+          ) : (
+            <ActivityTimeline events={events} invoiceDates={invoiceDates} />
+          )}
+        </TabsContent>
+
+        <TabsContent value="details">
+          <CustomerDetails
+            view={view}
+            lastActivity={data.lastActivity}
+            onEdit={() => {
+              setEditing(true);
+            }}
+          />
+        </TabsContent>
+      </Tabs>
 
       <PaymentDialog
-        open={paying}
-        onOpenChange={setPaying}
+        key={paying?.target ?? 'oldest'}
+        open={paying !== null}
+        onOpenChange={(next) => {
+          if (!next) setPaying(null);
+        }}
         customerId={customer.id}
         invoices={account.openInvoices}
+        owedCents={account.collectibleCents}
+        defaultTarget={paying?.target ?? null}
       />
       <RefundDialog
         open={refunding}
         onOpenChange={setRefunding}
         customerId={customer.id}
         creditCents={account.creditCents}
+      />
+      <CustomerDialog
+        open={editing}
+        onOpenChange={setEditing}
+        customer={{
+          id: customer.id,
+          name: customer.name,
+          phone: customer.phone,
+          notes: customer.notes,
+        }}
+      />
+      <StatementDialog
+        open={sharing}
+        onOpenChange={setSharing}
+        text={statementText(view, data.shopName, unit, today)}
+        phone={customer.phone}
       />
       <VoidDialog
         open={writingOff !== null}
@@ -283,26 +290,33 @@ export function CustomerScreen() {
         description={t.writeOffDescription}
         confirmLabel={t.writeOffConfirm}
         onConfirm={async (reason) => {
-          if (writingOff) await repositories.accounts.writeOff(writingOff, reason);
+          if (writingOff) await repositories.accounts.writeOff(writingOff.sale.id, reason);
           setWritingOff(null);
           toast.success(t.writeOffSaved, { description: messages.forms.saved });
+        }}
+      >
+        {writingOff?.invoice && (
+          <p className="flex items-baseline justify-between gap-2 rounded-md bg-muted px-3 py-2 text-sm">
+            <span>
+              {t.invoiceOf} <DateText value={writingOff.sale.date} />
+            </span>
+            <Money cents={writingOff.invoice.dueCents} className="font-semibold" />
+          </p>
+        )}
+      </VoidDialog>
+      <VoidDialog
+        open={archiving}
+        onOpenChange={setArchiving}
+        title={t.archiveTitle}
+        description={t.archiveDescription}
+        confirmLabel={t.archiveConfirm}
+        onConfirm={async (reason) => {
+          await repositories.customers.void(customer.id, reason);
+          setArchiving(false);
+          toast.success(t.archiveSaved, { description: messages.forms.saved });
+          navigation.push('/customers');
         }}
       />
     </div>
   );
-}
-
-/** Paid, open, overdue, written off or voided: always as text, never by colour alone. */
-function InvoiceStatus({
-  voided,
-  invoice,
-}: {
-  voided: boolean;
-  invoice: AccountInvoice | undefined;
-}) {
-  if (voided) return <Badge variant="secondary">{t.status.voided}</Badge>;
-  if (!invoice) return <Badge variant="success">{t.status.paid}</Badge>;
-  if (invoice.writtenOff) return <Badge variant="outline">{t.status.writtenOff}</Badge>;
-  if (invoice.overdue) return <Badge variant="destructive">{t.status.overdue}</Badge>;
-  return <Badge variant="warning">{t.status.open}</Badge>;
 }

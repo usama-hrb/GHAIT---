@@ -1,23 +1,30 @@
 import { sql } from 'drizzle-orm';
+import type { SplitRulePartnerWeight } from '@fabric/contracts';
 import {
   bigint,
   check,
   date,
   index,
   integer,
+  jsonb,
   pgTable,
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
 import { baseColumns, timestamptz } from './columns.js';
 import { partner } from './partners.js';
-import { stockMove } from './purchasing.js';
+import { productStockMove } from './stock.js';
 
-/** The split rule's relative weights (S1). */
+/**
+ * The split rule's relative weights (S1). `partnerWeight` is the partners together; with several
+ * partners `partnerWeights` says what each one has (S17). Null: made when the shop had one
+ * partner, so the first partner has all of `partnerWeight`.
+ */
 const weights = () => ({
   ownerWeight: integer().notNull(),
   partnerWeight: integer().notNull(),
   shopWeight: integer().notNull(),
+  partnerWeights: jsonb().$type<SplitRulePartnerWeight[]>(),
 });
 
 /** SPEC §13 `profit_split_rule`: changed only while in the future (SPEC §8.3, BUILD_PROMPTS 4.3). */
@@ -109,7 +116,7 @@ export const lockedCost = pgTable(
       .references(() => settlement.id),
     stockMoveId: uuid()
       .notNull()
-      .references(() => stockMove.id),
+      .references(() => productStockMove.id),
     costCents: cents(),
   },
   (table) => [

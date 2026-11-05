@@ -2,6 +2,7 @@
 
 import { usePathname, useRouter } from 'next/navigation';
 import { type ReactNode, useEffect } from 'react';
+import { useShopIdentity } from '@/features/settings';
 import { SignOutButton, SyncStatus, UpdateNotice } from '@/features/sync';
 import { messages } from '@/i18n';
 import { useSession } from '@/local-db';
@@ -22,6 +23,7 @@ export default function ShopLayout({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const session = useSession();
+  const identity = useShopIdentity();
 
   useEffect(() => {
     if (session.status === 'signed_out') {
@@ -42,8 +44,10 @@ export default function ShopLayout({ children }: { children: ReactNode }) {
         name: session.user?.displayName ?? messages.app.name,
         detail: role ? messages.shell.roles[role] : undefined,
       }}
+      brand={identity ?? 'loading'}
       title={current?.label ?? messages.app.name}
       status={<SyncStatus />}
+      signOut={<SignOutButton />}
       actions={
         <>
           <LanguageToggle />

@@ -30,12 +30,15 @@ type AnyLocal = Local<{ id: string }>;
 const TABLES = {
   fabric: 'fabrics',
   variant: 'variants',
+  product: 'products',
   photo: 'photos',
   supplier: 'suppliers',
   setting: 'settings',
   purchase: 'purchases',
   roll: 'rolls',
   stock_move: 'stockMoves',
+  product_batch: 'productBatches',
+  product_stock_move: 'productStockMoves',
   customer: 'customers',
   sale: 'sales',
   sale_line: 'saleLines',
@@ -48,6 +51,8 @@ const TABLES = {
   sync_conflict: 'syncConflicts',
   expense: 'expenses',
   recurring_expense: 'recurringExpenses',
+  employee: 'employees',
+  employee_salary: 'employeeSalaries',
   partner: 'partners',
   capital_move: 'capitalMoves',
   partner_draw: 'partnerDraws',
@@ -110,7 +115,7 @@ export async function applyPulledChanges(db: ShopDatabase, page: SyncPullRespons
       const pending = await db.outbox
         .where('entityId')
         .equals(record.id)
-        .filter((entry) => entry.state === 'pending')
+        .filter((entry) => entry.entity === change.entity && entry.state === 'pending')
         .count();
       if (pending > 0) continue;
       await tableOf(db, change.entity).put({ ...record, serverSeq: change.serverSeq });

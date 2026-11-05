@@ -1,29 +1,41 @@
+import { monthBounds } from '@fabric/core';
 import { describe, expect, it } from 'vitest';
 import {
   cashFlowByMonth,
+  daysOf,
   expensesByCategory,
+  grossProfitByDay,
   monthsOf,
   negotiation,
   profitByMonth,
   type ReportRecords,
   receivablesAgeing,
-  salesByColor,
-  salesByFabric,
+  salesByDay,
+  salesByProduct,
   slowMoving,
   stockValue,
 } from './index.js';
+import type { SaleReturn } from './returns.js';
 import { base, dh, OWNER, Shop } from './test-shop.js';
 
-const FABRIC = crypto.randomUUID();
-
-/** The shop's records with a fabric (ref 20 dh/m) for every roll's colour, and named customers. */
+/** The shop's records with a product (20 dh/m, minimum 15) for every batch, and named customers. */
 function withNames(shop: Shop): ReportRecords {
-  const variants = shop.records.rolls.map((roll, index) => ({
+  const products = shop.records.batches.map((batch, index) => ({
     ...base('2026-09-01'),
-    id: roll.variantId,
-    fabricId: FABRIC,
-    colorName: index === 0 ? 'أحمر' : 'أزرق',
-    lowStockThresholdCm: 0,
+    id: batch.productId,
+    name: index === 0 ? 'روزا أحمر' : 'روزا أزرق',
+    sku: null,
+    description: null,
+    tags: [],
+    purchaseUnits: ['meter' as const],
+    sellingUnits: ['meter' as const],
+    kgToMeterConversion: null,
+    pricePerMeterCents: dh(20),
+    minPricePerMeterCents: dh(15),
+    pricePerPieceCents: null,
+    minPricePerPieceCents: null,
+    lowStockThreshold: null,
+    active: true,
   }));
   const customers = shop.records.sales.flatMap((sale) =>
     sale.customerId
@@ -33,25 +45,9 @@ function withNames(shop: Shop): ReportRecords {
   return {
     ...shop.records,
     // The reference price at the time of each sale, as the POS stores it on the line.
-    saleLines: shop.records.saleLines.map((line) => ({ ...line, refPricePerMeterCents: dh(20) })),
+    saleLines: shop.records.saleLines.map((line) => ({ ...line, refPriceCents: dh(20) })),
     suppliers: [],
-    fabrics: [
-      {
-        ...base('2026-09-01'),
-        id: FABRIC,
-        name: 'روزا',
-        type: null,
-        defaultSupplierId: null,
-        refPricePerMeterCents: dh(20),
-        minPricePerMeterCents: dh(15),
-        estCmPerKg: null,
-        sellableAsPiece: false,
-        piecePriceCents: null,
-        tags: [],
-        notes: null,
-      },
-    ],
-    variants,
+    products,
     customers,
   };
 }
@@ -59,8 +55,8 @@ function withNames(shop: Shop): ReportRecords {
 function shop() {
   const s = new Shop();
   s.contribute(OWNER, dh(2000), '2026-08-01');
-  const red = s.roll(dh(800), 5000, false, '2026-08-01'); // 16 dh/m
-  const blue = s.roll(dh(800), 5000, false, '2026-08-01');
+  const red = s.batch(dh(800), 5000, false, '2026-08-01'); // 16 dh/m
+  const blue = s.batch(dh(800), 5000, false, '2026-08-01');
   s.sale(red, '2026-09-05', 1000, dh(180)); // 10 m at 18: 20 dh under the reference
   const credit = s.sale(red, '2026-10-06', 1000, dh(200), dh(50));
   s.expense('2026-09-12', dh(100));
@@ -86,12 +82,13 @@ describe('reports (BUILD_PROMPTS 5.2)', () => {
     expect(rows.find((row) => row.month === '2026-09')).toMatchObject({ salesCents: dh(180) });
   });
 
-  it('sales by colour count only what was kept', () => {
+  it('sales by product count only what was kept', () => {
     const { s, credit } = shop();
     s.giveBack(credit, '2026-10-20', 400, 0);
-    const [row] = salesByColor(withNames(s), { from: '2026-10-01', to: '2026-10-31' });
+    const [row] = salesByProduct(withNames(s), { from: '2026-10-01', to: '2026-10-31' });
     expect(row).toMatchObject({
       soldCm: 600,
+      soldPieces: 0,
       revenueCents: dh(120),
       costCents: dh(96),
       profitCents: dh(24),
@@ -101,7 +98,7 @@ describe('reports (BUILD_PROMPTS 5.2)', () => {
   it('a sale that came back whole was not sold', () => {
     const { s, credit } = shop();
     s.giveBack(credit, '2026-10-20', 1000, 0);
-    expect(salesByColor(withNames(s), { from: '2026-10-01', to: '2026-10-31' })).toEqual([]);
+    expect(salesByProduct(withNames(s), { from: '2026-10-01', to: '2026-10-31' })).toEqual([]);
   });
 
   it('months of a range', () => {
@@ -139,33 +136,126 @@ describe('reports (BUILD_PROMPTS 5.2)', () => {
     ]);
   });
 
-  it('sales by colour and fabric, slow-moving colours, stock at cost and at the reference price', () => {
+  it('days of a range, month ends and a leap day included', () => {
+    expect(daysOf({ from: '2026-12-30', to: '2027-01-02' })).toEqual([
+      '2026-12-30',
+      '2026-12-31',
+      '2027-01-01',
+      '2027-01-02',
+    ]);
+    expect(daysOf({ from: '2028-02-28', to: '2028-03-01' })).toEqual([
+      '2028-02-28',
+      '2028-02-29',
+      '2028-03-01',
+    ]);
+    expect(daysOf({ from: '2026-11-04', to: '2026-11-04' })).toEqual(['2026-11-04']);
+    expect(daysOf({ from: '2026-11-05', to: '2026-11-04' })).toEqual([]);
+  });
+
+  it('sales by day: every day of the range, quiet days as zeros, no cost read', () => {
+    const { s } = shop();
+    const rows = salesByDay(s.records, { from: '2026-09-04', to: '2026-09-07' });
+    expect(rows).toEqual([
+      { date: '2026-09-04', salesCents: 0, salesCount: 0, returnedCents: 0 },
+      { date: '2026-09-05', salesCents: dh(180), salesCount: 1, returnedCents: 0 },
+      { date: '2026-09-06', salesCents: 0, salesCount: 0, returnedCents: 0 },
+      { date: '2026-09-07', salesCents: 0, salesCount: 0, returnedCents: 0 },
+    ]);
+  });
+
+  it('sales by day: a return lowers the day it is made, a voided sale or return counts for nothing', () => {
+    const { s, credit } = shop();
+    s.giveBack(credit, '2026-10-20', 500, 0); // 100 dh of the 200 dh sale of 6 October
+    const day = (date: string) =>
+      salesByDay(s.records, { from: date, to: date }).map(({ salesCents }) => salesCents)[0];
+    expect(day('2026-10-06')).toBe(dh(200));
+    expect(day('2026-10-20')).toBe(-dh(100));
+    // The return is voided: the 20th is quiet again.
+    const [given] = s.records.saleReturns;
+    s.records.saleReturns[0] = { ...(given as SaleReturn), voidedAt: '2026-10-21T09:00:00.000Z' };
+    expect(day('2026-10-20')).toBe(0);
+    // The sale is voided: it was never sold, and a return of it is not counted either.
+    s.records.saleReturns[0] = given as SaleReturn;
+    const sale = s.records.sales.find((row) => row.id === credit.id);
+    s.records.sales = s.records.sales.map((row) =>
+      row.id === sale?.id ? { ...row, voidedAt: '2026-10-22T09:00:00.000Z' } : row,
+    );
+    expect(day('2026-10-06')).toBe(0);
+    expect(day('2026-10-20')).toBe(0);
+  });
+
+  it('a month of days adds up to the month of the profit report (sales and gross profit)', () => {
+    const { s, credit } = shop();
+    s.giveBack(credit, '2026-10-20', 500, 0);
+    const records = withNames(s);
+    for (const month of profitByMonth(records, RANGE)) {
+      const { start, end } = monthBounds(month.month);
+      const days = salesByDay(records, { from: start, to: end });
+      expect(days.reduce((total, row) => total + row.salesCents, 0)).toBe(month.salesCents);
+      const profit = grossProfitByDay(records, { from: start, to: end });
+      expect(profit.reduce((total, row) => total + row.grossProfitCents, 0)).toBe(
+        month.grossProfitCents,
+      );
+    }
+  });
+
+  it('gross profit by day: the sale’s total less its batch cost on its date; a return takes its share away on its own day', () => {
+    const { s, credit } = shop();
+    s.giveBack(credit, '2026-10-20', 500, 0); // 100 dh back, cost 80 -> 20 dh of profit given back
+    const records = withNames(s);
+    const profit = (date: string) => grossProfitByDay(records, { from: date, to: date })[0];
+    expect(profit('2026-09-05')).toEqual({ date: '2026-09-05', grossProfitCents: dh(20) });
+    expect(profit('2026-10-06')).toEqual({ date: '2026-10-06', grossProfitCents: dh(40) });
+    expect(profit('2026-10-20')).toEqual({ date: '2026-10-20', grossProfitCents: -dh(20) });
+    expect(profit('2026-10-07')).toEqual({ date: '2026-10-07', grossProfitCents: 0 });
+  });
+
+  it('gross profit by day refuses records whose costs cannot be worked out, rather than guess', () => {
     const { s } = shop();
     const records = withNames(s);
-    expect(salesByColor(records, RANGE)).toEqual([
+    expect(() =>
+      grossProfitByDay({ ...records, stockMoves: [] }, { from: '2026-09-01', to: '2026-09-30' }),
+    ).toThrow();
+  });
+
+  it('sales by product, slow-moving products, stock at cost and at the reference price', () => {
+    const { s } = shop();
+    const records = withNames(s);
+    expect(salesByProduct(records, RANGE)).toEqual([
       expect.objectContaining({
-        colorName: 'أحمر',
+        productName: 'روزا أحمر',
         soldCm: 2000,
         revenueCents: dh(380),
         costCents: dh(320),
         profitCents: dh(60),
       }),
     ]);
-    expect(salesByFabric(records, { from: '2026-10-01', to: '2026-10-31' })).toEqual([
-      expect.objectContaining({ fabricName: 'روزا', soldCm: 1000, revenueCents: dh(200) }),
+    expect(salesByProduct(records, { from: '2026-10-01', to: '2026-10-31' })).toEqual([
+      expect.objectContaining({ productName: 'روزا أحمر', soldCm: 1000, revenueCents: dh(200) }),
     ]);
     expect(
-      slowMoving(records, '2026-11-30').map((row) => [row.colorName, row.daysIdle, row.lastSale]),
+      slowMoving(records, '2026-11-30').map((row) => [row.productName, row.daysIdle, row.lastSale]),
     ).toEqual([
-      ['أزرق', 121, null],
-      ['أحمر', 55, '2026-10-06'],
+      ['روزا أزرق', 121, null],
+      ['روزا أحمر', 55, '2026-10-06'],
     ]);
     expect(stockValue(records)).toEqual([
-      expect.objectContaining({ remainingCm: 8000, costCents: dh(1280), marketCents: dh(1600) }),
+      expect.objectContaining({
+        productName: 'روزا أزرق',
+        remainingCm: 5000,
+        costCents: dh(800),
+        marketCents: dh(1000),
+      }),
+      expect.objectContaining({
+        productName: 'روزا أحمر',
+        remainingCm: 3000,
+        costCents: dh(480),
+        marketCents: dh(600),
+      }),
     ]);
   });
 
-  it('negotiation: sold against the reference price, per customer and per fabric', () => {
+  it('negotiation: sold against the reference price, per customer and per product', () => {
     const { s, credit } = shop();
     const records = withNames(s);
     expect(negotiation(records, RANGE, 'customer')).toEqual([
@@ -188,8 +278,13 @@ describe('reports (BUILD_PROMPTS 5.2)', () => {
         discountBp: 0,
       },
     ]);
-    expect(negotiation(records, RANGE, 'fabric')).toEqual([
-      expect.objectContaining({ name: 'روزا', lines: 2, discountCents: dh(20), discountBp: 500 }),
+    expect(negotiation(records, RANGE, 'product')).toEqual([
+      expect.objectContaining({
+        name: 'روزا أحمر',
+        lines: 2,
+        discountCents: dh(20),
+        discountBp: 500,
+      }),
     ]);
   });
 

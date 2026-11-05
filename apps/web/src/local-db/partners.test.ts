@@ -1,18 +1,25 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { PARTNER_ISSUES } from '@fabric/contracts';
 import { ShopDatabase } from './db';
 import { ReadOnlyError, ValidationError } from './errors';
-import { NEEDS_CONFIRMATION, PARTNER_SETUP_ISSUE } from './partners';
+import { NEEDS_CONFIRMATION } from './partners';
 import { createRepositories, type Repositories } from './repositories';
 import { LocalStore } from './store';
+import { seedProduct } from './test-helpers';
 
 let db: ShopDatabase;
 let store: LocalStore;
 let repos: Repositories;
 
+/** The device's clock: the same day, a millisecond later each time it is read. */
+let tick = 0;
+const clock = (day: string) => () => new Date(Date.parse(`${day}T09:00:00.000Z`) + tick++);
+
 beforeEach(() => {
+  tick = 0;
   db = new ShopDatabase(`test-${crypto.randomUUID()}`);
-  store = new LocalStore(db, () => new Date('2026-10-12T09:00:00.000Z'));
+  store = new LocalStore(db, clock('2026-10-12'));
   repos = createRepositories(store);
 });
 
@@ -24,10 +31,10 @@ const issueOf = (error: unknown) =>
   error instanceof ValidationError ? error.issues[0]?.message : error;
 
 async function setUp() {
-  await repos.partners.saveBoth({
-    owner: { name: 'المالك', ownershipBp: 5000 },
-    partner: { name: 'الشريك' },
-  });
+  await repos.partners.saveAll([
+    { name: 'المالك', ownershipBp: 5000, isOwner: true },
+    { name: 'الشريك', ownershipBp: 5000, isOwner: false },
+  ]);
   const [owner, partner] = await repos.partners.list();
   if (!owner || !partner) throw new Error('no partners');
   return { owner: owner.partner.id, partner: partner.partner.id };
@@ -46,16 +53,26 @@ describe('partners on the device (BUILD_PROMPTS 4.2)', () => {
       [owner, 5000, true],
       [partner, 5000, false],
     ]);
+    // Everyone together is exactly the whole shop: more, or less, is refused and nothing is saved.
     await expect(
-      repos.partners.saveBoth({
-        owner: { id: owner, name: 'المالك', ownershipBp: 12_000 },
-        partner: { id: partner, name: 'الشريك' },
-      }),
-    ).rejects.toSatisfy((error) => issueOf(error) === PARTNER_SETUP_ISSUE);
-    await repos.partners.saveBoth({
-      owner: { id: owner, name: 'المالك', ownershipBp: 6000 },
-      partner: { id: partner, name: 'الشريك' },
-    });
+      repos.partners.saveAll([
+        { id: owner, name: 'المالك', ownershipBp: 12_000, isOwner: true },
+        { id: partner, name: 'الشريك', ownershipBp: 5000, isOwner: false },
+      ]),
+    ).rejects.toSatisfy((error) => issueOf(error) === PARTNER_ISSUES.ownershipOver);
+    await expect(
+      repos.partners.saveAll([
+        { id: owner, name: 'المالك', ownershipBp: 6000, isOwner: true },
+        { id: partner, name: 'الشريك', ownershipBp: 3000, isOwner: false },
+      ]),
+    ).rejects.toSatisfy((error) => issueOf(error) === PARTNER_ISSUES.ownershipShort);
+    expect((await repos.partners.list()).map((view) => view.partner.ownershipBp)).toEqual([
+      5000, 5000,
+    ]);
+    await repos.partners.saveAll([
+      { id: owner, name: 'المالك', ownershipBp: 6000, isOwner: true },
+      { id: partner, name: 'الشريك', ownershipBp: 4000, isOwner: false },
+    ]);
     expect((await repos.partners.list()).map((view) => view.partner.ownershipBp)).toEqual([
       6000, 4000,
     ]);
@@ -123,12 +140,122 @@ describe('partners on the device (BUILD_PROMPTS 4.2)', () => {
     const before = await db.partners.count();
     store.setReadOnly(true);
     await expect(
-      repos.partners.saveBoth({ owner: { name: 'x', ownershipBp: 5000 }, partner: { name: 'y' } }),
+      repos.partners.saveAll([
+        { name: 'x', ownershipBp: 5000, isOwner: true },
+        { name: 'y', ownershipBp: 5000, isOwner: false },
+      ]),
     ).rejects.toBeInstanceOf(ReadOnlyError);
-    await expect(
-      repos.fabrics.save({ name: 'روزا', refPricePerMeterCents: 1, minPricePerMeterCents: 1 }),
-    ).rejects.toBeInstanceOf(ReadOnlyError);
+    await expect(seedProduct(repos)).rejects.toBeInstanceOf(ReadOnlyError);
     expect(await db.partners.count()).toBe(before);
-    expect(await db.fabrics.count()).toBe(0);
+    expect(await db.products.count()).toBe(0);
+  });
+});
+
+describe('several partners on the device (S4, S17, S18)', () => {
+  it('whoever owns less is saved first, so the shop is never over 100% on the way; a partner who is not changed is not written', async () => {
+    const { owner, partner } = await setUp();
+    const before = await db.outbox.count();
+    // The partner is listed first and grows by what the owner gives up.
+    await repos.partners.saveAll([
+      { id: partner, name: 'الشريك', ownershipBp: 6000, isOwner: false },
+      { id: owner, name: 'المالك', ownershipBp: 4000, isOwner: true },
+    ]);
+    expect((await db.outbox.toArray()).slice(before).map((op) => op.entityId)).toEqual([
+      owner,
+      partner,
+    ]);
+
+    // Saved again as it is, nothing is written.
+    await repos.partners.saveAll([
+      { id: owner, name: 'المالك', ownershipBp: 4000, isOwner: true },
+      { id: partner, name: 'الشريك', ownershipBp: 6000, isOwner: false },
+    ]);
+    expect(await db.outbox.count()).toBe(before + 2);
+  });
+
+  it('a partner joins with their details while the others make room; the order they joined in is kept', async () => {
+    const { owner, partner } = await setUp();
+    const ids = await repos.partners.saveAll([
+      { id: owner, name: 'المالك', ownershipBp: 4000, isOwner: true },
+      { id: partner, name: 'الشريك', ownershipBp: 4000, isOwner: false },
+      {
+        name: 'بلال',
+        ownershipBp: 2000,
+        isOwner: false,
+        phone: '0612345678',
+        title: 'شريك صامت',
+        startDate: '2026-10-12',
+        notes: 'دخل بمال',
+      },
+    ]);
+    const views = await repos.partners.list();
+    expect(views.map((view) => view.partner.id)).toEqual(ids);
+    expect(views[2]?.partner).toMatchObject({
+      name: 'بلال',
+      ownershipBp: 2000,
+      isOwner: false,
+      phone: '0612345678',
+      title: 'شريك صامت',
+      startDate: '2026-10-12',
+      notes: 'دخل بمال',
+    });
+    // The details of one partner change without touching the others.
+    const before = await db.outbox.count();
+    await repos.partners.saveAll([
+      { id: ids[2], name: 'بلال', ownershipBp: 2000, isOwner: false, phone: '0699999999' },
+    ]);
+    expect((await db.outbox.toArray()).slice(before).map((op) => op.entityId)).toEqual([ids[2]]);
+    expect((await repos.partners.list())[2]?.partner).toMatchObject({
+      phone: '0699999999',
+      title: null,
+      startDate: null,
+      notes: null,
+    });
+  });
+
+  it('the owner stays the owner, and is the only one: no second owner, no one else made the owner', async () => {
+    const { owner, partner } = await setUp();
+    await expect(
+      repos.partners.saveAll([
+        { id: owner, name: 'المالك', ownershipBp: 5000, isOwner: true },
+        { id: partner, name: 'الشريك', ownershipBp: 5000, isOwner: true },
+      ]),
+    ).rejects.toSatisfy((error) => issueOf(error) === PARTNER_ISSUES.secondOwner);
+    await expect(
+      repos.partners.saveAll([
+        { id: owner, name: 'المالك', ownershipBp: 5000, isOwner: false },
+        { id: partner, name: 'الشريك', ownershipBp: 5000, isOwner: true },
+      ]),
+    ).rejects.toSatisfy((error) => issueOf(error) === PARTNER_ISSUES.ownerFixed);
+    expect((await repos.partners.list()).map((view) => view.partner.isOwner)).toEqual([
+      true,
+      false,
+    ]);
+  });
+
+  it('a partner with no part of the shop and no weight in the rule in force is inactive; nobody is deleted', async () => {
+    const { owner, partner } = await setUp();
+    await repos.partners.saveAll([
+      { id: owner, name: 'المالك', ownershipBp: 10_000, isOwner: true },
+      { id: partner, name: 'الشريك', ownershipBp: 0, isOwner: false },
+    ]);
+    // The default rule still gives the first partner a third: they take part until a rule says otherwise.
+    expect((await repos.partners.list()).map((view) => view.status)).toEqual(['active', 'active']);
+    await repos.settlements.saveSplitRule({
+      effectiveFrom: '2026-11-01',
+      ownerWeight: 1,
+      partnerWeight: 0,
+      shopWeight: 1,
+      partnerWeights: [{ partnerId: partner, weight: 0 }],
+    });
+    expect((await repos.partners.list()).map((view) => view.status)).toEqual(['active', 'active']);
+
+    // From the rule's day on, with a device clock past it, the partner has left.
+    const later = createRepositories(new LocalStore(db, clock('2026-11-02')));
+    expect((await later.partners.list()).map((view) => view.status)).toEqual([
+      'active',
+      'inactive',
+    ]);
+    expect(await db.partners.count()).toBe(2);
   });
 });
