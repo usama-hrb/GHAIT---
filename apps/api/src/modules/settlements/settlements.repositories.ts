@@ -117,10 +117,16 @@ export class SplitRuleRepository implements SyncHandler<'profit_split_rule'> {
       .select({
         id: schema.partner.id,
         isOwner: schema.partner.isOwner,
+        createdAt: schema.partner.createdAt,
+        exitedOn: schema.partner.exitedOn,
         voidedAt: schema.partner.voidedAt,
       })
       .from(schema.partner);
-    return rows.map((row) => ({ ...row, voidedAt: row.voidedAt?.toISOString() ?? null }));
+    return rows.map((row) => ({
+      ...row,
+      createdAt: row.createdAt.toISOString(),
+      voidedAt: row.voidedAt?.toISOString() ?? null,
+    }));
   }
 }
 

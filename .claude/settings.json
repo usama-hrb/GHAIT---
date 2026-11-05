@@ -1,0 +1,22 @@
+{
+  "env": {
+    "CLAUDE_CODE_MAX_CONTEXT_TOKENS": "400000",
+    "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "300000"
+  },
+  "permissions": {
+    "deny": ["Agent"]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.trail/hook.cjs\" session-start || exit 0",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

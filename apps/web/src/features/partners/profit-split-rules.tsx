@@ -203,7 +203,10 @@ export function ProfitSplitRules({ partners }: { partners: readonly PartnerView[
   const [editing, setEditing] = useState<SplitRuleRow | 'new' | null>(null);
   const [voiding, setVoiding] = useState<string | null>(null);
   const canEdit = useSession().user?.role === 'owner';
-  const others = partners.filter(({ partner }) => !partner.isOwner);
+  // A rule can name a partner who has since left (kept for the history), but a new rule never does.
+  const others = partners.filter(
+    ({ partner, standing }) => !partner.isOwner && standing === 'active',
+  );
   const inForce = rows ? ruleInForce(rows) : undefined;
 
   const statusOf = (row: SplitRuleRow) =>

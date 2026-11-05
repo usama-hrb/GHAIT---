@@ -23,7 +23,13 @@ import type { PaymentAllocation, WriteOff } from './customers.js';
 import type { ValidationIssue } from './errors.js';
 import type { Expense } from './expenses.js';
 import { syncOrder } from './order.js';
-import { type CapitalMove, capitalMoveSchema, type Partner } from './partners.js';
+import {
+  type CapitalMove,
+  capitalMoveSchema,
+  type Partner,
+  type PartnerDraw,
+  PARTNER_ISSUES,
+} from './partners.js';
 import type { SaleReturn } from './returns.js';
 import type { Sale, SaleLine } from './sales.js';
 import {
@@ -209,6 +215,8 @@ export const SETTLEMENT_ISSUES = {
   ruleNeedsPartners: 'split_rule_needs_partners',
   /** The rule in effect does not fit the shop's partners: change it before settling. */
   ruleMismatch: 'split_rule_partners_mismatch',
+  /** A partner who has exited is given no share from the day they left (S20). */
+  ruleExitedPartner: 'split_rule_exited_partner',
 } as const;
 
 const issue = (path: (string | number)[], message: string): ValidationIssue => ({
@@ -267,7 +275,10 @@ export function checkSplitRule(
   context: {
     today: string;
     rules: readonly Pick<SplitRule, 'id' | 'effectiveFrom' | 'voidedAt'>[];
-    partners: readonly Pick<Partner, 'id' | 'isOwner' | 'voidedAt'>[];
+    partners: readonly (Pick<Partner, 'id' | 'isOwner' | 'voidedAt'> & {
+      createdAt?: string;
+      exitedOn?: string | null;
+    })[];
   },
 ): ValidationIssue[] {
   if (next.effectiveFrom <= context.today || (current && current.effectiveFrom <= context.today)) {
@@ -297,10 +308,37 @@ export function checkSplitRule(
       return [issue(['partnerWeight'], SETTLEMENT_ISSUES.ruleWeightsMismatch)];
     }
   }
+  if (givesExitedPartner(next, partners)) {
+    return [issue(['partnerWeights'], SETTLEMENT_ISSUES.ruleExitedPartner)];
+  }
   const taken = live(context.rules).some(
     (rule) => rule.id !== next.id && rule.effectiveFrom === next.effectiveFrom,
   );
   return taken ? [issue(['effectiveFrom'], SETTLEMENT_ISSUES.ruleDateTaken)] : [];
+}
+
+/**
+ * Whether a rule starting on `next.effectiveFrom` gives a share to a partner who has exited by
+ * then (S20). A rule that names no partners belongs to the shop's first one, who counts too.
+ */
+function givesExitedPartner(
+  next: Pick<SplitRule, 'effectiveFrom' | 'partnerWeight' | 'partnerWeights'>,
+  partners: readonly (Pick<Partner, 'id' | 'isOwner' | 'voidedAt'> & {
+    createdAt?: string;
+    exitedOn?: string | null;
+  })[],
+): boolean {
+  const gone = (partnerId: string) => {
+    const exitedOn = partners.find(({ id }) => id === partnerId)?.exitedOn;
+    return exitedOn != null && next.effectiveFrom >= exitedOn;
+  };
+  if (next.partnerWeights) {
+    return next.partnerWeights.some(({ partnerId, weight }) => weight > 0 && gone(partnerId));
+  }
+  const first = firstPartnerOf(
+    partners.map(({ createdAt = '', ...rest }) => ({ createdAt, ...rest })),
+  );
+  return next.partnerWeight > 0 && first !== undefined && gone(first.id);
 }
 
 /** Voiding a split rule: only one that has not taken effect yet. */
@@ -332,12 +370,29 @@ export function firstPartnerOf<
 }
 
 /**
+ * A rule's named weights without the zero weights of partners who were removed (S19): they take no
+ * part, and the weights still add up to the rule's `partnerWeight`. A weight above zero for someone
+ * who is not a partner is kept, so a profit share is never dropped silently (@fabric/core refuses
+ * the rule instead).
+ */
+function withoutRemoved(
+  weights: readonly PartnerWeight[],
+  partners: readonly Pick<Partner, 'id' | 'voidedAt'>[],
+): PartnerWeight[] {
+  const present = new Set(live(partners).map(({ id }) => id));
+  return weights.filter(({ partnerId, weight }) => weight > 0 || present.has(partnerId));
+}
+
+/**
  * The rules a period is settled with: the default, then the live entered ones. A rule that names
  * no partners (the default, and any made when the shop had one) belongs to the first partner, so a
  * partner who joined later takes no part in a period settled with it (S17).
  */
 export function splitRulesOf(
-  rules: readonly SplitRule[],
+  rules: readonly Pick<
+    SplitRule,
+    'effectiveFrom' | 'ownerWeight' | 'partnerWeight' | 'shopWeight' | 'partnerWeights' | 'voidedAt'
+  >[],
   partners: readonly Pick<Partner, 'id' | 'isOwner' | 'createdAt' | 'voidedAt'>[],
 ): ProfitSplitRule[] {
   const first = firstPartnerOf(partners);
@@ -349,7 +404,7 @@ export function splitRulesOf(
         ownerWeight,
         partnerWeight,
         shopWeight,
-        ...(partnerWeights ? { partnerWeights } : {}),
+        ...(partnerWeights ? { partnerWeights: withoutRemoved(partnerWeights, partners) } : {}),
       }),
     ),
   ].map((rule): ProfitSplitRule => {
@@ -363,7 +418,7 @@ export function partnerWeightsOfRule(
   rule: Pick<SplitRule, 'partnerWeight' | 'partnerWeights'>,
   partners: readonly Pick<Partner, 'id' | 'isOwner' | 'createdAt' | 'voidedAt'>[],
 ): PartnerWeight[] {
-  if (rule.partnerWeights) return rule.partnerWeights;
+  if (rule.partnerWeights) return withoutRemoved(rule.partnerWeights, partners);
   const first = firstPartnerOf(partners);
   return first ? [{ partnerId: first.id, weight: rule.partnerWeight }] : [];
 }
@@ -421,24 +476,90 @@ export type PartnerStatus = 'active' | 'inactive';
  */
 export function partnerStatusOf(
   partner: Pick<Partner, 'id' | 'isOwner' | 'ownershipBp'>,
-  rules: readonly SplitRule[],
+  rules: readonly SplitRuleWeights[],
   partners: readonly Pick<Partner, 'id' | 'isOwner' | 'createdAt' | 'voidedAt'>[],
   today: string,
 ): PartnerStatus {
   if (partner.isOwner || partner.ownershipBp > 0) return 'active';
+  return sharesProfitFrom(partner.id, rules, partners, today) ? 'active' : 'inactive';
+}
+
+/** The fields of a rule that say who gets what, and from when. */
+export type SplitRuleWeights = Pick<
+  SplitRule,
+  'effectiveFrom' | 'ownerWeight' | 'partnerWeight' | 'shopWeight' | 'partnerWeights' | 'voidedAt'
+>;
+
+/**
+ * Whether the profit is still shared with a partner from `from` on: the rule in force that day, or
+ * one that starts later, gives them a weight above 0. Worked out from the rules (S17, S18, S20).
+ */
+export function sharesProfitFrom(
+  partnerId: string,
+  rules: readonly SplitRuleWeights[],
+  partners: readonly Pick<Partner, 'id' | 'isOwner' | 'createdAt' | 'voidedAt'>[],
+  from: string,
+): boolean {
   const all = splitRulesOf(rules, partners);
-  const current = all
-    .filter((rule) => rule.effectiveFrom <= today)
+  const current = ruleInForceOn(all, from);
+  const upcoming = all.filter((rule) => rule.effectiveFrom > from);
+  return [...(current ? [current] : []), ...upcoming].some((rule) =>
+    rule.partnerWeights?.some(({ partnerId: id, weight }) => id === partnerId && weight > 0),
+  );
+}
+
+/** The rule a period starting on `date` is settled with: the latest one that has started by then (S3). */
+export function ruleInForceOn(
+  rules: readonly ProfitSplitRule[],
+  date: string,
+): ProfitSplitRule | undefined {
+  return rules
+    .filter((rule) => rule.effectiveFrom <= date)
     .reduce<ProfitSplitRule | undefined>(
       (latest, rule) => (!latest || rule.effectiveFrom > latest.effectiveFrom ? rule : latest),
       undefined,
     );
-  const upcoming = all.filter((rule) => rule.effectiveFrom > today);
-  return [...(current ? [current] : []), ...upcoming].some((rule) =>
-    rule.partnerWeights?.some(({ partnerId, weight }) => partnerId === partner.id && weight > 0),
-  )
-    ? 'active'
-    : 'inactive';
+}
+
+/**
+ * Removing a partner (S19): they are voided with a reason, never deleted, and only one who took
+ * no part in anything can go, so no figure of the shop changes. The owner stays; a partner who
+ * still owns part of the shop stays until the shares are given to others; one with capital, draws
+ * or a settlement share keeps the history they made; one a profit rule gives a share to, or the
+ * first of several partners (who holds every rule that names no one, S17), stays. Every reason
+ * that applies is returned, so the owner is told all of what stands in the way.
+ */
+export function checkPartnerVoid(
+  partnerId: string,
+  records: {
+    partners: readonly Pick<Partner, 'id' | 'isOwner' | 'ownershipBp' | 'createdAt' | 'voidedAt'>[];
+    capitalMoves: readonly Pick<CapitalMove, 'partnerId' | 'voidedAt'>[];
+    draws: readonly Pick<PartnerDraw, 'partnerId' | 'voidedAt'>[];
+    shares: readonly Pick<SettlementShare, 'partnerId' | 'voidedAt'>[];
+    rules: readonly Pick<SplitRule, 'partnerWeights' | 'voidedAt'>[];
+  },
+): ValidationIssue[] {
+  const partner = live(records.partners).find(({ id }) => id === partnerId);
+  if (!partner) return [];
+  if (partner.isOwner) return [issue(['id'], PARTNER_ISSUES.ownerStays)];
+  const issues: ValidationIssue[] = [];
+  if (partner.ownershipBp > 0) issues.push(issue(['ownershipBp'], PARTNER_ISSUES.hasOwnership));
+  const mine = (record: { partnerId: string }) => record.partnerId === partnerId;
+  if (
+    live(records.capitalMoves).some(mine) ||
+    live(records.draws).some(mine) ||
+    live(records.shares).some(mine)
+  ) {
+    issues.push(issue(['id'], PARTNER_ISSUES.hasRecords));
+  }
+  const named = live(records.rules).some((rule) =>
+    rule.partnerWeights?.some((weight) => weight.partnerId === partnerId && weight.weight > 0),
+  );
+  const holdsUnnamed =
+    firstPartnerOf(records.partners)?.id === partnerId &&
+    live(records.partners).filter(({ isOwner }) => !isOwner).length > 1;
+  if (named || holdsUnnamed) issues.push(issue(['id'], PARTNER_ISSUES.inProfitSplit));
+  return issues;
 }
 
 /** Moves with the costs live settlements froze for them (P9), for batchLedgerOf. */

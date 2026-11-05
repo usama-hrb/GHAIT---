@@ -235,14 +235,14 @@ export function EmployeesPanel() {
       )}
 
       <EmployeeDialog
-        key={adding ? 'add' : 'closed'}
+        key={adding ? 'add' : 'add-closed'}
         target={adding ? 'add' : null}
         onOpenChange={(open) => {
           if (!open) setAdding(false);
         }}
       />
       <SalaryPaymentDialog
-        key={paying ? `${paying.employee.id} ${paying.month}` : 'closed'}
+        key={paying ? `${paying.employee.id} ${paying.month}` : 'pay-closed'}
         target={paying}
         onOpenChange={(open) => {
           if (!open) setPaying(null);

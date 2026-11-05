@@ -54,6 +54,14 @@ export class PartnersController {
     return this.partners.putPartner(id, body);
   }
 
+  /** Removes a partner who took part in nothing; the owner and anyone with a history stay (S19). */
+  @Post('partners/:id/void')
+  @HttpCode(200)
+  @ZodResponse(storedPartner)
+  voidPartner(@ZodParam('id', idSchema) id: string, @ZodBody(voidRequestSchema) body: VoidRequest) {
+    return this.partners.void('partner', id, body.reason);
+  }
+
   /** Capital, retained profit, draws and the undrawn share, from the records (SPEC §6, §8.4). */
   @Get('partners/:id/account')
   @ZodResponse(accountSchema)

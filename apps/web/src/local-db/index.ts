@@ -52,6 +52,8 @@ export {
   type PartnerAccountView,
   type PartnerAllocation,
   type PartnerDraft,
+  type PartnerExitInput,
+  type PartnerExitPlan,
   type PartnersRepository,
   type PartnerView,
 } from './partners';

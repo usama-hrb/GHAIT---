@@ -1,4 +1,10 @@
-import { HEADERS, PARTNER_ISSUES, type SyncOp, syncPushResponseSchema } from '@fabric/contracts';
+import {
+  errorResponseSchema,
+  HEADERS,
+  PARTNER_ISSUES,
+  type SyncOp,
+  syncPushResponseSchema,
+} from '@fabric/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createTestApp, type Session, type TestApp } from './support/app.js';
 
@@ -181,5 +187,52 @@ describe('partners, capital and draws (BUILD_PROMPTS 4.2)', () => {
       notes: 'دخل بعد الافتتاح',
     });
     expect(partners[0]).toMatchObject({ phone: null, title: null, startDate: null, notes: null });
+  });
+
+  it('a partner who has a history is never removed; one who has none is, with the reason kept (S19)', async () => {
+    const messages = (body: unknown) =>
+      (errorResponseSchema.parse(body).error.issues ?? []).map((issue) => issue.message);
+    const remove = (id: string, reason = 'غادر') =>
+      as(t.http().post(`/partners/${id}/void`)).send({ reason });
+    const partners = async () =>
+      (await as(t.http().get('/partners')).expect(200)).body as {
+        id: string;
+        name: string;
+        ownershipBp: number;
+        voidedAt: string | null;
+      }[];
+    const third = (await partners()).find((p) => p.name === 'الثالث');
+    if (!third) throw new Error('the third partner is missing');
+
+    expect(messages((await remove(owner).expect(400)).body)).toEqual([PARTNER_ISSUES.ownerStays]);
+    expect(messages((await remove(third.id).expect(400)).body)).toEqual([
+      PARTNER_ISSUES.hasOwnership,
+    ]);
+    // A reason is required.
+    await remove(third.id, ' ').expect(400);
+
+    // The third gives their part away; the partner's contribution keeps the partner (PA3).
+    await as(t.http().put(`/partners/${third.id}`))
+      .send({ name: 'الثالث', ownershipBp: 0, isOwner: false })
+      .expect(200);
+    await as(t.http().put(`/partners/${partner}`))
+      .send({ name: 'الشريك', ownershipBp: 5000, isOwner: false })
+      .expect(200);
+    // They are also the first of two partners, who holds every rule that names no one (S17).
+    expect(messages((await remove(partner).expect(400)).body)).toEqual([
+      PARTNER_ISSUES.hasOwnership,
+      PARTNER_ISSUES.hasRecords,
+      PARTNER_ISSUES.inProfitSplit,
+    ]);
+    await remove(third.id, 'خرج من الشراكة').expect(200);
+
+    const after = await partners();
+    expect(after.find((p) => p.id === third.id)?.voidedAt).not.toBeNull();
+    expect(after.filter((p) => p.voidedAt === null).map((p) => [p.name, p.ownershipBp])).toEqual([
+      ['المالك', 5000],
+      ['الشريك', 5000],
+    ]);
+    // The account of a removed partner is still readable, from the records (nothing was deleted).
+    await as(t.http().get(`/partners/${third.id}/account`)).expect(200);
   });
 });

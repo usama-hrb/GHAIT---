@@ -13,6 +13,7 @@ export * from './integrity.js';
 export * from './hijri.js';
 export * from './inventory.js';
 export * from './order.js';
+export * from './partner-exit.js';
 export * from './partners.js';
 export * from './products.js';
 export * from './period-lock.js';

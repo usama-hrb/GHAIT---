@@ -26,6 +26,10 @@ export const partner = pgTable(
     title: text(),
     startDate: date({ mode: 'string' }),
     notes: text(),
+    /** The day they stopped being a partner (S20); null while they are one. */
+    exitedOn: date({ mode: 'string' }),
+    /** What was agreed about what is still owed when they left. */
+    exitNote: text(),
   },
   (table) => [check('partner_ownership_valid', sql`${table.ownershipBp} BETWEEN 0 AND 10000`)],
 );

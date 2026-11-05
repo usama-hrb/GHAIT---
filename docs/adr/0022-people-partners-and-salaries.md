@@ -1,7 +1,8 @@
 # ADR 0022: People — several partners, employees and salaries
 
-Status: accepted. One additive migration (`0031_people_and_salaries.sql`), new contracts and core
-functions, two new synced entities. The rules this records are rows S17, S18 and PY1–PY6 in
+Status: accepted. Two additive migrations (`0031_people_and_salaries.sql`, and
+`0032_partner_exit.sql` for the partner exit), new contracts and core functions, two new synced
+entities. The rules this records are rows S17, S18, S19, S20, S21 and PY1–PY6 in
 `accounting-assumptions.md`, and S1, S2, S4, S15 and Z7 as amended.
 
 ## Context
@@ -39,8 +40,39 @@ by a new rule dated after today (S15); the partner dialog does this for the owne
 split that will result before saving.
 
 A partner's status (active or inactive) is derived from ownership and the rules (S18); it is not a
-field. Nobody is deleted: a partner who leaves has their ownership and weight taken to 0, and their
-account and the settled history stay.
+field. A partner who leaves has their ownership and weight taken to 0, and their account and the
+settled history stay. Amended on 2026-11-05 at the owner's request: such a partner can then be
+removed (S19). Removal is a void with a reason, never a delete, and only a partner with no
+ownership, no money records and no profit weight can be removed; `checkPartnerVoid` in
+`@fabric/contracts` is run on the device and again on the server.
+
+### A partner leaves through the Partner Exit Center
+
+Removal (S19) is only for a partner who took part in nothing. A partner with a history leaves
+through the Partner Exit Center, a guided dialog opened from the partner's menu with "Start
+partner exit" (S20). It shows what they are owed and what they hold, asks what to do about the
+profit owed, the capital, their ownership and their profit share, and writes everything only after
+a review in plain words. Choosing prepares an action; nothing is recorded until "Complete partner
+exit".
+
+The partner is marked rather than removed. `partner.exited_on` (a date) and `partner.exit_note`
+(text) are the only new columns, both nullable. A stored date is used and not a derived status,
+because the day they leave cannot be worked out from anything else: ownership and rules can be
+zero for a partner who is still in the shop, and a future departure date has to be remembered.
+Standing is then derived from that date and today (`partnerStandingOf`: active, leaving, former),
+and S18's derived status is not changed. Migration 0032 adds the two nullable columns, so an old
+database, an old backup and an old device export read as "never exited". A device still running
+a build from before this change writes a partner without the two fields, and the server reads
+that as "not exited", the same as bringing the partner back (S21, point e). The new web build
+keeps the two fields on every partner save, so only a device that has not updated can do it.
+
+The exit is written as ordinary records: a profit draw for the profit paid, a capital withdrawal
+for the capital repaid, ownership rows moved to the owner or to partners who stay, profit rules
+from the exit date through `exitRuleChanges`, and last the exit mark. On the device these run in
+one transaction, so a failure leaves nothing; on the server each record is checked when it
+syncs, and a device whose balances are out of date is refused. No new accounting rule lives in the
+screens. The checks are in `@fabric/contracts` (`partner-exit.ts`), the rule changes reuse the
+settlement's weights, and the screen only turns choices into figures (`partner-exit-model.ts`).
 
 ### Partner writes: whole at the screen, record by record on the server
 
@@ -127,6 +159,10 @@ Pages take the record as `?id=` and navigate with `useAppNavigation`, as every r
   readable whatever rules come later.
 - Employees and partners share a screen but not a model; the directory, the account and the
   salary history are different views of different records.
+- A former partner stays in the directory under "Former partners" with their account page,
+  their payment history and the same draw and capital withdrawal buttons, so what is still owed to
+  them can be paid later. They are left out of the ownership table and the rule forms. The owner
+  can bring them back (S20).
 - Limitations: salaries are monthly, whole months, in one currency; no payment method; no
   accrual in the settlement; an employee with a salary payment in the books cannot be removed,
   only ended (PY6).

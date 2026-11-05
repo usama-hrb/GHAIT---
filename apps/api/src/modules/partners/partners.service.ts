@@ -47,8 +47,14 @@ export class PartnersService implements OnModuleInit {
     return (await this.partners.list()).map(stored);
   }
 
-  putPartner(id: string, input: PartnerInput) {
-    return this.save('partner', id, partnerInputSchema.parse(input));
+  async putPartner(id: string, input: PartnerInput) {
+    // The form never carries the exit (S20): editing the details keeps the day they left.
+    const current = (await this.partners.find(id))?.record;
+    return this.save('partner', id, {
+      ...partnerInputSchema.parse(input),
+      exitedOn: current?.exitedOn ?? null,
+      exitNote: current?.exitNote ?? null,
+    });
   }
 
   async account(id: string): Promise<{ partnerId: string; account: PartnerAccount }> {
@@ -77,7 +83,7 @@ export class PartnersService implements OnModuleInit {
     return this.save('partner_draw', id, newPartnerDrawSchema.parse(input));
   }
 
-  async void(entity: 'capital_move' | 'partner_draw', id: string, reason: string) {
+  async void(entity: 'partner' | 'capital_move' | 'partner_draw', id: string, reason: string) {
     return stored(await this.sync.voidDirect(entity, id, reason));
   }
 

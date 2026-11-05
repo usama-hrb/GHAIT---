@@ -1,5 +1,6 @@
 'use client';
 
+import { DoorOpenIcon, EllipsisIcon, PencilIcon, RotateCcwIcon, Trash2Icon } from 'lucide-react';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { messages } from '@/i18n';
@@ -8,6 +9,14 @@ import { formatDate, Money } from '@/shared/format';
 import { formatPermille } from '@/shared/lib/percent';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/shared/ui/dropdown-menu';
+import { ExitStandingBadge } from './partner-exit-center';
 import type { MoneyMoveKind } from './partner-dialogs';
 import type { ProfitOutlook } from './people-view';
 
@@ -58,13 +67,24 @@ export function PartnerCard({
   outlook,
   canManage,
   onMove,
+  onEdit,
+  onExit,
+  onBringBack,
+  onRemove,
 }: {
   view: PartnerView;
   outlook: ProfitOutlook;
   canManage: boolean;
   onMove: (kind: MoneyMoveKind) => void;
+  onEdit: () => void;
+  /** Opens the Partner Exit Center. Nothing is removed by opening it. */
+  onExit: () => void;
+  onBringBack: () => void;
+  /** Only offered for a partner added by mistake: one who took part in nothing. */
+  onRemove: () => void;
 }) {
-  const { partner, account, status } = view;
+  const { partner, account, status, standing } = view;
+  const left = standing !== 'active';
   return (
     <section
       aria-label={partner.name}
@@ -83,33 +103,106 @@ export function PartnerCard({
         </div>
         <div className="flex flex-wrap justify-end gap-1.5">
           <Badge variant="secondary">{partner.isOwner ? t.owner : t.partner}</Badge>
-          <Badge variant={status === 'active' ? 'success' : 'outline'}>{t.status[status]}</Badge>
+          {left ? (
+            <ExitStandingBadge standing={standing} exitedOn={partner.exitedOn} />
+          ) : (
+            <Badge variant={status === 'active' ? 'success' : 'outline'}>{t.status[status]}</Badge>
+          )}
+          {canManage && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`${t.cardMenu}: ${partner.name}`}
+                  className="-my-1 pointer-coarse:size-11"
+                >
+                  <EllipsisIcon aria-hidden />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={onEdit}>
+                  <PencilIcon aria-hidden />
+                  {t.editDetails}
+                </DropdownMenuItem>
+                {!partner.isOwner && (
+                  <>
+                    <DropdownMenuSeparator />
+                    {left ? (
+                      <DropdownMenuItem onSelect={onBringBack}>
+                        <RotateCcwIcon aria-hidden />
+                        {t.exit.bringBack}
+                      </DropdownMenuItem>
+                    ) : (
+                      <DropdownMenuItem onSelect={onExit}>
+                        <DoorOpenIcon aria-hidden />
+                        {t.exit.start}
+                      </DropdownMenuItem>
+                    )}
+                    {!left && view.removal.length === 0 && (
+                      <DropdownMenuItem variant="destructive" onSelect={onRemove}>
+                        <Trash2Icon aria-hidden />
+                        {t.detail.removeMistake}
+                      </DropdownMenuItem>
+                    )}
+                  </>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
         </div>
       </div>
 
-      <dl className="grid gap-1.5 text-sm">
-        <Row label={t.ownership}>
-          <bdi data-num className="font-medium">
-            {partner.ownershipBp / 100}%
-          </bdi>
-        </Row>
-        <Row label={t.profitShare}>
-          <ProfitShareText outlook={outlook} />
-        </Row>
-        <Row label={t.capital}>
-          <Money cents={account.capitalCents} tone="capital" />
-        </Row>
-        <Row label={t.undrawn}>
-          <Money cents={account.undrawnCents} tone={account.undrawnCents < 0 ? 'debt' : 'profit'} />
-        </Row>
-        <Row label={t.draws}>
-          <Money cents={account.drawsCents} />
-        </Row>
-      </dl>
+      {left ? (
+        <dl className="grid gap-1.5 text-sm">
+          {partner.exitedOn && (
+            <Row label={t.exit.leftOn}>
+              <bdi data-num className="font-medium">
+                {formatDate(partner.exitedOn, 'medium')}
+              </bdi>
+            </Row>
+          )}
+          <Row label={t.exit.owedProfit}>
+            <Money
+              cents={Math.max(account.undrawnCents, 0)}
+              tone={account.undrawnCents > 0 ? 'profit' : undefined}
+            />
+          </Row>
+          <Row label={t.exit.owedCapital}>
+            <Money cents={Math.max(account.capitalCents, 0)} tone="capital" />
+          </Row>
+        </dl>
+      ) : (
+        <dl className="grid gap-1.5 text-sm">
+          <Row label={t.ownership}>
+            <bdi data-num className="font-medium">
+              {partner.ownershipBp / 100}%
+            </bdi>
+          </Row>
+          <Row label={t.profitShare}>
+            <ProfitShareText outlook={outlook} />
+          </Row>
+          <Row label={t.capital}>
+            <Money cents={account.capitalCents} tone="capital" />
+          </Row>
+          <Row label={t.undrawn}>
+            <Money
+              cents={account.undrawnCents}
+              tone={account.undrawnCents < 0 ? 'debt' : 'profit'}
+            />
+          </Row>
+          <Row label={t.draws}>
+            <Money cents={account.drawsCents} />
+          </Row>
+        </dl>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         {canManage &&
-          (['contribution', 'draw', 'withdrawal'] as const).map((kind) => (
+          (left
+            ? (['draw', 'withdrawal'] as const)
+            : (['contribution', 'draw', 'withdrawal'] as const)
+          ).map((kind) => (
             <Button
               key={kind}
               size="sm"

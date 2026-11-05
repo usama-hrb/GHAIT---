@@ -43,7 +43,7 @@ export class NeedsServerError extends Error {
   override readonly name = 'NeedsServerError';
 }
 
-class SplitRuleTable extends SyncedTable<SplitRule> {
+export class SplitRuleTable extends SyncedTable<SplitRule> {
   constructor(store: LocalStore) {
     super(store, 'profitSplitRules', 'profit_split_rule', splitRuleSchema);
   }

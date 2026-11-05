@@ -22,7 +22,7 @@ const t = messages.partners.ownershipFields;
 
 /**
  * Who owns what part of the shop (S4): every person's percentage, saved together so the table
- * always adds up to exactly 100%. Nobody is removed: a partner who leaves owns 0%.
+ * always adds up to exactly 100%. A partner who leaves owns 0%, then is removed from their account (S19).
  */
 export function OwnershipDialog({
   open,

@@ -1,3 +1,4 @@
+import type { ValidationIssue } from '@fabric/contracts';
 import { messages } from '@/i18n';
 import { isPeriodLocked, ReadOnlyError, ValidationError } from '@/local-db';
 import { errorsByField, issueMessage } from '@/shared/lib/form-errors';
@@ -24,4 +25,9 @@ export function failureText(error: unknown): string {
 /** The issues of a failed save as one message per field, for showing under the fields. */
 export function fieldFailures(error: unknown): Record<string, string> {
   return error instanceof ValidationError ? errorsByField(error.issues, issueTexts()) : {};
+}
+
+/** What each issue says, in words: why something cannot be done (the reasons shown beside a blocked action). */
+export function issueTextsOf(issues: readonly ValidationIssue[]): string[] {
+  return issues.map((issue) => issueMessage(issue, issueTexts()));
 }

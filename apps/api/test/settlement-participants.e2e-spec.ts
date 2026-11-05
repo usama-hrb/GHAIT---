@@ -28,6 +28,8 @@ describe('a settlement with three participants (S17, S18)', () => {
   const owner = crypto.randomUUID();
   const ana = crypto.randomUUID();
   const bilal = crypto.randomUUID();
+  /** Joins at the end, takes 10% from Bilal, and is removed again (S19). */
+  const carol = crypto.randomUUID();
   let kit: ReturnType<typeof stockKit>;
   let roll = '';
   let clock = Date.UTC(2026, 7, 1, 10, 0);
@@ -243,7 +245,6 @@ describe('a settlement with three participants (S17, S18)', () => {
 
   it('the partners together can never be more than the whole shop (S4)', async () => {
     // Ana at 30% and Bilal at 20% with the owner at 50% is the whole shop: nobody else fits.
-    const carol = crypto.randomUUID();
     const refused = await as(t.http().put(`/partners/${carol}`))
       .send({ name: 'كارول', ownershipBp: 1000, isOwner: false })
       .expect(400);
@@ -257,5 +258,56 @@ describe('a settlement with three participants (S17, S18)', () => {
     await as(t.http().put(`/partners/${carol}`))
       .send({ name: 'كارول', ownershipBp: 1000, isOwner: false })
       .expect(200);
+  });
+
+  it('a partner who takes part in nothing is removed, and the settlement goes on without them (S19)', async () => {
+    const remove = (id: string) =>
+      as(t.http().post(`/partners/${id}/void`)).send({ reason: 'غادر الشراكة' });
+    const messages = (body: unknown) => (errorOf(body).issues ?? []).map((issue) => issue.message);
+
+    // The owner is never removed; a partner who owns a part stays until it is given away.
+    expect(messages((await remove(owner).expect(400)).body)).toEqual([PARTNER_ISSUES.ownerStays]);
+    expect(messages((await remove(carol).expect(400)).body)).toEqual([PARTNER_ISSUES.hasOwnership]);
+    // Ana and Bilal were settled with, and the future rule gives them a weight; Ana also holds the
+    // rules that name no one.
+    expect(messages((await remove(ana).expect(400)).body)).toEqual([
+      PARTNER_ISSUES.hasOwnership,
+      PARTNER_ISSUES.hasRecords,
+      PARTNER_ISSUES.inProfitSplit,
+    ]);
+    expect(messages((await remove(bilal).expect(400)).body)).toEqual([
+      PARTNER_ISSUES.hasOwnership,
+      PARTNER_ISSUES.hasRecords,
+      PARTNER_ISSUES.inProfitSplit,
+    ]);
+
+    // Carol gives her part back to Bilal; then she can go.
+    await as(t.http().put(`/partners/${carol}`))
+      .send({ name: 'كارول', ownershipBp: 0, isOwner: false })
+      .expect(200);
+    await as(t.http().put(`/partners/${bilal}`))
+      .send({ name: 'بلال', ownershipBp: 2000, isOwner: false })
+      .expect(200);
+    await remove(carol).expect(200);
+
+    const partners = (await as(t.http().get('/partners')).expect(200)).body as {
+      id: string;
+      voidedAt: string | null;
+    }[];
+    expect(partners.find((p) => p.id === carol)?.voidedAt).not.toBeNull();
+    expect(partners.filter((p) => p.voidedAt === null).map((p) => p.id)).toEqual([
+      owner,
+      ana,
+      bilal,
+    ]);
+    // August is settled; the next period is previewed with the three who are left.
+    await as(t.http().put(`/expenses/${crypto.randomUUID()}`))
+      .send({ date: '2026-09-10', category: 'rent', amountCents: dh(100), paidDate: '2026-09-10' })
+      .expect(200);
+    const preview = settlementPreviewSchema.parse(
+      (await as(t.http().get('/settlements/preview?end=2026-09-30')).expect(200)).body,
+    );
+    expect(preview.netProfitCents).toBe(-dh(100));
+    expect(preview.shares.map((share) => share.partnerId)).not.toContain(carol);
   });
 });

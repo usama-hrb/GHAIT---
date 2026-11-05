@@ -470,21 +470,21 @@ export function EmployeeDetailScreen() {
       </Section>
 
       <EmployeeDialog
-        key={editing ? `edit ${employee.id}` : 'closed'}
+        key={editing ? `edit ${employee.id}` : 'edit-closed'}
         target={editing ? employee : null}
         onOpenChange={(open) => {
           if (!open) setEditing(false);
         }}
       />
       <SalaryRateDialog
-        key={changingSalary ? 'rate' : 'closed'}
+        key={changingSalary ? 'rate' : 'rate-closed'}
         target={changingSalary ? { employee, hasRate: hasSalary, currentSalaryCents } : null}
         onOpenChange={(open) => {
           if (!open) setChangingSalary(false);
         }}
       />
       <SalaryPaymentDialog
-        key={paying ? `${paying.employee.id} ${paying.month}` : 'closed'}
+        key={paying ? `${paying.employee.id} ${paying.month}` : 'pay-closed'}
         target={paying}
         onOpenChange={(open) => {
           if (!open) setPaying(null);

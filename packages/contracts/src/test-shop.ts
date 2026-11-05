@@ -20,7 +20,14 @@ export const base = (date: string) => ({
   voidedAt: null,
 });
 /** A partner with no contact details, title, start date or notes. */
-export const NO_CONTACT = { phone: null, title: null, startDate: null, notes: null } as const;
+export const NO_CONTACT = {
+  phone: null,
+  title: null,
+  startDate: null,
+  notes: null,
+  exitedOn: null,
+  exitNote: null,
+} as const;
 
 export const OWNER = crypto.randomUUID();
 export const PARTNER = crypto.randomUUID();

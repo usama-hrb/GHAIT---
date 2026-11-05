@@ -2,13 +2,16 @@ import {
   type CapitalMove,
   checkCapitalMove,
   checkCapitalMoveVoid,
+  checkPartnerExit,
+  checkPartnerVoid,
   checkPartnerWrite,
   checkUnchanged,
   type Partner,
   type PartnerDraw,
+  shopDate,
 } from '@fabric/contracts';
 import { Injectable } from '@nestjs/common';
-import { asc, eq, gt } from 'drizzle-orm';
+import { and, asc, eq, gt, isNull } from 'drizzle-orm';
 import { baseOf, baseValues, schema, TransactionHost } from '../../database/index.js';
 import { type SyncedRow, type SyncHandler, SyncRejection } from '../sync/index.js';
 
@@ -26,6 +29,8 @@ function partnerOf(row: PartnerRow): SyncedRow<Partner> {
       title: row.title,
       startDate: row.startDate,
       notes: row.notes,
+      exitedOn: row.exitedOn,
+      exitNote: row.exitNote,
     },
   };
 }
@@ -46,13 +51,27 @@ export class PartnerRepository implements SyncHandler<'partner'> {
     // S4, S17: one owner, who stays the owner, and no more than 100% owned between everyone. A
     // device that set the owner up again before it had pulled them would otherwise add a second.
     const current = await this.find(record.id);
-    const issues = checkPartnerWrite(
-      record,
-      current?.record,
-      (await this.list()).map((row) => row.record),
-    );
+    const partners = (await this.list()).map((row) => row.record);
+    const issues = checkPartnerWrite(record, current?.record, partners);
     if (issues.length > 0) {
       throw new SyncRejection('validation_failed', 'These partners do not fit together', issues);
+    }
+    if (record.exitedOn !== null && record.voidedAt === null && current?.record.exitedOn == null) {
+      // S20: a partner exits only owning nothing, with no rule giving them a share from the day
+      // they leave. The exit is the last record a device writes for it, so a device that has not
+      // yet pushed its ownership and rule changes is refused here, and nothing is half done.
+      const exitIssues = checkPartnerExit(
+        { ...record, exitedOn: record.exitedOn },
+        current?.record,
+        {
+          today: shopDate(new Date()),
+          partners,
+          rules: await this.liveRules(),
+        },
+      );
+      if (exitIssues.length > 0) {
+        throw new SyncRejection('validation_failed', 'This partner cannot exit yet', exitIssues);
+      }
     }
     const fields = {
       name: record.name,
@@ -62,6 +81,8 @@ export class PartnerRepository implements SyncHandler<'partner'> {
       title: record.title,
       startDate: record.startDate,
       notes: record.notes,
+      exitedOn: record.exitedOn,
+      exitNote: record.exitNote,
       updatedAt: new Date(record.updatedAt),
       deviceId: record.deviceId,
     };
@@ -75,6 +96,38 @@ export class PartnerRepository implements SyncHandler<'partner'> {
   }
 
   async markVoided(id: string, at: Date, deviceId: string): Promise<SyncedRow<Partner>> {
+    // S19: only a partner who took part in nothing is removed; a device that has not pulled the
+    // latest records would otherwise remove one who has since been given a share or a rule.
+    const { db } = this.tx;
+    const partners = (await this.list()).map((row) => row.record);
+    const capitalMoves = await db
+      .select({ partnerId: schema.capitalMove.partnerId })
+      .from(schema.capitalMove)
+      .where(and(eq(schema.capitalMove.partnerId, id), isNull(schema.capitalMove.voidedAt)));
+    const draws = await db
+      .select({ partnerId: schema.partnerDraw.partnerId })
+      .from(schema.partnerDraw)
+      .where(and(eq(schema.partnerDraw.partnerId, id), isNull(schema.partnerDraw.voidedAt)));
+    const shares = await db
+      .select({ partnerId: schema.settlementShare.partnerId })
+      .from(schema.settlementShare)
+      .where(
+        and(eq(schema.settlementShare.partnerId, id), isNull(schema.settlementShare.voidedAt)),
+      );
+    const rules = await db
+      .select({ partnerWeights: schema.profitSplitRule.partnerWeights })
+      .from(schema.profitSplitRule)
+      .where(isNull(schema.profitSplitRule.voidedAt));
+    const issues = checkPartnerVoid(id, {
+      partners,
+      capitalMoves: capitalMoves.map(({ partnerId }) => ({ partnerId, voidedAt: null })),
+      draws: draws.map(({ partnerId }) => ({ partnerId, voidedAt: null })),
+      shares: shares.map(({ partnerId }) => ({ partnerId, voidedAt: null })),
+      rules: rules.map(({ partnerWeights }) => ({ partnerWeights, voidedAt: null })),
+    });
+    if (issues.length > 0) {
+      throw new SyncRejection('validation_failed', 'A partner who took part stays', issues);
+    }
     const [row] = await this.tx.db
       .update(schema.partner)
       .set({ voidedAt: at, updatedAt: at, deviceId })
@@ -100,6 +153,19 @@ export class PartnerRepository implements SyncHandler<'partner'> {
       .from(schema.partner)
       .orderBy(asc(schema.partner.createdAt));
     return rows.map(partnerOf);
+  }
+
+  /** The profit rules in force (a voided one is read as voided), for the checks of an exit. */
+  private async liveRules() {
+    const rows = await this.tx.db.select().from(schema.profitSplitRule);
+    return rows.map((row) => ({
+      effectiveFrom: row.effectiveFrom,
+      ownerWeight: row.ownerWeight,
+      partnerWeight: row.partnerWeight,
+      shopWeight: row.shopWeight,
+      partnerWeights: row.partnerWeights,
+      voidedAt: row.voidedAt?.toISOString() ?? null,
+    }));
   }
 }
 

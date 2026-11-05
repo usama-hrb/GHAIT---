@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { toast } from 'sonner';
 import { messages } from '@/i18n';
 import { type PartnerView, useLiveQuery, useRepositories } from '@/local-db';
 import { LoadingState } from '@/shared/brand';
@@ -8,10 +9,13 @@ import { Money } from '@/shared/format';
 import { Button } from '@/shared/ui/button';
 import { OwnershipDialog } from './ownership-dialog';
 import { PartnerCard } from './partner-card';
+import { PartnerExitCenter } from './partner-exit-center';
 import { PartnerDialog } from './partner-dialog';
 import { MoneyMoveDialog, type MoneyMoveKind, PartnersSetupForm } from './partner-dialogs';
+import { failureText } from './people-errors';
 import { profitOutlookOf } from './people-view';
 import { ProfitSplitRules } from './profit-split-rules';
+import { RemovePartnerDialog } from './remove-partner-dialog';
 import { useCanManage } from './use-can-manage';
 
 const t = messages.partners;
@@ -26,6 +30,9 @@ export function PartnersPanel() {
   const canManage = useCanManage();
   const [move, setMove] = useState<{ kind: MoneyMoveKind; partner: PartnerView } | null>(null);
   const [adding, setAdding] = useState(false);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [exiting, setExiting] = useState<string | null>(null);
   const [sharing, setSharing] = useState(false);
   const data = useLiveQuery(async () => {
     const [partners, rules, cash, pulled] = await Promise.all([
@@ -39,6 +46,52 @@ export function PartnersPanel() {
 
   if (data === undefined) return <LoadingState />;
   const { partners, rules } = data;
+  const editingView = partners.find(({ partner }) => partner.id === editing);
+  const removingView = partners.find(({ partner }) => partner.id === removing);
+  // Someone who has left no longer takes part in the shop: they are not offered in any picker or rule.
+  const current = partners.filter(({ standing }) => standing === 'active');
+  const former = partners.filter(({ standing }) => standing !== 'active');
+
+  async function bringBack(id: string) {
+    try {
+      await repositories.partners.reactivate(id);
+    } catch (error) {
+      toast.error(failureText(error));
+      return;
+    }
+    toast.success(t.exit.broughtBack);
+  }
+
+  function card(view: PartnerView) {
+    return (
+      <PartnerCard
+        key={view.partner.id}
+        view={view}
+        outlook={profitOutlookOf(
+          rules,
+          view.partner.isOwner
+            ? { kind: 'owner' }
+            : { kind: 'partner', partnerId: view.partner.id },
+        )}
+        canManage={canManage}
+        onMove={(kind) => {
+          setMove({ kind, partner: view });
+        }}
+        onEdit={() => {
+          setEditing(view.partner.id);
+        }}
+        onExit={() => {
+          setExiting(view.partner.id);
+        }}
+        onBringBack={() => {
+          void bringBack(view.partner.id);
+        }}
+        onRemove={() => {
+          setRemoving(view.partner.id);
+        }}
+      />
+    );
+  }
 
   // A new device shows the set-up only once it has the shop's data: the partners may exist.
   if (partners.length === 0 && !data.pulled) {
@@ -91,47 +144,60 @@ export function PartnersPanel() {
             </div>
           )}
         </div>
-        <div className="grid gap-4 md:grid-cols-2">
-          {partners.map((view) => (
-            <PartnerCard
-              key={view.partner.id}
-              view={view}
-              outlook={profitOutlookOf(
-                rules,
-                view.partner.isOwner
-                  ? { kind: 'owner' }
-                  : { kind: 'partner', partnerId: view.partner.id },
-              )}
-              canManage={canManage}
-              onMove={(kind) => {
-                setMove({ kind, partner: view });
-              }}
-            />
-          ))}
-        </div>
+        <div className="grid gap-4 md:grid-cols-2">{current.map(card)}</div>
       </div>
+
+      {former.length > 0 && (
+        <div className="grid gap-3">
+          <div className="grid gap-1">
+            <h3 className="font-heading text-lg font-semibold">{t.exit.formerHeading}</h3>
+            <p className="text-sm text-muted-foreground">{t.exit.formerHint}</p>
+          </div>
+          <div className="grid gap-4 md:grid-cols-2">{former.map(card)}</div>
+        </div>
+      )}
 
       <ProfitSplitRules partners={partners} />
 
       <MoneyMoveDialog
-        key={move ? `${move.kind} ${move.partner.partner.id}` : 'closed'}
+        key={move ? `${move.kind} ${move.partner.partner.id}` : 'move-closed'}
         move={move}
         onOpenChange={(open) => {
           if (!open) setMove(null);
         }}
       />
       <PartnerDialog
-        key={adding ? 'add' : 'closed'}
-        target={adding ? 'add' : null}
-        partners={partners}
+        key={adding ? 'add' : editingView ? `edit ${editingView.partner.id}` : 'partner-closed'}
+        target={adding ? 'add' : (editingView ?? null)}
+        partners={current}
         onOpenChange={(open) => {
-          if (!open) setAdding(false);
+          if (!open) {
+            setAdding(false);
+            setEditing(null);
+          }
         }}
       />
+      {exiting && (
+        <PartnerExitCenter
+          key={exiting}
+          partnerId={exiting}
+          onClose={() => {
+            setExiting(null);
+          }}
+        />
+      )}
+      {removingView && (
+        <RemovePartnerDialog
+          view={removingView}
+          onClose={() => {
+            setRemoving(null);
+          }}
+        />
+      )}
       <OwnershipDialog
-        key={sharing ? 'open' : 'closed'}
+        key={sharing ? 'share' : 'share-closed'}
         open={sharing}
-        partners={partners}
+        partners={current}
         onOpenChange={setSharing}
       />
     </div>

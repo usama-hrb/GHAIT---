@@ -22,7 +22,17 @@ const partnerFields = z.object({
 /** SPEC §13 `partner`. */
 export const partnerInputSchema = partnerFields;
 export type PartnerInput = z.input<typeof partnerInputSchema>;
-export const partnerSchema = recordBaseSchema.extend(partnerFields.shape);
+export const partnerSchema = recordBaseSchema.extend({
+  ...partnerFields.shape,
+  /**
+   * The day they stopped being a partner (S20), set only by a partner exit and cleared only by a
+   * reactivation. Null while they are one. Not part of the form (`partnerInputSchema`): editing a
+   * partner's details never touches it.
+   */
+  exitedOn: isoDateSchema.nullable().default(null),
+  /** What was agreed about what the shop still owes them, or they it, when they left. */
+  exitNote: optionalTextSchema(1000).default(null),
+});
 export type Partner = z.output<typeof partnerSchema>;
 
 export const CAPITAL_MOVE_TYPES = ['contribution', 'retained_profit', 'withdrawal'] as const;
@@ -97,6 +107,34 @@ export const PARTNER_ISSUES = {
   ownershipShort: 'partner_ownership_under_100',
   /** The table has to include the owner. */
   noOwner: 'partner_owner_missing',
+  /** The owner is never removed (S19). */
+  ownerStays: 'partner_owner_cannot_be_removed',
+  /** A partner who still owns part of the shop stays until the shares are given to others (S19). */
+  hasOwnership: 'partner_has_ownership',
+  /** Capital, draws and settlement shares keep the partner they belong to (S19). */
+  hasRecords: 'partner_has_records',
+  /** A profit rule gives them a share, or they hold the rules that name no one (S19). */
+  inProfitSplit: 'partner_in_profit_split',
+  /** The owner never exits (S20). */
+  exitOwner: 'partner_exit_owner',
+  /** A partner who has exited exits once; coming back is a reactivation (S20). */
+  alreadyExited: 'partner_already_exited',
+  /** A partner who has exited owns nothing and is given nothing (S20). */
+  exitedOwns: 'partner_exited_owns',
+  /** The day a partner exited does not change (S20). */
+  exitFixed: 'partner_exit_fixed',
+  /** A profit rule still gives them a share from the day they leave (S20). */
+  exitProfitShare: 'partner_exit_in_profit_split',
+  /** They cannot leave before they joined (S20). */
+  exitBeforeStart: 'partner_exit_before_start',
+  /** Ownership and profit go to the owner or a partner who has not left, each named once (S20). */
+  exitRecipient: 'partner_exit_recipient',
+  /** What is handed over adds up to all of what the leaver held (S20). */
+  exitSharesTotal: 'partner_exit_shares_total',
+  /** The balances changed since the exit was prepared; look again before paying (S20). */
+  exitBalancesChanged: 'partner_exit_balances_changed',
+  /** A payment at an exit is no more than what the shop owes them, and no more than their capital (S20). */
+  exitPayment: 'partner_exit_payment_invalid',
 } as const;
 
 /**
@@ -117,6 +155,11 @@ export function checkPartnerSet(
   return total < 10_000 ? issue('ownershipBp', PARTNER_ISSUES.ownershipShort) : [];
 }
 
+/** The exit fields a partner record carries (S20); absent on records made before they existed. */
+export interface ExitState {
+  exitedOn?: string | null;
+}
+
 /**
  * A partner record written (S4, S17): there is one owner and it stays that way, and the parts
  * everyone owns add up to at most 100%. A shop with several partners is changed record by record,
@@ -124,14 +167,22 @@ export function checkPartnerSet(
  * (@fabric/core participantsOf).
  */
 export function checkPartnerWrite(
-  next: Pick<Partner, 'id' | 'isOwner' | 'ownershipBp' | 'voidedAt'>,
-  current: Pick<Partner, 'isOwner'> | undefined,
+  next: Pick<Partner, 'id' | 'isOwner' | 'ownershipBp' | 'voidedAt'> & ExitState,
+  current: (Pick<Partner, 'isOwner'> & ExitState) | undefined,
   others: readonly Pick<Partner, 'id' | 'isOwner' | 'ownershipBp' | 'voidedAt'>[],
 ): ValidationIssue[] {
   const issue = (path: string, message: string) => [{ path: [path], message, code: 'custom' }];
   if (current && current.isOwner !== next.isOwner)
     return issue('isOwner', PARTNER_ISSUES.ownerFixed);
   if (next.voidedAt !== null) return [];
+  if (next.exitedOn != null) {
+    // S20: the owner never exits, who has exited owns nothing and the day they left is fixed.
+    if (next.isOwner) return issue('exitedOn', PARTNER_ISSUES.exitOwner);
+    if (next.ownershipBp > 0) return issue('ownershipBp', PARTNER_ISSUES.exitedOwns);
+    if (current?.exitedOn != null && current.exitedOn !== next.exitedOn) {
+      return issue('exitedOn', PARTNER_ISSUES.exitFixed);
+    }
+  }
   const rest = others.filter((other) => other.id !== next.id && other.voidedAt === null);
   if (next.isOwner && rest.some((other) => other.isOwner)) {
     return issue('isOwner', PARTNER_ISSUES.secondOwner);

@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   breakdownOf,
   buildSettlement,
+  checkPartnerVoid,
   checkSplitRule,
   checkSplitRuleVoid,
   checkUnlock,
   DEFAULT_SPLIT_RULE,
   firstPartnerOf,
   lockedThroughOf,
+  PARTNER_ISSUES,
   type Partner,
   partnerStatusOf,
   partnerWeightsOfRule,
@@ -693,5 +695,131 @@ describe('several partners (S17, S18)', () => {
     // The first partner, dropped by the rule in force (weight 0 there): out, no matter an older rule.
     const gone = rule('2026-11-01', 1, [{ partnerId: PARTNER, weight: 0 }, ...names(THIRD, 1)], 1);
     expect(status({ ...first, ownershipBp: 0 }, [gone])).toBe('inactive');
+  });
+
+  describe('removing a partner (S19)', () => {
+    const none = { capitalMoves: [], draws: [], shares: [], rules: [] };
+    const issuesOf = (
+      partnerId: string,
+      partners: Partner[],
+      records: Partial<Parameters<typeof checkPartnerVoid>[1]> = {},
+    ) =>
+      checkPartnerVoid(partnerId, { partners, ...none, ...records }).map(({ message }) => message);
+    /** The third partner has given their part away and takes no part in the profit. */
+    const settledUp = () => {
+      const { partners } = threeOwners().records;
+      return partners.map((p) => (p.id === THIRD ? { ...p, ownershipBp: 0 } : p));
+    };
+
+    it('the owner stays, and so do people who are not partners or are already removed', () => {
+      const { partners } = threeOwners().records;
+      expect(issuesOf(OWNER, partners)).toEqual([PARTNER_ISSUES.ownerStays]);
+      expect(issuesOf(crypto.randomUUID(), partners)).toEqual([]);
+      const departed = partners.map((p) =>
+        p.id === THIRD ? { ...p, voidedAt: at('2026-11-01') } : p,
+      );
+      expect(issuesOf(THIRD, departed)).toEqual([]);
+    });
+
+    it('a partner who took part in nothing can be removed', () => {
+      expect(issuesOf(THIRD, settledUp())).toEqual([]);
+    });
+
+    it('a partner who still owns part of the shop stays until the parts are given to others', () => {
+      const { partners } = threeOwners().records;
+      expect(issuesOf(THIRD, partners)).toEqual([PARTNER_ISSUES.hasOwnership]);
+    });
+
+    it('capital, draws and settlement shares keep the partner; voided ones do not', () => {
+      const partners = settledUp();
+      const mine = { partnerId: THIRD, voidedAt: null };
+      const voided = { partnerId: THIRD, voidedAt: at('2026-11-02') };
+      const others = { partnerId: PARTNER, voidedAt: null };
+      for (const records of [{ capitalMoves: [mine] }, { draws: [mine] }, { shares: [mine] }]) {
+        expect(issuesOf(THIRD, partners, records)).toEqual([PARTNER_ISSUES.hasRecords]);
+      }
+      expect(
+        issuesOf(THIRD, partners, { capitalMoves: [voided], draws: [voided], shares: [others] }),
+      ).toEqual([]);
+    });
+
+    it('a profit rule that gives them a weight keeps them; a weight of 0 or a voided rule does not', () => {
+      const partners = settledUp();
+      const given = rule('2026-11-01', 1, [{ partnerId: THIRD, weight: 2 }], 1);
+      const zero = rule(
+        '2026-11-01',
+        1,
+        [
+          { partnerId: PARTNER, weight: 1 },
+          { partnerId: THIRD, weight: 0 },
+        ],
+        1,
+      );
+      const cancelled = { ...given, voidedAt: at('2026-11-03') };
+      expect(issuesOf(THIRD, partners, { rules: [given] })).toEqual([PARTNER_ISSUES.inProfitSplit]);
+      expect(issuesOf(THIRD, partners, { rules: [zero, cancelled] })).toEqual([]);
+    });
+
+    it('the first partner holds every rule that names no one, so they stay while others are partners', () => {
+      const { partners } = threeOwners().records;
+      const free = partners.map((p) => (p.ownershipBp > 0 ? { ...p, ownershipBp: 0 } : p));
+      // PARTNER is first of two partners: blocked. Alone, nobody else would take those rules.
+      expect(issuesOf(PARTNER, free)).toEqual([PARTNER_ISSUES.inProfitSplit]);
+      const alone = free.map((p) => (p.id === THIRD ? { ...p, voidedAt: at('2026-11-01') } : p));
+      expect(issuesOf(PARTNER, alone)).toEqual([]);
+    });
+
+    it('lists every reason that applies', () => {
+      const { partners } = threeOwners().records;
+      const mine = { partnerId: THIRD, voidedAt: null };
+      const given = rule('2026-11-01', 1, [{ partnerId: THIRD, weight: 1 }], 1);
+      expect(issuesOf(THIRD, partners, { draws: [mine], rules: [given] })).toEqual([
+        PARTNER_ISSUES.hasOwnership,
+        PARTNER_ISSUES.hasRecords,
+        PARTNER_ISSUES.inProfitSplit,
+      ]);
+    });
+
+    it('after the removal their zero weights drop out of the rules, so the settlement still runs', () => {
+      const shop = threeOwners();
+      shop.sale(shop.batch(dh(400), 1000), '2026-11-05', 1000, dh(500));
+      shop.records.partners = shop.records.partners.map((p) =>
+        p.id === THIRD
+          ? { ...p, ownershipBp: 0, voidedAt: at('2026-11-10') }
+          : p.id === PARTNER
+            ? { ...p, ownershipBp: 5000 }
+            : p,
+      );
+      const withZero = rule(
+        '2026-11-01',
+        1,
+        [
+          { partnerId: PARTNER, weight: 1 },
+          { partnerId: THIRD, weight: 0 },
+        ],
+        1,
+      );
+      shop.records.splitRules.push(withZero);
+      expect(
+        splitRulesOf(shop.records.splitRules, shop.records.partners)[1]?.partnerWeights,
+      ).toEqual([{ partnerId: PARTNER, weight: 1 }]);
+      expect(partnerWeightsOfRule(withZero, shop.records.partners)).toEqual([
+        { partnerId: PARTNER, weight: 1 },
+      ]);
+      expect(
+        previewSettlement(shop.records, { periodEnd: '2026-11-30', today: '2027-01-15' }).ok,
+      ).toBe(true);
+    });
+
+    it('a weight above 0 for someone removed is kept, so core refuses the rule instead of dropping it', () => {
+      const shop = threeOwners();
+      shop.records.partners = shop.records.partners.map((p) =>
+        p.id === THIRD ? { ...p, ownershipBp: 0, voidedAt: at('2026-11-10') } : p,
+      );
+      const stranded = rule('2026-11-01', 1, [{ partnerId: THIRD, weight: 1 }], 1);
+      expect(partnerWeightsOfRule(stranded, shop.records.partners)).toEqual([
+        { partnerId: THIRD, weight: 1 },
+      ]);
+    });
   });
 });

@@ -1,5 +1,6 @@
 'use client';
 
+import { DoorOpenIcon, RotateCcwIcon, Trash2Icon } from 'lucide-react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { type ReactNode, useState } from 'react';
@@ -8,16 +9,19 @@ import { isLockedOn, LockedBadge, periodLabel, useLockedThrough } from '@/featur
 import { messages } from '@/i18n';
 import { useLiveQuery, useRepositories } from '@/local-db';
 import { EmptyState, LoadingState, OfflineNotice, VoidDialog } from '@/shared/brand';
-import { DateText, Money } from '@/shared/format';
+import { DateText, formatDate, Money } from '@/shared/format';
+import { useAppNavigation } from '@/shared/lib/navigation';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
 import { PartnerDialog } from './partner-dialog';
 import { ProfitShareText } from './partner-card';
+import { ExitStandingBadge, PartnerExitCenter } from './partner-exit-center';
 import { type MoneyMoveKind, MoneyMoveDialog } from './partner-dialogs';
 import { failureText } from './people-errors';
 import { profitOutlookOf } from './people-view';
 import { ProfitShareDialog } from './profit-share-dialog';
+import { RemovePartnerDialog } from './remove-partner-dialog';
 import { useCanManage } from './use-can-manage';
 
 const t = messages.partners;
@@ -40,6 +44,9 @@ export function PartnerAccountScreen() {
   const id = useSearchParams().get('id') ?? '';
   const repositories = useRepositories();
   const canManage = useCanManage();
+  const navigation = useAppNavigation();
+  const [removing, setRemoving] = useState(false);
+  const [exiting, setExiting] = useState(false);
   const [voiding, setVoiding] = useState<{ kind: 'move' | 'draw'; id: string } | null>(null);
   const [move, setMove] = useState<MoneyMoveKind | null>(null);
   const [editing, setEditing] = useState(false);
@@ -68,7 +75,9 @@ export function PartnerAccountScreen() {
       />
     );
   }
-  const { partner, account, status } = view;
+  const { partner, account, status, standing } = view;
+  const left = standing !== 'active';
+  const current = partners.filter((other) => other.standing === 'active');
   const outlook = profitOutlookOf(
     rules,
     partner.isOwner ? { kind: 'owner' } : { kind: 'partner', partnerId: partner.id },
@@ -96,25 +105,45 @@ export function PartnerAccountScreen() {
               <bdi>{partner.name}</bdi>
             </h2>
             <Badge variant="secondary">{partner.isOwner ? t.owner : t.partner}</Badge>
-            <Badge variant={status === 'active' ? 'success' : 'outline'}>{t.status[status]}</Badge>
+            {left ? (
+              <ExitStandingBadge standing={standing} exitedOn={partner.exitedOn} />
+            ) : (
+              <Badge variant={status === 'active' ? 'success' : 'outline'}>
+                {t.status[status]}
+              </Badge>
+            )}
           </div>
           {partner.title && (
             <p className="text-muted-foreground wrap-anywhere">
               <bdi>{partner.title}</bdi>
             </p>
           )}
-          <p className="flex flex-wrap items-start gap-x-4 gap-y-1 text-sm text-muted-foreground">
-            <span>
-              {t.ownership}{' '}
-              <bdi data-num className="font-medium text-foreground">
-                {partner.ownershipBp / 100}%
-              </bdi>
-            </span>
-            <span className="flex items-start gap-1.5">
-              {t.profitShare}
-              <ProfitShareText outlook={outlook} className="justify-items-start text-foreground" />
-            </span>
-          </p>
+          {left ? (
+            partner.exitedOn && (
+              <p className="text-sm text-muted-foreground">
+                {t.exit.leftOn}{' '}
+                <bdi data-num className="font-medium text-foreground">
+                  {formatDate(partner.exitedOn, 'medium')}
+                </bdi>
+              </p>
+            )
+          ) : (
+            <p className="flex flex-wrap items-start gap-x-4 gap-y-1 text-sm text-muted-foreground">
+              <span>
+                {t.ownership}{' '}
+                <bdi data-num className="font-medium text-foreground">
+                  {partner.ownershipBp / 100}%
+                </bdi>
+              </span>
+              <span className="flex items-start gap-1.5">
+                {t.profitShare}
+                <ProfitShareText
+                  outlook={outlook}
+                  className="justify-items-start text-foreground"
+                />
+              </span>
+            </p>
+          )}
         </div>
         {canManage && (
           <div className="flex flex-wrap gap-2">
@@ -126,14 +155,16 @@ export function PartnerAccountScreen() {
             >
               {t.editDetails}
             </Button>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setSharing(true);
-              }}
-            >
-              {t.changeProfitShare}
-            </Button>
+            {!left && (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setSharing(true);
+                }}
+              >
+                {t.changeProfitShare}
+              </Button>
+            )}
           </div>
         )}
       </header>
@@ -160,7 +191,10 @@ export function PartnerAccountScreen() {
       <p className="-mt-3 text-sm text-muted-foreground">{t.detail.undrawnHint}</p>
       {canManage && (
         <div className="flex flex-wrap gap-2">
-          {(['contribution', 'draw', 'withdrawal'] as const).map((kind) => (
+          {(left
+            ? (['draw', 'withdrawal'] as const)
+            : (['contribution', 'draw', 'withdrawal'] as const)
+          ).map((kind) => (
             <Button
               key={kind}
               variant="outline"
@@ -358,25 +392,69 @@ export function PartnerAccountScreen() {
             </Detail>
           )}
         </dl>
+        {canManage && !partner.isOwner && (
+          <div className="flex flex-wrap gap-2">
+            {left ? (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  repositories.partners
+                    .reactivate(partner.id)
+                    .then(() => {
+                      toast.success(t.exit.broughtBack);
+                    })
+                    .catch((error: unknown) => {
+                      toast.error(failureText(error));
+                    });
+                }}
+              >
+                <RotateCcwIcon aria-hidden />
+                {t.exit.bringBack}
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setExiting(true);
+                }}
+              >
+                <DoorOpenIcon aria-hidden />
+                {t.exit.start}
+              </Button>
+            )}
+            {!left && view.removal.length === 0 && (
+              <Button
+                variant="ghost"
+                className="text-destructive hover:text-destructive"
+                onClick={() => {
+                  setRemoving(true);
+                }}
+              >
+                <Trash2Icon aria-hidden />
+                {t.detail.removeMistake}
+              </Button>
+            )}
+          </div>
+        )}
       </section>
 
       <MoneyMoveDialog
-        key={move ? `${move} ${partner.id}` : 'closed'}
+        key={move ? `${move} ${partner.id}` : 'move-closed'}
         move={move ? { kind: move, partner: view } : null}
         onOpenChange={(open) => {
           if (!open) setMove(null);
         }}
       />
       <PartnerDialog
-        key={editing ? 'edit' : 'closed'}
+        key={editing ? 'edit' : 'edit-closed'}
         target={editing ? view : null}
-        partners={partners}
+        partners={current}
         onOpenChange={(open) => {
           if (!open) setEditing(false);
         }}
       />
       <ProfitShareDialog
-        key={sharing ? 'share' : 'closed'}
+        key={sharing ? 'share' : 'share-closed'}
         target={sharing ? view : null}
         partners={partners}
         rules={rules}
@@ -384,6 +462,25 @@ export function PartnerAccountScreen() {
           if (!open) setSharing(false);
         }}
       />
+      {exiting && (
+        <PartnerExitCenter
+          partnerId={partner.id}
+          onClose={() => {
+            setExiting(false);
+          }}
+        />
+      )}
+      {removing && (
+        <RemovePartnerDialog
+          view={view}
+          onClose={() => {
+            setRemoving(false);
+          }}
+          onRemoved={() => {
+            navigation.push('/settings/partners');
+          }}
+        />
+      )}
       <VoidDialog
         open={voiding !== null}
         onOpenChange={(open) => {
