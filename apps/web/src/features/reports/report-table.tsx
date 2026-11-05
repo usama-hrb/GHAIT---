@@ -4,11 +4,15 @@ import { formatLengthMeters, formatMoneyAmount, type MoneyUnit } from '@fabric/c
 import { DownloadIcon } from 'lucide-react';
 import { messages } from '@/i18n';
 import { DateText, Meters, Money, useMoneyUnit } from '@/shared/format';
+import { useMediaQuery } from '@/shared/hooks/use-media-query';
 import { download, toCsv } from '@/shared/lib/csv';
 import { Button } from '@/shared/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
 
 const t = messages.reports;
+
+/** The width from which a report is a table; narrower, each row is a card. */
+const WIDE = '(min-width: 1024px)';
 
 export type ColumnKind =
   'text' | 'money' | 'meters' | 'month' | 'date' | 'days' | 'percent' | 'count';
@@ -57,6 +61,7 @@ export function ReportTable<R extends Record<string, unknown>>({
   rows: readonly R[];
 }) {
   const { unit } = useMoneyUnit();
+  const wide = useMediaQuery(WIDE);
   return (
     <section aria-label={title} className="grid gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -85,6 +90,31 @@ export function ReportTable<R extends Record<string, unknown>>({
       </div>
       {rows.length === 0 ? (
         <p className="text-muted-foreground">{t.empty}</p>
+      ) : !wide ? (
+        <ul className="grid gap-2">
+          {rows.map((row, index) => (
+            <li
+              key={`${String(row[columns[0]?.key ?? ''])}-${String(index)}`}
+              className="grid gap-2 rounded-lg border bg-card p-3"
+            >
+              {columns[0] && (
+                <p className="font-medium">
+                  <Cell kind={columns[0].kind} value={row[columns[0].key]} />
+                </p>
+              )}
+              <dl className="grid grid-cols-2 gap-x-3 gap-y-2 text-sm sm:grid-cols-3">
+                {columns.slice(1).map((column) => (
+                  <div key={column.key} className="grid min-w-0 content-start gap-0.5">
+                    <dt className="text-xs text-muted-foreground">{column.label}</dt>
+                    <dd className="break-words">
+                      <Cell kind={column.kind} value={row[column.key]} />
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </li>
+          ))}
+        </ul>
       ) : (
         <div className="overflow-x-auto rounded-lg border bg-card">
           <Table>

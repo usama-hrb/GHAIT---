@@ -6,6 +6,7 @@ import { requestContext } from '../../common/index.js';
 export const IS_PUBLIC = Symbol('is-public');
 export const PARTNER_MAY_WRITE = Symbol('partner-may-write');
 export const CASHIER_MAY_CALL = Symbol('cashier-may-call');
+export const PASSWORD_CHANGE_ROUTE = Symbol('password-change-route');
 
 /** Opens a route to anyone: the global AuthGuard requires a valid access token everywhere else. */
 export const Public = (): MethodDecorator & ClassDecorator => SetMetadata(IS_PUBLIC, true);
@@ -23,10 +24,20 @@ export const PartnerMayCall = (): MethodDecorator => SetMetadata(PARTNER_MAY_WRI
  */
 export const CashierMayCall = (): MethodDecorator => SetMetadata(CASHIER_MAY_CALL, true);
 
+/**
+ * A route an account may call before it has replaced the password the owner gave it (ADR 0024):
+ * who it is, and choosing the new password. The AuthGuard answers every other route with
+ * `password_change_required` until then.
+ */
+export const MayCallWhileChangingPassword = (): MethodDecorator =>
+  SetMetadata(PASSWORD_CHANGE_ROUTE, true);
+
 export interface AuthenticatedUser {
   id: string;
   role: Role;
   sessionId: string;
+  /** The partner a partner account is linked to; null for every other account. */
+  partnerId: string | null;
 }
 
 export type AuthenticatedRequest = Request & { user?: AuthenticatedUser };
@@ -41,10 +52,15 @@ export const CurrentUser = createParamDecorator(
 );
 
 /** Makes `userId` the actor of the audit entries written for this request, in this role. */
-export function actAs(userId: string, role: Role | null = null): void {
+export function actAs(
+  userId: string,
+  role: Role | null = null,
+  partnerId: string | null = null,
+): void {
   const context = requestContext();
   if (context) {
     context.actorId = userId;
     context.actorRole = role;
+    context.actorPartnerId = partnerId;
   }
 }

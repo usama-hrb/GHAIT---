@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  enabledStockUnits,
   newProductPurchaseSchema,
   PRODUCT_UNITS,
   previewProductPurchase,
@@ -12,7 +13,8 @@ import {
   weightPurchaseCostCents,
 } from '@fabric/core';
 import { InfoIcon } from 'lucide-react';
-import { useId, useMemo } from 'react';
+import { useEffect, useId, useMemo } from 'react';
+import { useSellingUnits } from '@/features/settings';
 import { messages } from '@/i18n';
 import { type StockPurchase, useLiveQuery, useRepositories } from '@/local-db';
 import { CountInput, MeterInput, Meters, Money, MoneyInput, WeightInput } from '@/shared/format';
@@ -176,7 +178,7 @@ export function StockFields({
   errors,
   showPayment = false,
   showTotal = true,
-  units = PRODUCT_UNITS,
+  units,
 }: {
   draft: StockDraft;
   onChange: (patch: Partial<StockDraft>) => void;
@@ -185,9 +187,21 @@ export function StockFields({
   showPayment?: boolean;
   /** The preview names the total of a length bought: off where the screen shows the total itself. */
   showTotal?: boolean;
+  /** The units offered; by default the ones the shop works in (ADR 0023). */
   units?: readonly ProductUnit[];
 }) {
   const id = useId();
+  const shopUnits = useSellingUnits();
+  const offered = units ?? enabledStockUnits(shopUnits);
+  const first = offered[0];
+  const offersDraftUnit = offered.includes(draft.unit);
+  useEffect(() => {
+    // A draft can start in a unit the shop no longer uses (the usual unit of an older product):
+    // it moves to one it does, with nothing typed, since a quantity or a price means a unit.
+    if (first !== undefined && !offersDraftUnit) {
+      onChange({ unit: first, quantity: null, unitCostCents: null });
+    }
+  }, [first, offersDraftUnit, onChange]);
   const repositories = useRepositories();
   const suppliers = useLiveQuery(() => repositories.suppliers.list(), [repositories]);
   const costError = errors[COST_FIELD] ?? errors.totalCostCents;
@@ -214,7 +228,7 @@ export function StockFields({
             if (next) onChange({ unit: next, quantity: null, unitCostCents: null });
           }}
         >
-          {units.map((unit) => (
+          {offered.map((unit) => (
             <Field key={unit} orientation="horizontal" className="w-auto">
               <RadioGroupItem value={unit} id={`${id}-unit-${unit}`} />
               <FieldLabel htmlFor={`${id}-unit-${unit}`}>{t.units[unit]}</FieldLabel>

@@ -125,7 +125,7 @@ export function ZakatScreen() {
           <p className="text-muted-foreground">{t.noReports}</p>
         ) : (
           <div className="rounded-lg border bg-card">
-            <Table>
+            <Table stack>
               <TableHeader>
                 <TableRow>
                   <TableHead>{t.columns.hawl}</TableHead>
@@ -145,10 +145,10 @@ export function ZakatScreen() {
                     <TableCell>
                       <DateText value={report.hawlDate} format="hijri" />
                     </TableCell>
-                    <TableCell className="text-end">
+                    <TableCell className="text-end" label={t.columns.due}>
                       <Money cents={report.zakatDueCents} />
                     </TableCell>
-                    <TableCell className="text-end">
+                    <TableCell className="text-end" label={t.columns.paid}>
                       <Money cents={report.paidCents} />
                       {report.voidedAt === null && report.paidCents >= report.zakatDueCents && (
                         <Badge variant="success" className="ms-2">

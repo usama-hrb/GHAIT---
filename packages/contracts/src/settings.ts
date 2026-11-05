@@ -2,6 +2,7 @@ import { DEFAULT_EST_CM_PER_KG_POLICY, DEFAULT_ZAKAT_SETTINGS, NISAB_GRAMS } fro
 import { z } from 'zod';
 import { isoDateSchema } from './common.js';
 import { photoImageSchema } from './photos.js';
+import { DEFAULT_SELLING_UNITS, sellingUnitsSchema } from './selling-units.js';
 
 /** A metal price entered by hand, with the day it was seen (SPEC §10). */
 const metalPriceSchema = z.object({ pricePerGramCents: z.int().min(1), date: isoDateSchema });
@@ -29,6 +30,11 @@ export const SETTINGS = {
    * sidebar, the header and anything else branded read it from here and from nowhere else.
    */
   shop_logo: { schema: photoImageSchema.nullable(), default: null },
+  /**
+   * Which units the shop buys, stocks and sells in (ADR 0023): three switches, at least one on.
+   * They gate only what is done from now on; records already made in a unit stay valid.
+   */
+  selling_units: { schema: sellingUnitsSchema, default: DEFAULT_SELLING_UNITS },
   /** SPEC §5: expense categories, a stable key and the label shown (keys stay on old expenses). */
   expense_categories: {
     schema: z

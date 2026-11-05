@@ -233,13 +233,13 @@ export function EmployeeDetailScreen() {
         ) : (
           <>
             <div className="overflow-hidden rounded-lg border bg-card">
-              <Table>
+              <Table stack>
                 <TableHeader>
                   <TableRow>
                     <TableHead>{t.detail.columns.month}</TableHead>
                     <TableHead className="text-end">{t.columns.due}</TableHead>
                     <TableHead className="text-end">{t.columns.paid}</TableHead>
-                    <TableHead className="text-end max-sm:hidden">{t.columns.remaining}</TableHead>
+                    <TableHead className="text-end">{t.columns.remaining}</TableHead>
                     <TableHead>{t.columns.status}</TableHead>
                     <TableHead>
                       <span className="sr-only">{t.columns.actions}</span>
@@ -252,19 +252,19 @@ export function EmployeeDetailScreen() {
                       <TableCell>
                         <DateText value={`${row.month}-01`} format="month" />
                       </TableCell>
-                      <TableCell className="text-end">
+                      <TableCell className="text-end" label={t.columns.due}>
                         <Money cents={row.dueCents} />
                       </TableCell>
-                      <TableCell className="text-end">
+                      <TableCell className="text-end" label={t.columns.paid}>
                         <Money cents={row.paidCents} />
                       </TableCell>
-                      <TableCell className="text-end max-sm:hidden">
+                      <TableCell className="text-end" label={t.columns.remaining}>
                         <Money
                           cents={row.remainingCents}
                           tone={row.remainingCents > 0 ? 'debt' : undefined}
                         />
                       </TableCell>
-                      <TableCell>
+                      <TableCell label={t.columns.status}>
                         <Badge variant={SALARY_STATUS_VARIANT[row.status]}>
                           {t.salaryStatus[row.status]}
                         </Badge>
@@ -308,7 +308,7 @@ export function EmployeeDetailScreen() {
           <p className="text-muted-foreground">{t.detail.noRates}</p>
         ) : (
           <div className="overflow-hidden rounded-lg border bg-card">
-            <Table>
+            <Table stack>
               <TableHeader>
                 <TableRow>
                   <TableHead>{t.detail.columns.from}</TableHead>
@@ -327,10 +327,10 @@ export function EmployeeDetailScreen() {
                       <TableCell>
                         <DateText value={rate.effectiveFrom} format="month" />
                       </TableCell>
-                      <TableCell className="text-end">
+                      <TableCell className="text-end" label={t.columns.salary}>
                         <Money cents={rate.amountCents} />
                       </TableCell>
-                      <TableCell>
+                      <TableCell label={t.columns.status}>
                         <Badge
                           variant={
                             timing === 'current'
@@ -371,13 +371,13 @@ export function EmployeeDetailScreen() {
           <p className="text-muted-foreground">{t.detail.noPayments}</p>
         ) : (
           <div className="overflow-hidden rounded-lg border bg-card">
-            <Table>
+            <Table stack>
               <TableHeader>
                 <TableRow>
                   <TableHead>{t.detail.columns.paidOn}</TableHead>
                   <TableHead>{t.detail.columns.forMonth}</TableHead>
                   <TableHead className="text-end">{t.detail.columns.amount}</TableHead>
-                  <TableHead className="max-sm:hidden">{t.detail.columns.note}</TableHead>
+                  <TableHead>{t.detail.columns.note}</TableHead>
                   <TableHead>
                     <span className="sr-only">{t.detail.voidAction}</span>
                   </TableHead>
@@ -389,15 +389,15 @@ export function EmployeeDetailScreen() {
                     <TableCell>
                       {payment.paidDate && <DateText value={payment.paidDate} />}
                     </TableCell>
-                    <TableCell>
+                    <TableCell label={t.detail.columns.forMonth}>
                       {payment.salaryMonth && (
                         <DateText value={`${payment.salaryMonth}-01`} format="month" />
                       )}
                     </TableCell>
-                    <TableCell className="text-end">
+                    <TableCell className="text-end" label={t.detail.columns.amount}>
                       <Money cents={payment.amountCents} />
                     </TableCell>
-                    <TableCell className="max-sm:hidden">{payment.note}</TableCell>
+                    <TableCell label={t.detail.columns.note}>{payment.note}</TableCell>
                     <TableCell className="text-end">
                       {canManage &&
                         (payment.paidDate && isLockedOn(payment.paidDate, lockedThrough) ? (

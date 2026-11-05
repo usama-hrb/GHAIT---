@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  enabledSellingUnits,
   PRODUCT_SELLING_UNITS,
   PRODUCT_UNITS,
   type PhotoImage,
@@ -12,6 +13,7 @@ import {
 import { useId, useState } from 'react';
 import { toast } from 'sonner';
 import { PhotoField } from '@/features/catalog';
+import { useSellingUnits } from '@/features/settings';
 import { messages } from '@/i18n';
 import { type Local, useLiveQuery, useRepositories, ValidationError } from '@/local-db';
 import { CountInput, MeterInput, MoneyInput, WeightInput } from '@/shared/format';
@@ -89,8 +91,20 @@ export function ProductFormDialog({
   const [notes, setNotes] = useState(product?.description ?? '');
   const [tags, setTags] = useState(product?.tags.join(messages.forms.listSeparator) ?? '');
   const [purchaseUnits, setPurchaseUnits] = useState<ProductUnit[]>(product?.purchaseUnits ?? []);
-  const [sellingUnits, setSellingUnits] = useState<ProductSellingUnit[]>(
-    product?.sellingUnits ?? ['meter'],
+  // What the shop sells in decides the units offered (ADR 0023). A new product starts with the
+  // first unit on; until the owner changes it, it follows the setting as the device reads it.
+  const shopUnits = useSellingUnits();
+  const sellable = enabledSellingUnits(shopUnits);
+  const [pickedSelling, setPickedSelling] = useState<ProductSellingUnit[] | null>(null);
+  const sellingUnits: ProductSellingUnit[] =
+    pickedSelling ?? product?.sellingUnits ?? sellable.slice(0, 1);
+  // A unit the product already has stays listed even if the shop switched it off, so it can be
+  // taken off; one it does not have is offered only while the shop uses it.
+  const soldChoices = PRODUCT_SELLING_UNITS.filter(
+    (unit) => sellable.includes(unit) || product?.sellingUnits.includes(unit),
+  );
+  const boughtChoices = PRODUCT_UNITS.filter(
+    (unit) => shopUnits[unit] || product?.purchaseUnits.includes(unit),
   );
   const [prices, setPrices] = useState({
     pricePerMeterCents: product?.pricePerMeterCents ?? null,
@@ -350,13 +364,13 @@ export function ProductFormDialog({
               <FieldSet data-invalid={errors.sellingUnits ? true : undefined}>
                 <FieldLegend variant="label">{t.form.soldIn}</FieldLegend>
                 <div className="flex flex-wrap gap-x-6 gap-y-2">
-                  {PRODUCT_SELLING_UNITS.map((unit) => (
+                  {soldChoices.map((unit) => (
                     <Field key={unit} orientation="horizontal" className="w-auto">
                       <Checkbox
                         id={`${id}-sell-${unit}`}
                         checked={sellingUnits.includes(unit)}
                         onCheckedChange={(checked) => {
-                          setSellingUnits(toggled(sellingUnits, unit, checked === true));
+                          setPickedSelling(toggled(sellingUnits, unit, checked === true));
                           changed();
                         }}
                       />
@@ -364,6 +378,9 @@ export function ProductFormDialog({
                     </Field>
                   ))}
                 </div>
+                {soldChoices.length === 0 && (
+                  <FieldDescription role="status">{t.form.noSoldUnits}</FieldDescription>
+                )}
                 {errors.sellingUnits && <FieldError>{errors.sellingUnits}</FieldError>}
               </FieldSet>
               {sellsMeter && priceFields('meter')}
@@ -386,7 +403,7 @@ export function ProductFormDialog({
             <FieldSet data-invalid={errors.purchaseUnits ? true : undefined}>
               <FieldLegend variant="label">{t.form.boughtIn}</FieldLegend>
               <div className="flex flex-wrap gap-x-6 gap-y-2">
-                {PRODUCT_UNITS.map((unit) => (
+                {boughtChoices.map((unit) => (
                   <Field key={unit} orientation="horizontal" className="w-auto">
                     <Checkbox
                       id={`${id}-buy-${unit}`}

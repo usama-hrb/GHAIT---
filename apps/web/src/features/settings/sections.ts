@@ -2,14 +2,17 @@ import type { Role } from '@fabric/contracts';
 import {
   DatabaseIcon,
   HandshakeIcon,
+  KeyRoundIcon,
   type LucideIcon,
   RefreshCwIcon,
+  RulerIcon,
   StoreIcon,
   WalletIcon,
 } from 'lucide-react';
 import { messages } from '@/i18n';
 
-export type SettingsSectionKey = 'profile' | 'regional' | 'partners' | 'sync' | 'data';
+export type SettingsSectionKey =
+  'profile' | 'selling' | 'regional' | 'partners' | 'accounts' | 'sync' | 'data';
 
 export interface SettingsSection {
   key: SettingsSectionKey;
@@ -22,14 +25,20 @@ export interface SettingsSection {
 /** The sections, in the order they are listed, and the pages that belong to each. */
 const SECTIONS: readonly { key: SettingsSectionKey; href: string; icon: LucideIcon }[] = [
   { key: 'profile', href: '/settings', icon: StoreIcon },
+  { key: 'selling', href: '/settings/selling', icon: RulerIcon },
   { key: 'regional', href: '/settings/regional', icon: WalletIcon },
   { key: 'partners', href: '/settings/partners', icon: HandshakeIcon },
+  { key: 'accounts', href: '/settings/accounts', icon: KeyRoundIcon },
   { key: 'sync', href: '/settings/sync', icon: RefreshCwIcon },
   { key: 'data', href: '/settings/data', icon: DatabaseIcon },
 ];
 
-/** Whether `role` is shown the section: a cashier never sees the partners (SPEC §11, RL1). */
+/**
+ * Whether `role` is shown the section: a cashier never sees the partners (SPEC §11, RL1), and only
+ * the owner sees the accounts (ADR 0024).
+ */
 export function mayOpenSection(role: Role | undefined, key: SettingsSectionKey): boolean {
+  if (key === 'accounts') return role === 'owner';
   return key !== 'partners' || role === 'owner' || role === 'partner';
 }
 

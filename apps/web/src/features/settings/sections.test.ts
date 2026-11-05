@@ -2,15 +2,37 @@ import { describe, expect, it } from 'vitest';
 import { mayOpenSection, sectionOfPath, settingsSections } from './sections';
 
 describe('the settings sections', () => {
-  it('are five for the owner and the partner, in one order', () => {
-    const keys = (role: 'owner' | 'partner') => settingsSections(role).map((entry) => entry.key);
-    expect(keys('owner')).toEqual(['profile', 'regional', 'partners', 'sync', 'data']);
-    expect(keys('partner')).toEqual(keys('owner'));
+  it('are seven for the owner, in one order', () => {
+    expect(settingsSections('owner').map((entry) => entry.key)).toEqual([
+      'profile',
+      'selling',
+      'regional',
+      'partners',
+      'accounts',
+      'sync',
+      'data',
+    ]);
+  });
+
+  it('leave the accounts out for a partner, who sees the other six', () => {
+    expect(settingsSections('partner').map((entry) => entry.key)).toEqual([
+      'profile',
+      'selling',
+      'regional',
+      'partners',
+      'sync',
+      'data',
+    ]);
+    expect(mayOpenSection('partner', 'accounts')).toBe(false);
+    expect(mayOpenSection('cashier', 'accounts')).toBe(false);
+    expect(mayOpenSection(undefined, 'accounts')).toBe(false);
+    expect(mayOpenSection('owner', 'accounts')).toBe(true);
   });
 
   it('leave the partners out for a cashier, who sees the rest', () => {
     expect(settingsSections('cashier').map((entry) => entry.key)).toEqual([
       'profile',
+      'selling',
       'regional',
       'sync',
       'data',
@@ -30,8 +52,10 @@ describe('the settings sections', () => {
 describe('which section a path is in', () => {
   it('knows each section’s own page', () => {
     expect(sectionOfPath('/settings')).toEqual({ key: 'profile', inner: false });
+    expect(sectionOfPath('/settings/selling')).toEqual({ key: 'selling', inner: false });
     expect(sectionOfPath('/settings/regional')).toEqual({ key: 'regional', inner: false });
     expect(sectionOfPath('/settings/partners')).toEqual({ key: 'partners', inner: false });
+    expect(sectionOfPath('/settings/accounts')).toEqual({ key: 'accounts', inner: false });
     expect(sectionOfPath('/settings/sync')).toEqual({ key: 'sync', inner: false });
     expect(sectionOfPath('/settings/data')).toEqual({ key: 'data', inner: false });
   });

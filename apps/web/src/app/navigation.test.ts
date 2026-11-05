@@ -30,6 +30,7 @@ describe('the shop navigation', () => {
 
   it('keeps the partners out of a cashier’s Settings, and the rest of Settings in', () => {
     expect(mayOpen('cashier', '/settings')).toBe(true);
+    expect(mayOpen('cashier', '/settings/selling')).toBe(true);
     expect(mayOpen('cashier', '/settings/regional')).toBe(true);
     expect(mayOpen('cashier', '/settings/sync')).toBe(true);
     expect(mayOpen('cashier', '/settings/data')).toBe(true);
@@ -44,5 +45,26 @@ describe('the shop navigation', () => {
       expect(mayOpen(role, '/settings/partners/view')).toBe(true);
       expect(mayOpen(role, '/settings/partners/employee')).toBe(true);
     }
+  });
+
+  it('keeps the accounts, the audit log and the integrity report to the owner (ADR 0024)', () => {
+    for (const path of ['/settings/accounts', '/audit', '/integrity']) {
+      expect(mayOpen('owner', path)).toBe(true);
+      expect(mayOpen('partner', path)).toBe(false);
+      expect(mayOpen('cashier', path)).toBe(false);
+    }
+    expect(mayOpen('partner', '/settings/accounts/anything')).toBe(false);
+    // A partner keeps the rest, and a lookalike is not mistaken for a closed page.
+    expect(mayOpen('partner', '/settlements')).toBe(true);
+    expect(mayOpen('partner', '/settings/partners')).toBe(true);
+    expect(mayOpen('partner', '/audit-trail')).toBe(true);
+  });
+
+  it('shows a partner neither the audit log nor the integrity report', () => {
+    const hrefs = navigationFor('partner').map((item) => item.href);
+    expect(hrefs).not.toContain('/audit');
+    expect(hrefs).not.toContain('/integrity');
+    expect(hrefs).toContain('/settlements');
+    expect(navigationFor('owner').map((item) => item.href)).toContain('/audit');
   });
 });

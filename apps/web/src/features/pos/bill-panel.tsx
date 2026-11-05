@@ -84,7 +84,7 @@ export function BillPanel({
       </header>
 
       <div className="grid gap-2 border-b border-dashed border-border p-3">
-        <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground rtl:tracking-normal">
           {t.fields.customer}
         </span>
         <CustomerPicker

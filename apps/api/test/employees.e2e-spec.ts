@@ -18,8 +18,7 @@ import {
 } from '@fabric/contracts';
 import { monthOf, nextMonth, previousMonth } from '@fabric/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { AuthService } from '../src/modules/auth/index.js';
-import { createTestApp, type Session, type TestApp } from './support/app.js';
+import { addPartnerLogin, createTestApp, type Session, type TestApp } from './support/app.js';
 
 const dh = (amount: number) => amount * 100;
 
@@ -481,8 +480,7 @@ describe('employees, salary rates and salary payments (PY1–PY6)', () => {
   });
 
   it('a partner reads what the shop pays; only the owner changes it (PY5)', async () => {
-    const auth = t.app.get(AuthService);
-    await auth.setPartnerUser({
+    await addPartnerLogin(t, {
       username: 'shareek',
       password: 'a-long-partner-password',
       displayName: 'الشريك',

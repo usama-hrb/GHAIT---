@@ -3,6 +3,7 @@
 import { formatMoneyAmount } from '@fabric/core';
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts';
 import { moneyUnitLabel, useMoneyUnit } from '@/shared/format';
+import { useMediaQuery } from '@/shared/hooks/use-media-query';
 import {
   type ChartConfig,
   ChartContainer,
@@ -32,6 +33,8 @@ export function MoneyBars({
 }) {
   const { unit } = useMoneyUnit();
   const rtl = useDirection() === 'rtl';
+  // A phone gives the category names and the amounts less room, so the plot gets more of it.
+  const roomy = useMediaQuery('(min-width: 640px)');
   const config = { cents: { label, color: 'var(--chart-1)' } } satisfies ChartConfig;
   const money = (value: unknown) =>
     typeof value === 'number' ? `${formatMoneyAmount(value, unit)} ${moneyUnitLabel(unit)}` : '';
@@ -63,7 +66,7 @@ export function MoneyBars({
                 orientation={rtl ? 'right' : 'left'}
                 tickLine={false}
                 axisLine={false}
-                width={96}
+                width={roomy ? 96 : 76}
               />
             </>
           ) : (
@@ -73,7 +76,7 @@ export function MoneyBars({
                 orientation={rtl ? 'right' : 'left'}
                 tickLine={false}
                 axisLine={false}
-                width={64}
+                width={roomy ? 64 : 52}
                 tickFormatter={tick}
               />
             </>

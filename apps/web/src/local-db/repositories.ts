@@ -15,6 +15,7 @@ import { StockRepository } from './stock';
 import { SupplierAccountsRepository } from './supplier-accounts';
 import { type ServerLink, SettlementsRepository } from './settlements';
 import { ShopSettingsRepository } from './shop-settings';
+import { UserAccountsRepository } from './user-accounts';
 import { ZakatRepository } from './zakat';
 import type { LocalStore } from './store';
 import {
@@ -36,6 +37,8 @@ export interface Repositories {
   customers: CustomersRepository;
   sales: SalesRepository;
   accounts: AccountsRepository;
+  /** The owner's management of cashier and partner logins (ADR 0024). */
+  userAccounts: UserAccountsRepository;
   maintenance: MaintenanceRepository;
   expenses: ExpensesRepository;
   employees: EmployeesRepository;
@@ -77,6 +80,7 @@ export function createRepositories(store: LocalStore, server?: ServerLink): Repo
     customers: new CustomersRepository(store),
     sales: new SalesRepository(store, settings),
     accounts,
+    userAccounts: new UserAccountsRepository(store, server),
     maintenance: new MaintenanceRepository(store),
     expenses,
     employees: new EmployeesRepository(store, expenses),

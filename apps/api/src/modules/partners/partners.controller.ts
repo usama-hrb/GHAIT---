@@ -12,10 +12,11 @@ import {
   type VoidRequest,
   voidRequestSchema,
 } from '@fabric/contracts';
-import { Controller, Get, HttpCode, Post, Put } from '@nestjs/common';
+import { Controller, Get, HttpCode, HttpStatus, Post, Put } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { z } from 'zod';
-import { ZodBody, ZodParam, ZodResponse } from '../../common/index.js';
+import { AppHttpException, OwnerOnly, ZodBody, ZodParam, ZodResponse } from '../../common/index.js';
+import { type AuthenticatedUser, CurrentUser } from '../auth/index.js';
 import { PartnersService } from './partners.service.js';
 
 const withServerSeq = { serverSeq: z.int().positive() };
@@ -42,6 +43,8 @@ const accountSchema = z.object({
 export class PartnersController {
   constructor(private readonly partners: PartnersService) {}
 
+  /** Their phone numbers and notes are in it: a partner reads the partners through sync (ADR 0024). */
+  @OwnerOnly()
   @Get('partners')
   @ZodResponse(z.array(storedPartner))
   list() {
@@ -62,10 +65,20 @@ export class PartnersController {
     return this.partners.void('partner', id, body.reason);
   }
 
-  /** Capital, retained profit, draws and the undrawn share, from the records (SPEC §6, §8.4). */
+  /**
+   * Capital, retained profit, draws and the undrawn share, from the records (SPEC §6, §8.4). A
+   * partner's account reads its own partner's, and no other (ADR 0024, PS3).
+   */
   @Get('partners/:id/account')
   @ZodResponse(accountSchema)
-  account(@ZodParam('id', idSchema) id: string) {
+  account(@ZodParam('id', idSchema) id: string, @CurrentUser() user: AuthenticatedUser) {
+    if (user.role === 'partner' && user.partnerId !== id) {
+      throw new AppHttpException(
+        'forbidden',
+        "A partner account reads its own partner's account only",
+        HttpStatus.FORBIDDEN,
+      );
+    }
     return this.partners.account(id);
   }
 

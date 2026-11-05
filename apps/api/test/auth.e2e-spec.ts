@@ -8,7 +8,13 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AuthService } from '../src/modules/auth/index.js';
-import { createTestApp, OWNER, refreshCookieOf, type TestApp } from './support/app.js';
+import {
+  addPartnerLogin,
+  createTestApp,
+  OWNER,
+  refreshCookieOf,
+  type TestApp,
+} from './support/app.js';
 
 const errorCode = (body: unknown) => errorResponseSchema.parse(body).error.code;
 
@@ -217,18 +223,16 @@ describe('roles and the owner account', () => {
 
   it('lets the owner do everything, a partner only read, and no one else in (BUILD_PROMPTS 4.2)', async () => {
     const jwt = t.app.get(JwtService);
-    const tokenFor = (role: string) =>
-      jwt.signAsync(
-        { role, sid: crypto.randomUUID() },
-        {
-          subject: crypto.randomUUID(),
-          secret: t.config.auth.accessSecret,
-          issuer: 'fabric-shop',
-          audience: 'fabric-shop-api',
-          expiresIn: 60,
-        },
-      );
-    const partner = await tokenFor('partner');
+    // Real accounts with real sessions: the guard checks the account and the session on every call.
+    const tokenOf = async (username: string, password: string) =>
+      accessTokenResponseSchema.parse(
+        (await t.http().post('/auth/login').send({ username, password }).expect(200)).body,
+      ).accessToken;
+    await addPartnerLogin(t, { username: 'role-partner', password: 'a-long-partner-password' });
+    await t.app
+      .get(AuthService)
+      .setCashierUser({ username: 'role-cashier', password: 'a-long-cashier-password' });
+    const partner = await tokenOf('role-partner', 'a-long-partner-password');
     await t.http().get('/settings').auth(partner, { type: 'bearer' }).expect(200);
     const refused = await t
       .http()
@@ -249,11 +253,9 @@ describe('roles and the owner account', () => {
       .auth(partner, { type: 'bearer' })
       .send({ ops: [] })
       .expect(403);
-    await t
-      .http()
-      .get('/settings')
-      .auth(await tokenFor('cashier'), { type: 'bearer' })
-      .expect(403);
+    // Fetched first: a request in flight shares the app's server with the login that gets the token.
+    const cashier = await tokenOf('role-cashier', 'a-long-cashier-password');
+    await t.http().get('/settings').auth(cashier, { type: 'bearer' }).expect(403);
 
     const forged = await jwt.signAsync(
       { role: 'owner', sid: crypto.randomUUID() },
@@ -264,20 +266,31 @@ describe('roles and the owner account', () => {
       },
     );
     await t.http().get('/settings').auth(forged, { type: 'bearer' }).expect(401);
+
+    // Correctly signed, but for an account and a session that do not exist: no longer accepted.
+    const orphan = await jwt.signAsync(
+      { role: 'owner', sid: crypto.randomUUID() },
+      {
+        subject: crypto.randomUUID(),
+        secret: t.config.auth.accessSecret,
+        issuer: 'fabric-shop',
+        audience: 'fabric-shop-api',
+        expiresIn: 60,
+      },
+    );
+    await t.http().get('/settings').auth(orphan, { type: 'bearer' }).expect(401);
   });
 
   it('a partner account (create-partner-user) signs in and reads; its writes are refused', async () => {
-    const auth = t.app.get(AuthService);
+    await addPartnerLogin(t, {
+      username: 'shareek',
+      password: 'a-long-partner-password',
+      displayName: 'الشريك',
+    });
+    // The owner's username is taken: a partner's login can never take over the owner's account.
     await expect(
-      auth.setPartnerUser({
-        username: 'shareek',
-        password: 'a-long-partner-password',
-        displayName: 'الشريك',
-      }),
-    ).resolves.toBe('created');
-    await expect(
-      auth.setPartnerUser({ username: OWNER.username, password: 'another-long-password' }),
-    ).rejects.toThrow(/owner's account/);
+      addPartnerLogin(t, { username: OWNER.username, password: 'another-long-password' }),
+    ).rejects.toThrow(/already signs in/);
     const login = await t
       .http()
       .post('/auth/login')

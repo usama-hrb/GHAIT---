@@ -10,6 +10,9 @@ export const AUDIT_ACTIONS = [
   'login',
   'logout',
   'password_set',
+  /** A login account switched off, and back on (ADR 0024): the account stays, its sign-in does not. */
+  'deactivate',
+  'reactivate',
 ] as const;
 export const auditActionSchema = z.enum(AUDIT_ACTIONS);
 export type AuditAction = z.infer<typeof auditActionSchema>;

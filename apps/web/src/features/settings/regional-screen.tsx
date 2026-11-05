@@ -123,7 +123,7 @@ export function RegionalScreen() {
           <CardDescription>{r.example.description}</CardDescription>
         </CardHeader>
         <CardContent>
-          <Table data-testid="regional-example">
+          <Table stack data-testid="regional-example">
             <TableHeader>
               <TableRow>
                 <TableHead>{r.example.what}</TableHead>
@@ -135,10 +135,10 @@ export function RegionalScreen() {
               {SAMPLES.map((sample) => (
                 <TableRow key={sample.key}>
                   <TableCell>{r.example.samples[sample.key]}</TableCell>
-                  <TableCell className="text-end font-medium">
+                  <TableCell className="text-end font-medium" label={r.example.shown}>
                     <Money cents={sample.cents} unit={unit} />
                   </TableCell>
-                  <TableCell className="text-end text-muted-foreground">
+                  <TableCell className="text-end text-muted-foreground" label={r.example.same}>
                     <Money cents={sample.cents} unit={other} />
                   </TableCell>
                 </TableRow>

@@ -232,6 +232,20 @@
       "when": 1793866261209,
       "tag": "0032_partner_exit",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1793894945840,
+      "tag": "0033_owner_single",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1793902774421,
+      "tag": "0034_account_management",
+      "breakpoints": true
     }
   ]
 }

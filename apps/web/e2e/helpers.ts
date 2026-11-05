@@ -24,7 +24,8 @@ export async function signIn(
   await setDeviceLanguage(page, 'ar');
   await page.goto('/login');
   await page.getByLabel('اسم المستخدم').fill(account.username);
-  await page.getByLabel('كلمة المرور').fill(account.password);
+  // Exact: the show-password button's name also contains these words.
+  await page.getByLabel('كلمة المرور', { exact: true }).fill(account.password);
   await page.getByRole('button', { name: 'دخول' }).click();
   await expect(page).toHaveURL(/\/home$/);
 }

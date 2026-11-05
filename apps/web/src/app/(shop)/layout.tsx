@@ -25,13 +25,20 @@ export default function ShopLayout({ children }: { children: ReactNode }) {
   const session = useSession();
   const identity = useShopIdentity();
 
+  const mustChangePassword = session.user?.mustChangePassword === true;
+
   useEffect(() => {
     if (session.status === 'signed_out') {
       router.replace(`/login?next=${encodeURIComponent(pathname)}`);
+    } else if (session.status === 'signed_in' && mustChangePassword) {
+      // An account on the password the owner gave it chooses its own before anything else (ADR 0024).
+      router.replace('/change-password');
     }
-  }, [session.status, router, pathname]);
+  }, [session.status, mustChangePassword, router, pathname]);
 
-  if (session.status !== 'signed_in') return <LoadingState variant="spinner" />;
+  if (session.status !== 'signed_in' || mustChangePassword) {
+    return <LoadingState variant="spinner" />;
+  }
 
   const role = session.user?.role;
   const current = shopNavigation().find(
@@ -65,10 +72,14 @@ export default function ShopLayout({ children }: { children: ReactNode }) {
         children
       ) : (
         <EmptyState
-          title={messages.auth.notForCashier}
+          title={role === 'cashier' ? messages.auth.notForCashier : messages.auth.ownerOnlyPage}
           action={
             <Button asChild variant="outline">
-              <Link href="/pos">{messages.auth.cashierBack}</Link>
+              {role === 'cashier' ? (
+                <Link href="/pos">{messages.auth.cashierBack}</Link>
+              ) : (
+                <Link href="/home">{messages.auth.ownerOnlyBack}</Link>
+              )}
             </Button>
           }
         />

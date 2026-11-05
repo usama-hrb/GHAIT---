@@ -9,6 +9,7 @@ import { inject } from 'vitest';
 import { AppModule } from '../../src/app.module.js';
 import { configureHttp } from '../../src/common/index.js';
 import { type AppConfig, parseConfig } from '../../src/config/index.js';
+import { AccountsService } from '../../src/modules/accounts/index.js';
 import { AuthService } from '../../src/modules/auth/index.js';
 import { withDatabase } from './database-url.js';
 
@@ -33,6 +34,30 @@ export interface TestApp {
   sql: pg.Pool;
   login: () => Promise<Session>;
   close: () => Promise<void>;
+}
+
+/**
+ * A partner (a business record) with a login, the way `make partner-user` makes one (ADR 0024):
+ * the partner row is inserted directly, then the login goes through the same service the command
+ * uses. Returns the partner's id.
+ */
+export async function addPartnerLogin(
+  t: Pick<TestApp, 'app' | 'sql'>,
+  input: { username: string; password: string; displayName?: string; partnerName?: string },
+): Promise<string> {
+  const id = randomUUID();
+  const name = input.partnerName ?? `Partner ${input.username}`;
+  await t.sql.query(
+    `INSERT INTO partner (id, name, ownership_bp, is_owner, device_id) VALUES ($1, $2, 1000, false, 'test')`,
+    [id, name],
+  );
+  await t.app.get(AccountsService).setPartnerLogin({
+    partner: id,
+    username: input.username,
+    password: input.password,
+    displayName: input.displayName,
+  });
+  return id;
 }
 
 /** `fabric_refresh=<token>` from a response's Set-Cookie, or undefined. */
@@ -61,7 +86,7 @@ async function createDatabaseFromTemplate(adminUrl: string): Promise<string> {
 
 /**
  * A full app (same modules, filters, guards and HTTP setup as main.ts) on a fresh, migrated
- * database, with the owner account created.
+ * database, with the owner account created (unless `owner: false`).
  */
 export async function createTestApp(
   options: {
@@ -70,6 +95,8 @@ export async function createTestApp(
     controllers?: Type[];
     providers?: Provider[];
     env?: Record<string, string>;
+    /** Whether the owner account exists from the start (default); false: a server not yet set up. */
+    owner?: boolean;
   } = {},
 ): Promise<TestApp> {
   const databaseUrl = await createDatabaseFromTemplate(inject('postgresAdminUrl'));
@@ -88,7 +115,7 @@ export async function createTestApp(
   const app = moduleRef.createNestApplication<NestExpressApplication>({ bufferLogs: true });
   configureHttp(app);
   await app.init();
-  await app.get(AuthService).setOwner(OWNER);
+  if (options.owner !== false) await app.get(AuthService).setOwner(OWNER);
 
   const sql = new pg.Pool({ connectionString: databaseUrl, max: 2 });
   const http = () => request(app.getHttpServer());

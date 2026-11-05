@@ -7,4 +7,8 @@ export {
   Public,
 } from './auth.decorators.js';
 export { AuthModule } from './auth.module.js';
-export { AuthService } from './auth.service.js';
+export { AuthService, auditView, type IssuedTokens } from './auth.service.js';
+export { PasswordHasher } from './password-hasher.js';
+export { setRefreshCookie } from './refresh-cookie.js';
+export { SessionsRepository } from './sessions.repository.js';
+export type { UserRow } from './users.repository.js';

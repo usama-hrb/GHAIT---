@@ -72,12 +72,12 @@ export function ZakatBreakdownView({
       <section aria-label={t.goodsTitle} className="grid gap-2">
         <h4 className="font-heading font-semibold">{t.goodsTitle}</h4>
         <div className="rounded-lg border bg-card">
-          <Table>
+          <Table stack>
             <TableHeader>
               <TableRow>
                 <TableHead>{t.columns.roll}</TableHead>
                 <TableHead className="text-end">{t.columns.left}</TableHead>
-                <TableHead className="text-end max-sm:hidden">{t.columns.refPrice}</TableHead>
+                <TableHead className="text-end">{t.columns.refPrice}</TableHead>
                 <TableHead className="text-end">{t.columns.value}</TableHead>
               </TableRow>
             </TableHeader>
@@ -85,13 +85,13 @@ export function ZakatBreakdownView({
               {breakdown.goods.map((item) => (
                 <TableRow key={item.rollId}>
                   <TableCell>{item.label}</TableCell>
-                  <TableCell className="text-end">
+                  <TableCell className="text-end" label={t.columns.left}>
                     <Meters cm={item.remainingCm} />
                   </TableCell>
-                  <TableCell className="text-end max-sm:hidden">
+                  <TableCell className="text-end" label={t.columns.refPrice}>
                     <Money cents={item.refPricePerMeterCents} />
                   </TableCell>
-                  <TableCell className="text-end">
+                  <TableCell className="text-end" label={t.columns.value}>
                     <Money cents={item.valueCents} />
                   </TableCell>
                 </TableRow>

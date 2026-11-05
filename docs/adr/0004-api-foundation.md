@@ -32,7 +32,7 @@ BUILD_PROMPTS 2.1 asks for zod validation, one error shape, request-id logging, 
 - **Reuse grace:** a rotated token presented again within 30 seconds is rotated again, and the successor it never received is revoked. A page load can abort a refresh after the server has rotated the token (found by the Playwright tests), and without this the owner would be signed out everywhere. Later reuse, or reuse of a revoked token, still revokes the whole family (Auth0's "reuse interval").
 - **Rate limit:** login is limited to `AUTH_LOGIN_RATE_LIMIT` attempts a minute per client IP (default 5), refresh to `AUTH_REFRESH_RATE_LIMIT` (default 30; every page load refreshes once). Caddy is a trusted proxy hop, so the limit sees the real client IP.
 - **Global guard:** every route is protected unless marked `@Public()`. The schema has the `owner`, `partner` and `cashier` roles; only `owner` is admitted for now, at login and on every request.
-- **Owner account:** created, or its password reset, only by `make owner` (password on stdin). There is no HTTP setup route, so nobody can claim the account on a fresh server.
+- **Owner account:** created, or its password reset, by `make owner` (password on stdin). Originally this was the only way, with no HTTP setup route. [ADR 0023](0023-owner-self-registration-and-selling-units.md) adds a first-owner sign-up page that works only while the server has no owner, and `OWNER_SIGNUP_ENABLED=false` turns it off.
 
 **Unit of work and audit.**
 
@@ -71,5 +71,5 @@ BUILD_PROMPTS 2.1 asks for zod validation, one error shape, request-id logging, 
 
 ## Roles (BUILD_PROMPTS 4.2, 2026-10-30)
 
-- The owner may do everything. A **partner** account (`make partner-user`) signs in and reads everything; the API refuses every request that is not a read (`GET`, `HEAD`, `OPTIONS`), except routes marked `@PartnerMayCall()` that change no shop data (registering the device for its code). The cashier role is not let in yet (BUILD_PROMPTS 5.3).
+- The owner may do everything. A **partner** account signs in and reads the shop's numbers and its own money records (originally everything; [ADR 0024](0024-account-management.md) links every partner login to one partner and hides the other partners' money and contact details, the audit log and the integrity report); the API refuses every request that is not a read (`GET`, `HEAD`, `OPTIONS`), except routes marked `@PartnerMayCall()` that change no shop data (registering the device for its code). The cashier role is not let in yet (BUILD_PROMPTS 5.3).
 - On the device, a partner's session makes the local store read-only: every write path checks it first (`assertWritable`), and an outbox hook refuses any op as a backstop, so nothing is saved that the server would refuse. The app shows a read-only notice; hiding each screen's edit buttons comes with the permissions slice (5.3).

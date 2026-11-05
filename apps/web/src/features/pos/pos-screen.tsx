@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { CustomerDialog } from '@/features/customers';
 import { messages } from '@/i18n';
+import { useSellingUnits } from '@/features/settings';
 import { useLiveQuery, useRepositories, ValidationError } from '@/local-db';
 import { EmptyState, LoadingState, OfflineNotice } from '@/shared/brand';
 import { Money } from '@/shared/format';
@@ -74,6 +75,7 @@ export function PosScreen() {
   const stock = useLiveQuery(() => repositories.productInventory.overview(), [repositories]);
   const customers = useLiveQuery(() => repositories.customers.list(), [repositories]);
   const photos = useLiveQuery(() => repositories.photos.sources(), [repositories]);
+  const units = useSellingUnits();
 
   const [cart, setCart] = useState<CartItem[]>([]);
   const [discount, setDiscount] = useState<number | null>(null);
@@ -118,7 +120,7 @@ export function PosScreen() {
   if (stock === undefined || customers === undefined || photos === undefined) {
     return <LoadingState />;
   }
-  if (cart.length === 0 && !stock.products.some(isSellable)) {
+  if (cart.length === 0 && !stock.products.some((product) => isSellable(product, units))) {
     return (
       <EmptyState
         icon={PackageIcon}
@@ -251,6 +253,7 @@ export function PosScreen() {
       <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
         <CatalogPanel
           products={stock.products}
+          units={units}
           photos={photos}
           inBill={inBill}
           onPick={(productId) => {
@@ -264,7 +267,7 @@ export function PosScreen() {
         <>
           {/* Room under the last tile for the bar below. */}
           <div className="h-16" aria-hidden />
-          <div className="fixed inset-x-4 bottom-20 z-20 md:bottom-4">
+          <div className="fixed inset-x-4 bottom-[calc(var(--bottom-nav,0px)+1rem)] z-20">
             <Button
               type="button"
               variant="accent"

@@ -83,6 +83,8 @@ make up STACK=prod                # builds the images, starts everything, waits 
 make owner USERNAME=<name> STACK=prod   # the owner's account (asks for the password)
 ```
 
+**Or create the owner in the browser.** On a server with no owner yet, `https://<DOMAIN>/signup` creates the owner account and sets the shop up (name, logo, selling units, currency) and signs the owner in ([ADR 0023](../adr/0023-owner-self-registration-and-selling-units.md)). It works once: as soon as an owner exists the page shows "Sign-up is closed" and the sign-in page stops linking to it. Because the first visitor becomes the owner, open the page yourself straight after `make up`, before sharing the address. To rule the page out, set `OWNER_SIGNUP_ENABLED=false` in `.env` before `make up` and use `make owner`. The sign-up route is also rate-limited, to 5 attempts a minute per client IP.
+
 Check:
 
 - `https://<DOMAIN>/api/health` answers `{"status":"ok"…}`;
@@ -132,6 +134,8 @@ make up STACK=prod
 ```
 
 `make up` builds the new images and replaces the containers. The API applies pending migrations before it accepts requests. Open devices see a "new version" notice and reload; work they hold is in IndexedDB and syncs as usual.
+
+**The release that adds account management** ([ADR 0024](../adr/0024-account-management.md), migration 0034) links every partner login to a partner. A partner login created earlier with `make partner-user` belongs to no partner, so the migration **switches it off** (its sessions are revoked, each switch is audit-logged) rather than guess whose it was. Cashier and owner accounts are untouched. After updating, make each partner's login again in Settings > Accounts (or `make partner-user USERNAME=<name> PARTNER=<partner> STACK=prod`) and hand over the temporary password. The guard now reads the account on every request, so a token issued before a switch-off stops working at once. Before updating, `make backup STACK=prod` as usual; the migration only adds columns and constraints.
 
 **The release that moves stock to product batches** ([ADR 0012](../adr/0012-product-batches-single-stock-source.md), migrations 0028–0030) copies the rolls, stock moves and sale lines into batches. Before it: `make backup STACK=prod`, then `make backup-verify STACK=prod`. The migrations check their own work and abort, leaving the database as it was, if anything differs; the old tables are kept. Rolling back means restoring the dump (below): the old code cannot read sales made on batches. Each open device upgrades its own database in place on reload, offline too.
 

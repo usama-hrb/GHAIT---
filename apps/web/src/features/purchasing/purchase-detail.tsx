@@ -119,14 +119,14 @@ export function PurchaseDetailScreen() {
       {purchase.notes && <p className="text-muted-foreground">{purchase.notes}</p>}
 
       <div className="rounded-lg border bg-card">
-        <Table>
+        <Table stack>
           <TableHeader>
             <TableRow>
               <TableHead>{t.code}</TableHead>
               <TableHead>{t.fields.product}</TableHead>
               <TableHead className="text-end">{t.received}</TableHead>
               <TableHead className="text-end">{t.cost}</TableHead>
-              <TableHead className="text-end max-sm:hidden">{t.costPerMeter}</TableHead>
+              <TableHead className="text-end">{t.costPerMeter}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -137,14 +137,14 @@ export function PurchaseDetailScreen() {
                   ? batch.receivedQuantity
                   : (batch.conversion?.lengthCm ?? null);
               return (
-                <TableRow key={batch.id} className="h-12">
+                <TableRow key={batch.id} className="sm:h-12">
                   <TableCell>
                     <bdi dir="ltr" data-num className="font-medium">
                       {batch.code}
                     </bdi>
                   </TableCell>
-                  <TableCell>{products[index]?.name}</TableCell>
-                  <TableCell className="text-end">
+                  <TableCell label={t.fields.product}>{products[index]?.name}</TableCell>
+                  <TableCell className="text-end" label={t.received}>
                     <Quantity unit={batch.unit} amount={batch.receivedQuantity} />
                     {status === 'estimated' && (
                       <Badge variant="warning" className="ms-1.5">
@@ -157,10 +157,10 @@ export function PurchaseDetailScreen() {
                       </Badge>
                     )}
                   </TableCell>
-                  <TableCell className="text-end">
+                  <TableCell className="text-end" label={t.cost}>
                     <Money cents={batch.costTotalCents} />
                   </TableCell>
-                  <TableCell className="text-end max-sm:hidden">
+                  <TableCell className="text-end" label={t.costPerMeter}>
                     {lengthCm === null ? (
                       '—'
                     ) : (

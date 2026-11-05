@@ -20,6 +20,8 @@ describe('parseConfig', () => {
         cookiePath: '/api/auth',
         loginRateLimit: 5,
         refreshRateLimit: 30,
+        registerRateLimit: 5,
+        ownerSignupEnabled: true,
         cookieSecure: false,
       },
     });
@@ -41,6 +43,12 @@ describe('parseConfig', () => {
     });
   });
 
+  it('lets the operator close the first-owner sign-up and set its rate limit', () => {
+    expect(
+      parseConfig({ ...base, OWNER_SIGNUP_ENABLED: 'false', AUTH_REGISTER_RATE_LIMIT: '2' }).auth,
+    ).toMatchObject({ ownerSignupEnabled: false, registerRateLimit: 2 });
+  });
+
   it('accepts the postgresql:// scheme', () => {
     expect(parseConfig({ ...base, DATABASE_URL: 'postgresql://u:p@db/x' }).databaseUrl).toBe(
       'postgresql://u:p@db/x',
@@ -59,6 +67,8 @@ describe('parseConfig', () => {
     ['non-boolean MIGRATE_ON_START', { ...base, MIGRATE_ON_START: 'maybe' }],
     ['access token TTL over an hour', { ...base, ACCESS_TOKEN_TTL_SECONDS: '7200' }],
     ['relative AUTH_COOKIE_PATH', { ...base, AUTH_COOKIE_PATH: 'api/auth' }],
+    ['non-boolean OWNER_SIGNUP_ENABLED', { ...base, OWNER_SIGNUP_ENABLED: 'sometimes' }],
+    ['zero AUTH_REGISTER_RATE_LIMIT', { ...base, AUTH_REGISTER_RATE_LIMIT: '0' }],
     [
       'the example secret in production',
       { ...base, NODE_ENV: 'production', JWT_ACCESS_SECRET: 'dev-only-change-me-0123456789abcdef' },

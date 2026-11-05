@@ -56,14 +56,25 @@ export const shopNavigation = (): readonly AppShellNavItem[] => [
  */
 const CASHIER_PAGES = ['/home', '/pos', '/inventory', '/customers', '/settings'] as const;
 
-/** Pages inside an allowed page that a cashier still may not open (the partners, SPEC §11). */
-const CASHIER_REFUSED = ['/settings/partners'] as const;
+/**
+ * Pages inside an allowed page that a cashier still may not open: the partners (SPEC §11) and the
+ * accounts, which only the owner manages (ADR 0024).
+ */
+const CASHIER_REFUSED = ['/settings/partners', '/settings/accounts'] as const;
+
+/**
+ * Pages only the owner opens (ADR 0024): the audit log and the integrity report name every
+ * account and every partner's money, and the accounts are the owner's to manage. The API refuses
+ * a partner on each of them; the app does not offer them.
+ */
+const OWNER_PAGES = ['/audit', '/integrity', '/settings/accounts'] as const;
 
 const under = (pathname: string, page: string) =>
   pathname === page || pathname.startsWith(`${page}/`);
 
 /** Whether `role` may open the page at `pathname` (the API refuses the rest anyway). */
 export function mayOpen(role: Role | undefined, pathname: string): boolean {
+  if (role === 'partner') return !OWNER_PAGES.some((page) => under(pathname, page));
   if (role !== 'cashier') return true;
   return (
     CASHIER_PAGES.some((page) => under(pathname, page)) &&
@@ -71,7 +82,7 @@ export function mayOpen(role: Role | undefined, pathname: string): boolean {
   );
 }
 
-/** The navigation for `role`: a cashier sees only the pages above. */
+/** The navigation for `role`: a cashier sees only the pages above, a partner not the owner's. */
 export function navigationFor(role: Role | undefined): readonly AppShellNavItem[] {
   return shopNavigation().filter((item) => mayOpen(role, item.href));
 }

@@ -10,7 +10,7 @@ import {
 import { Controller, Get, HttpCode, Post, Put } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { z } from 'zod';
-import { ZodBody, ZodParam, ZodResponse } from '../../common/index.js';
+import { OwnerOnly, ZodBody, ZodParam, ZodResponse } from '../../common/index.js';
 import { IntegrityService } from './integrity.service.js';
 
 /** The integrity check and cash counts (BUILD_PROMPTS 4.4); devices do both offline too. */
@@ -20,7 +20,11 @@ import { IntegrityService } from './integrity.service.js';
 export class IntegrityController {
   constructor(private readonly integrity: IntegrityService) {}
 
-  /** SPEC §9: what the shop holds against whose it is, to the cent, on every device's records. */
+  /**
+   * SPEC §9: what the shop holds against whose it is, to the cent, on every device's records.
+   * It lists every partner's balance, so it is the owner's (ADR 0024, PS3).
+   */
+  @OwnerOnly()
   @Get('integrity')
   @ZodResponse(integrityReportSchema)
   report() {

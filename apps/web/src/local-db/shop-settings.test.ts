@@ -154,3 +154,46 @@ describe('the money display unit never changes an amount (ADR 0017)', () => {
     }
   });
 });
+
+describe('the units the shop works in (ADR 0023)', () => {
+  it('is every unit on until the server sends a choice', async () => {
+    const { settings } = createRepositories(store);
+    expect(await settings.sellingUnits('2026-11-04')).toEqual({
+      piece: true,
+      kg: true,
+      meter: true,
+    });
+    await pulled('selling_units', { piece: false, kg: true, meter: true });
+    expect(await settings.sellingUnits('2026-11-04')).toEqual({
+      piece: false,
+      kg: true,
+      meter: true,
+    });
+  });
+
+  it('is saved on the server, any combination but none', async () => {
+    const calls: string[] = [];
+    const { settings } = createRepositories(store, server(calls));
+    await settings.save('selling_units', { piece: true, kg: false, meter: false });
+    expect(calls).toEqual(['PUT /settings/selling_units', 'sync']);
+    expect(await settings.sellingUnits('2026-11-04')).toEqual({
+      piece: true,
+      kg: false,
+      meter: false,
+    });
+    await expect(
+      settings.save('selling_units', { piece: false, kg: false, meter: false }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('falls back to every unit on for a stored value that does not fit', async () => {
+    const { settings } = createRepositories(store);
+    await pulled('selling_units', { piece: false, kg: false, meter: false });
+    expect(await settings.sellingUnits('2026-11-04')).toEqual({
+      piece: true,
+      kg: true,
+      meter: true,
+    });
+  });
+});

@@ -3,6 +3,8 @@ import {
   accessTokenResponseSchema,
   type AuthUser,
   authUserSchema,
+  type ChangePasswordRequest,
+  changePasswordRequestSchema,
   type LoginRequest,
   loginRequestSchema,
   REFRESH_COOKIE,
@@ -10,12 +12,20 @@ import {
 import { Controller, Get, HttpCode, Inject, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiNoContentResponse, ApiTags } from '@nestjs/swagger';
 import { SkipThrottle, ThrottlerGuard } from '@nestjs/throttler';
-import type { CookieOptions, Request, Response } from 'express';
+import type { Request, Response } from 'express';
 import { ZodBody, ZodResponse } from '../../common/index.js';
 import { APP_CONFIG, type AppConfig } from '../../config/index.js';
 import { AuditExempt } from '../audit/index.js';
-import { type AuthenticatedUser, CurrentUser, Public, CashierMayCall } from './auth.decorators.js';
-import { AuthService, type IssuedTokens } from './auth.service.js';
+import {
+  type AuthenticatedUser,
+  CashierMayCall,
+  CurrentUser,
+  MayCallWhileChangingPassword,
+  PartnerMayCall,
+  Public,
+} from './auth.decorators.js';
+import { AuthService } from './auth.service.js';
+import { refreshCookieOptions, setRefreshCookie } from './refresh-cookie.js';
 
 /**
  * The access token is returned in the body (the web client keeps it in memory); the refresh
@@ -31,7 +41,7 @@ export class AuthController {
 
   @Public()
   @UseGuards(ThrottlerGuard)
-  @SkipThrottle({ refresh: true })
+  @SkipThrottle({ refresh: true, register: true })
   @Post('login')
   @HttpCode(200)
   @ZodResponse(accessTokenResponseSchema)
@@ -40,7 +50,7 @@ export class AuthController {
     @Res({ passthrough: true }) response: Response,
   ): Promise<AccessTokenResponse> {
     const issued = await this.auth.login(body);
-    this.setRefreshCookie(response, issued);
+    setRefreshCookie(response, this.config, issued);
     return issued.response;
   }
 
@@ -49,7 +59,7 @@ export class AuthController {
     'rotation runs its own transaction: a reused token must revoke its family although the request fails',
   )
   @UseGuards(ThrottlerGuard)
-  @SkipThrottle({ login: true })
+  @SkipThrottle({ login: true, register: true })
   @Post('refresh')
   @HttpCode(200)
   @ZodResponse(accessTokenResponseSchema)
@@ -59,10 +69,10 @@ export class AuthController {
   ): Promise<AccessTokenResponse> {
     try {
       const issued = await this.auth.refresh(this.refreshTokenOf(request));
-      this.setRefreshCookie(response, issued);
+      setRefreshCookie(response, this.config, issued);
       return issued.response;
     } catch (error) {
-      response.clearCookie(REFRESH_COOKIE, this.cookieOptions());
+      response.clearCookie(REFRESH_COOKIE, refreshCookieOptions(this.config));
       throw error;
     }
   }
@@ -79,11 +89,33 @@ export class AuthController {
     @Res({ passthrough: true }) response: Response,
   ): Promise<void> {
     await this.auth.logout(this.refreshTokenOf(request));
-    response.clearCookie(REFRESH_COOKIE, this.cookieOptions());
+    response.clearCookie(REFRESH_COOKIE, refreshCookieOptions(this.config));
+  }
+
+  /**
+   * An account choosing its own password (ADR 0024). Every role may; so may an account that has
+   * not yet replaced the temporary password the owner gave it, which is what this is for. The
+   * login throttler also limits guesses at the current password.
+   */
+  @ApiBearerAuth()
+  @CashierMayCall()
+  @PartnerMayCall()
+  @MayCallWhileChangingPassword()
+  @UseGuards(ThrottlerGuard)
+  @SkipThrottle({ refresh: true, register: true })
+  @Post('change-password')
+  @HttpCode(200)
+  @ZodResponse(authUserSchema)
+  changePassword(
+    @CurrentUser() user: AuthenticatedUser,
+    @ZodBody(changePasswordRequestSchema) body: ChangePasswordRequest,
+  ): Promise<AuthUser> {
+    return this.auth.changePassword(user, body);
   }
 
   @ApiBearerAuth()
   @CashierMayCall()
+  @MayCallWhileChangingPassword()
   @Get('me')
   @ZodResponse(authUserSchema)
   me(@CurrentUser() user: AuthenticatedUser): Promise<AuthUser> {
@@ -95,21 +127,5 @@ export class AuthController {
     const cookies: Record<string, unknown> = request.cookies;
     const token = cookies[REFRESH_COOKIE];
     return typeof token === 'string' && token !== '' ? token : undefined;
-  }
-
-  private cookieOptions(): CookieOptions {
-    return {
-      httpOnly: true,
-      secure: this.config.auth.cookieSecure,
-      sameSite: 'strict',
-      path: this.config.auth.cookiePath,
-    };
-  }
-
-  private setRefreshCookie(response: Response, issued: IssuedTokens): void {
-    response.cookie(REFRESH_COOKIE, issued.refreshToken, {
-      ...this.cookieOptions(),
-      expires: issued.refreshExpiresAt,
-    });
   }
 }

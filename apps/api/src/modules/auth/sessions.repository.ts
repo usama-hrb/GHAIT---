@@ -57,11 +57,22 @@ export class SessionsRepository {
     return rows.length;
   }
 
-  async revokeAllOfUser(userId: string, at: Date): Promise<number> {
+  /** Revokes every live session of a user (but `except`): signed out on every device. */
+  async revokeAllOfUser(
+    userId: string,
+    at: Date,
+    { except }: { except?: string } = {},
+  ): Promise<number> {
     const rows = await this.tx.db
       .update(schema.authSession)
       .set({ revokedAt: at, updatedAt: at })
-      .where(and(eq(schema.authSession.userId, userId), isNull(schema.authSession.revokedAt)))
+      .where(
+        and(
+          eq(schema.authSession.userId, userId),
+          isNull(schema.authSession.revokedAt),
+          except === undefined ? undefined : ne(schema.authSession.id, except),
+        ),
+      )
       .returning({ id: schema.authSession.id });
     return rows.length;
   }

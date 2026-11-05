@@ -3,7 +3,7 @@
 import { ChevronRightIcon } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import type { ReactNode } from 'react';
+import { type ReactNode, useEffect, useRef } from 'react';
 import { messages } from '@/i18n';
 import { useSession } from '@/local-db';
 import { cn } from '@/shared/lib/utils';
@@ -22,9 +22,20 @@ export function SettingsShell({ children }: { children: ReactNode }) {
   const here = sectionOfPath(pathname);
   const current = sections.find((section) => section.key === here.key);
 
+  // On a phone the sections are a row that scrolls sideways: bring the current one into view, so
+  // a page opened from a link (or in Arabic, where the row starts at the other end) is not
+  // hidden off-screen. `nearest` never moves the page itself.
+  const strip = useRef<HTMLElement>(null);
+  useEffect(() => {
+    strip.current
+      ?.querySelector<HTMLElement>('[data-active="true"]')
+      ?.scrollIntoView({ inline: 'center', block: 'nearest' });
+  }, [here.key]);
+
   return (
     <div className="mx-auto grid w-full max-w-6xl items-start gap-4 lg:grid-cols-[15rem_minmax(0,1fr)] lg:gap-8">
       <nav
+        ref={strip}
         aria-label={t.navLabel}
         className="no-scrollbar -mx-4 flex gap-1 overflow-x-auto px-4 pb-1 lg:sticky lg:top-20 lg:mx-0 lg:grid lg:gap-1 lg:overflow-visible lg:px-0 lg:pb-0"
       >

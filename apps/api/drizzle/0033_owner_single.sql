@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX "app_user_single_owner" ON "app_user" USING btree ("role") WHERE "app_user"."role" = 'owner' AND "app_user"."voided_at" IS NULL;

@@ -3,8 +3,11 @@ import {
   accessTokenResponseSchema,
   type AuthUser,
   authUserSchema,
+  type ChangePasswordInput,
   deviceRegistrationSchema,
   type LoginRequest,
+  type OwnerRegistrationInput,
+  registrationStatusSchema,
 } from '@fabric/contracts';
 import type { z } from 'zod';
 import { type ApiClient, apiErrorOf } from './api';
@@ -68,8 +71,48 @@ export class Session {
     if (!response.ok) throw await apiErrorOf(response);
     const body = accessTokenResponseSchema.parse(await response.json());
     await this.accept(body);
+    // An account on the password the owner gave it can do nothing else until it chooses its own
+    // (ADR 0024), the device code included: that waits for `changePassword`.
+    if (!body.user.mustChangePassword) await this.ensureDeviceCode();
+    return body.user;
+  }
+
+  /**
+   * Whether the server takes the first owner's sign-up (ADR 0023): only while it has no owner.
+   * Needs the network; throws ApiError or NetworkError.
+   */
+  async registrationOpen(): Promise<boolean> {
+    const response = await this.api.send('/auth/registration');
+    if (!response.ok) throw await apiErrorOf(response);
+    return registrationStatusSchema.parse(await response.json()).open;
+  }
+
+  /**
+   * The first owner sets the shop up (ADR 0023): creates the account and the shop's settings on
+   * the server and signs in on this device, as a login does. Needs the network.
+   */
+  async register(input: OwnerRegistrationInput): Promise<AuthUser> {
+    const response = await this.api.send('/auth/register', { method: 'POST', body: input });
+    if (!response.ok) throw await apiErrorOf(response);
+    const body = accessTokenResponseSchema.parse(await response.json());
+    await this.accept(body);
     await this.ensureDeviceCode();
     return body.user;
+  }
+
+  /**
+   * The account replaces the password the owner gave it (ADR 0024). Every other device of the
+   * account is signed out by the server; this one stays signed in. Needs the network.
+   */
+  async changePassword(input: ChangePasswordInput): Promise<AuthUser> {
+    const user = await this.request('/auth/change-password', authUserSchema, {
+      method: 'POST',
+      body: input,
+    });
+    await this.store.setMeta(USER, user);
+    this.set({ ...this.state, user });
+    await this.ensureDeviceCode();
+    return user;
   }
 
   /**

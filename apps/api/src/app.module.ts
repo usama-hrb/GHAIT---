@@ -14,6 +14,7 @@ import {
 } from './common/index.js';
 import { type AppConfig, ConfigModule } from './config/index.js';
 import { DatabaseModule } from './database/index.js';
+import { AccountsModule } from './modules/accounts/index.js';
 import { AuditInterceptor, AuditModule } from './modules/audit/index.js';
 import { AuthModule } from './modules/auth/index.js';
 import { CatalogModule } from './modules/catalog/index.js';
@@ -28,6 +29,7 @@ import { PartnersModule } from './modules/partners/index.js';
 import { IntegrityModule } from './modules/integrity/index.js';
 import { InventoryModule } from './modules/inventory/index.js';
 import { PurchasingModule } from './modules/purchasing/index.js';
+import { RegistrationModule } from './modules/registration/index.js';
 import { StockModule } from './modules/stock/index.js';
 import { ReceivablesModule } from './modules/receivables/index.js';
 import { SalesModule } from './modules/sales/index.js';
@@ -47,7 +49,9 @@ export class AppModule implements NestModule {
         DatabaseModule,
         AuditModule,
         AuthModule,
+        AccountsModule,
         SettingsModule,
+        RegistrationModule,
         SyncModule,
         CatalogModule,
         PhotosModule,

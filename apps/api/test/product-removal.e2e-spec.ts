@@ -11,10 +11,9 @@ import {
   type SyncOpResult,
   syncPushResponseSchema,
 } from '@fabric/contracts';
-import { JwtService } from '@nestjs/jwt';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AuthService } from '../src/modules/auth/index.js';
-import { createTestApp, type Session, type TestApp } from './support/app.js';
+import { addPartnerLogin, createTestApp, type Session, type TestApp } from './support/app.js';
 import { stockKit } from './support/stock.js';
 
 /**
@@ -46,16 +45,13 @@ describe('removing a product (PB20)', () => {
       .send({ username: 'amina', password: 'a-long-cashier-password' })
       .expect(200);
     cashierToken = (login.body as { accessToken: string }).accessToken;
-    partnerToken = await t.app.get(JwtService).signAsync(
-      { role: 'partner', sid: crypto.randomUUID() },
-      {
-        subject: crypto.randomUUID(),
-        secret: t.config.auth.accessSecret,
-        issuer: 'fabric-shop',
-        audience: 'fabric-shop-api',
-        expiresIn: 60,
-      },
-    );
+    await addPartnerLogin(t, { username: 'shareek', password: 'a-long-partner-password' });
+    const partnerLogin = await t
+      .http()
+      .post('/auth/login')
+      .send({ username: 'shareek', password: 'a-long-partner-password' })
+      .expect(200);
+    partnerToken = (partnerLogin.body as { accessToken: string }).accessToken;
   });
 
   afterAll(async () => {

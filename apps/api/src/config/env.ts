@@ -21,6 +21,13 @@ const envSchema = z
     AUTH_LOGIN_RATE_LIMIT: z.coerce.number().int().min(1).max(1000).default(5),
     /** Token refreshes per client IP per minute: one per page load, so above login's limit. */
     AUTH_REFRESH_RATE_LIMIT: z.coerce.number().int().min(1).max(1000).default(30),
+    /** Registrations per client IP per minute: each one hashes a password, so it is kept low. */
+    AUTH_REGISTER_RATE_LIMIT: z.coerce.number().int().min(1).max(1000).default(5),
+    /**
+     * Whether the sign-up page may create the first owner (ADR 0023). It only ever works on a
+     * server with no owner; turn it off on a server that should be set up with `make owner`.
+     */
+    OWNER_SIGNUP_ENABLED: z.stringbool().default(true),
   })
   .refine((env) => env.NODE_ENV !== 'production' || !env.JWT_ACCESS_SECRET.includes('change-me'), {
     path: ['JWT_ACCESS_SECRET'],
@@ -40,6 +47,8 @@ export interface AppConfig {
     readonly cookiePath: string;
     readonly loginRateLimit: number;
     readonly refreshRateLimit: number;
+    readonly registerRateLimit: number;
+    readonly ownerSignupEnabled: boolean;
     /** Secure cookies everywhere but local development and tests (plain http). */
     readonly cookieSecure: boolean;
   };
@@ -71,6 +80,8 @@ export function parseConfig(env: Readonly<Record<string, string | undefined>>): 
       cookiePath: data.AUTH_COOKIE_PATH,
       loginRateLimit: data.AUTH_LOGIN_RATE_LIMIT,
       refreshRateLimit: data.AUTH_REFRESH_RATE_LIMIT,
+      registerRateLimit: data.AUTH_REGISTER_RATE_LIMIT,
+      ownerSignupEnabled: data.OWNER_SIGNUP_ENABLED,
       cookieSecure: data.NODE_ENV === 'production',
     },
   };

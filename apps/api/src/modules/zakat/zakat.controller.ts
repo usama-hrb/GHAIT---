@@ -10,7 +10,7 @@ import {
 import { Controller, Get, HttpCode, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { z } from 'zod';
-import { ZodBody, ZodParam, ZodResponse } from '../../common/index.js';
+import { OwnerOnly, ZodBody, ZodParam, ZodResponse } from '../../common/index.js';
 import { ZakatService } from './zakat.service.js';
 
 /** Zakat reports (BUILD_PROMPTS 5.1); devices compute and save them offline, through sync. */
@@ -27,6 +27,8 @@ export class ZakatController {
     return this.zakat.list();
   }
 
+  /** With what was paid on it, one draw per partner: a partner reads its own through sync (ADR 0024). */
+  @OwnerOnly()
   @Get(':id')
   @ZodResponse(zakatReportDetailSchema)
   get(@ZodParam('id', idSchema) id: string) {

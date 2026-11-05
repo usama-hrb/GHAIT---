@@ -40,6 +40,8 @@ services:
       MIGRATE_ON_START: 'true'
       LOG_LEVEL: ${LOG_LEVEL:-info}
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?set in .env}
+      # Whether the sign-up page may create the first owner while the server has none (ADR 0023).
+      OWNER_SIGNUP_ENABLED: ${OWNER_SIGNUP_ENABLED:-true}
     depends_on:
       postgres:
         condition: service_healthy

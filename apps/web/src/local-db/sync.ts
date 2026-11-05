@@ -272,7 +272,10 @@ export class SyncEngine {
       this.set({ state: 'offline' });
       return;
     }
-    if (this.session.getState().status !== 'signed_in') {
+    const session = this.session.getState();
+    // An account still on the password the owner gave it may call nothing else yet (ADR 0024):
+    // it syncs once it has chosen its own, which changes the session and starts a cycle.
+    if (session.status !== 'signed_in' || session.user?.mustChangePassword) {
       this.set({ state: 'signed_out' });
       return;
     }

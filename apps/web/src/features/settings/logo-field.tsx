@@ -10,7 +10,8 @@ import { LOGO_FILE_TYPES } from './logo-file';
 /**
  * The shop's logo: what shows now (the saved one, the one just picked, or the built-in mark), and
  * how to replace, remove or keep it. The picked file is handed up as it is; the caller checks it,
- * makes it small (compressImage) and keeps it as a draft until the profile is saved.
+ * makes it small (compressImage) and keeps it as a draft until the profile is saved. Sign-up
+ * (ADR 0023) uses it too: it passes `note` for the status line and leaves `onUndo` out.
  */
 export function LogoField({
   src,
@@ -19,6 +20,7 @@ export function LogoField({
   busy,
   disabled,
   error,
+  note,
   onFile,
   onRemove,
   onUndo,
@@ -33,9 +35,12 @@ export function LogoField({
   busy: boolean;
   disabled: boolean;
   error: string | null;
+  /** Replaces the status line under the buttons (not the busy or error line). */
+  note?: string;
   onFile: (file: File) => void;
   onRemove: () => void;
-  onUndo: () => void;
+  /** Without it there is no Undo button. */
+  onUndo?: () => void;
 }) {
   const t = messages.settings.profile.logo;
   const filesRef = useRef<HTMLInputElement>(null);
@@ -80,7 +85,7 @@ export function LogoField({
               {t.remove}
             </Button>
           )}
-          {changed && (
+          {changed && onUndo && (
             <Button
               type="button"
               variant="ghost"
@@ -95,16 +100,32 @@ export function LogoField({
           )}
         </div>
         {busy ? (
-          <p role="status" className="text-sm text-muted-foreground">
-            {t.preparing}
-          </p>
+          <div className="grid gap-1.5">
+            <div
+              role="progressbar"
+              aria-label={t.preparing}
+              className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+            >
+              <div className="h-full w-1/2 rounded-full bg-primary motion-safe:animate-pulse" />
+            </div>
+            <p role="status" className="text-sm text-muted-foreground">
+              {t.preparing}
+            </p>
+          </div>
         ) : error !== null ? (
           <p role="alert" className="text-sm text-destructive">
             {error}
           </p>
         ) : (
           <p className="text-sm text-muted-foreground">
-            {changed ? (hasLogo ? t.pendingReplace : t.pendingRemove) : hasLogo ? t.saved : t.empty}
+            {note ??
+              (changed
+                ? hasLogo
+                  ? t.pendingReplace
+                  : t.pendingRemove
+                : hasLogo
+                  ? t.saved
+                  : t.empty)}
           </p>
         )}
         <p className="text-xs text-muted-foreground">{t.formats}</p>

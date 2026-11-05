@@ -96,7 +96,7 @@ export function ReportsScreen() {
                 'cash',
               ] as const
             ).map((tab) => (
-              <TabsTrigger key={tab} value={tab} className="h-auto py-1">
+              <TabsTrigger key={tab} value={tab} className="h-auto py-1 pointer-coarse:min-h-11">
                 {t.tabs[tab]}
               </TabsTrigger>
             ))}

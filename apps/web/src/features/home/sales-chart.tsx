@@ -85,7 +85,7 @@ export function SalesChart({ today, seesCosts }: { today: string; seesCosts: boo
         >
           <TabsList
             aria-label={t.period}
-            className="group-data-horizontal/tabs:h-9 pointer-coarse:group-data-horizontal/tabs:h-11"
+            className="group-data-horizontal/tabs:h-9 pointer-coarse:group-data-horizontal/tabs:h-12"
           >
             <TabsTrigger value="7">{t.last7}</TabsTrigger>
             <TabsTrigger value="30">{t.last30}</TabsTrigger>

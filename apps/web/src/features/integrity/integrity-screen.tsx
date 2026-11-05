@@ -129,13 +129,13 @@ export function IntegrityScreen() {
           <p className="text-muted-foreground">{t.noCounts}</p>
         ) : (
           <div className="rounded-lg border bg-card">
-            <Table>
+            <Table stack>
               <TableHeader>
                 <TableRow>
                   <TableHead>{t.date}</TableHead>
                   <TableHead className="text-end">{t.countedLabel}</TableHead>
                   <TableHead className="text-end">{t.difference}</TableHead>
-                  <TableHead className="max-sm:hidden">{t.reason}</TableHead>
+                  <TableHead>{t.reason}</TableHead>
                   <TableHead>
                     <span className="sr-only">{t.voidAction}</span>
                   </TableHead>
@@ -150,10 +150,10 @@ export function IntegrityScreen() {
                     <TableCell>
                       <DateText value={count.date} />
                     </TableCell>
-                    <TableCell className="text-end">
+                    <TableCell className="text-end" label={t.countedLabel}>
                       <Money cents={count.countedCents} />
                     </TableCell>
-                    <TableCell className="text-end">
+                    <TableCell className="text-end" label={t.difference}>
                       {count.diffCents === 0 ? (
                         t.matches
                       ) : (
@@ -166,7 +166,7 @@ export function IntegrityScreen() {
                         </>
                       )}
                     </TableCell>
-                    <TableCell className="max-sm:hidden">{count.note}</TableCell>
+                    <TableCell label={t.reason}>{count.note}</TableCell>
                     <TableCell className="text-end">
                       {count.voidedAt === null &&
                         (isLockedOn(count.date, lockedThrough) ? (
@@ -198,12 +198,12 @@ export function IntegrityScreen() {
           <p className="text-muted-foreground">{t.noRecent}</p>
         ) : (
           <div className="rounded-lg border bg-card">
-            <Table>
+            <Table stack>
               <TableHeader>
                 <TableRow>
                   <TableHead>{t.when}</TableHead>
                   <TableHead>{t.what}</TableHead>
-                  <TableHead className="max-sm:hidden">{t.date}</TableHead>
+                  <TableHead>{t.date}</TableHead>
                   <TableHead className="text-end">{t.amount}</TableHead>
                 </TableRow>
               </TableHeader>
@@ -213,7 +213,7 @@ export function IntegrityScreen() {
                     <TableCell>
                       <DateText value={event.at} format="dateTime" />
                     </TableCell>
-                    <TableCell>
+                    <TableCell label={t.what}>
                       {event.href ? (
                         <Link
                           href={event.href}
@@ -230,10 +230,10 @@ export function IntegrityScreen() {
                         </Badge>
                       )}
                     </TableCell>
-                    <TableCell className="max-sm:hidden">
+                    <TableCell label={t.date}>
                       <DateText value={event.date} />
                     </TableCell>
-                    <TableCell className="text-end">
+                    <TableCell className="text-end" label={t.amount}>
                       {event.amountCents === null ? '—' : <Money cents={event.amountCents} />}
                     </TableCell>
                   </TableRow>

@@ -61,7 +61,7 @@ export function SignOutButton() {
     <Button
       type="button"
       variant="ghost"
-      className="h-9 w-full justify-start gap-2 px-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+      className="h-9 w-full justify-start gap-2 px-2 text-muted-foreground hover:bg-destructive/10 hover:text-destructive pointer-coarse:h-11"
       onClick={() => {
         void session.logout().then(() => {
           router.replace('/login');

@@ -55,12 +55,12 @@ owner: .env ## Create the owner account or reset its password: USERNAME=<name> [
 	printf '%s' "$$pw" | $(COMPOSE) exec -T api node dist/create-owner.js \
 		--username "$(USERNAME)" $(if $(NAME),--name "$(NAME)")
 
-partner-user: .env ## Create the partner's read-only account or reset its password: USERNAME=<name> [NAME="…"]
-	@test -n "$(USERNAME)" || { echo 'usage: make partner-user USERNAME=<name> [NAME="<display name>"]' >&2; exit 1; }
+partner-user: .env ## Give an existing partner a read-only login or reset its password: USERNAME=<name> PARTNER=<partner name or id> [NAME="…"]
+	@test -n "$(USERNAME)" -a -n "$(PARTNER)" || { echo 'usage: make partner-user USERNAME=<name> PARTNER=<partner name or id> [NAME="<display name>"]' >&2; exit 1; }
 	@printf 'Password for %s (12+ characters): ' "$(USERNAME)"; \
 	stty -echo 2>/dev/null; read -r pw; stty echo 2>/dev/null; echo; \
 	printf '%s' "$$pw" | $(COMPOSE) exec -T api node dist/create-partner-user.js \
-		--username "$(USERNAME)" $(if $(NAME),--name "$(NAME)")
+		--username "$(USERNAME)" --partner "$(PARTNER)" $(if $(NAME),--name "$(NAME)")
 
 cashier-user: .env ## Create a cashier account (sells, sees no cost or profit) or reset its password: USERNAME=<name> [NAME="…"]
 	@test -n "$(USERNAME)" || { echo 'usage: make cashier-user USERNAME=<name> [NAME="<display name>"]' >&2; exit 1; }

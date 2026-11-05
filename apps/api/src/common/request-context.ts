@@ -12,6 +12,8 @@ export interface RequestContext {
   actorId: string | null;
   /** The signed-in account's role (SPEC §11); null on a public route. */
   actorRole: Role | null;
+  /** The partner a partner account is linked to (ADR 0024); null for every other account. */
+  actorPartnerId: string | null;
   readonly request: Request;
 }
 
@@ -67,7 +69,14 @@ export class RequestContextMiddleware implements NestMiddleware {
       return;
     }
     storage.run(
-      { deviceId: device ?? SERVER_DEVICE_ID, reason, actorId: null, actorRole: null, request },
+      {
+        deviceId: device ?? SERVER_DEVICE_ID,
+        reason,
+        actorId: null,
+        actorRole: null,
+        actorPartnerId: null,
+        request,
+      },
       next,
     );
   }

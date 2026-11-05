@@ -38,6 +38,9 @@ export const viewport: Viewport = {
   // --burgundy-800: the brand color behind the logo and the PWA splash screen.
   themeColor: '#491017',
   viewportFit: 'cover',
+  // The on-screen keyboard shrinks the page (100dvh follows it) instead of covering the fixed bars
+  // and the dialogs' buttons.
+  interactiveWidget: 'resizes-content',
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

@@ -830,6 +830,8 @@ export const en: Messages = {
         'This partner still owns part of the shop. Give the share to the others first.',
       partner_has_records:
         'This partner has capital, draws or settlement shares, so that history stays with them.',
+      partner_has_active_login:
+        'This partner still has an active login. Switch it off in Settings > Accounts, then remove the partner.',
       partner_in_profit_split:
         'A profit rule gives this partner a share, or they are the first partner, who holds the rules that name no one. Change the rules first.',
       partner_exit_owner: 'The owner cannot leave the shop.',
@@ -1340,6 +1342,8 @@ export const en: Messages = {
       login: 'Sign-in',
       logout: 'Sign-out',
       password_set: 'Password',
+      deactivate: 'Deactivate',
+      reactivate: 'Reactivate',
     },
     fields: {
       name: 'Name',
@@ -1598,6 +1602,10 @@ export const en: Messages = {
     employeeRecord: 'Employee',
     sections: {
       profile: { title: 'Business profile', description: 'Your shop’s name and logo.' },
+      selling: {
+        title: 'Selling units',
+        description: 'Which units you buy, stock and sell in.',
+      },
       regional: { title: 'Currency', description: 'How amounts are typed and shown.' },
       partners: {
         title: 'People & partners',
@@ -1608,6 +1616,10 @@ export const en: Messages = {
         description: 'Connection, pending changes and what needs a look.',
       },
       data: { title: 'Data', description: 'Download a copy of the shop’s data.' },
+      accounts: {
+        title: 'Accounts',
+        description: 'Cashier and partner logins, switched on and off.',
+      },
     },
     readOnly: 'Only the owner can change these settings. You can read them here.',
     needsConnection:
@@ -1665,6 +1677,35 @@ export const en: Messages = {
         invalid: 'The server did not accept these values. Check the name and the logo.',
         failed: 'Something went wrong and it was not saved. Try again.',
         partial: 'The logo was saved, but the name was not.',
+      },
+    },
+    selling: {
+      description: 'Choose the units your shop buys, stocks and sells in.',
+      units: {
+        title: 'Units',
+        description: 'Switch each unit on or off. At least one stays on.',
+      },
+      saved: 'Selling units saved',
+      failed: {
+        offline: 'Could not reach the server. Connect and try again: nothing was changed.',
+        forbidden: 'Only the owner can change the selling units.',
+        invalid: 'The server did not accept this choice.',
+        failed: 'Something went wrong and it was not saved. Try again.',
+      },
+      blocked: {
+        title: 'This change needs a look first',
+        unsellable: (count: number) =>
+          plural(count, {
+            one: '1 product would be left with no unit to sell in. Edit it, or keep a unit it sells in switched on.',
+            other: `${String(count)} products would be left with no unit to sell in. Edit them, or keep a unit they sell in switched on.`,
+          }),
+      },
+      notice: {
+        restock: (count: number) =>
+          plural(count, {
+            one: '1 product is bought only in a unit you are switching off. It can still be sold, but to restock it you will need to add a unit it can be bought in.',
+            other: `${String(count)} products are bought only in a unit you are switching off. They can still be sold, but to restock them you will need to add a unit they can be bought in.`,
+          }),
       },
     },
     regional: {
@@ -1766,26 +1807,190 @@ export const en: Messages = {
       capital_move: 'Capital movements',
       partner_draw: 'Profit draws',
       sync_conflict: 'Sync conflicts',
+      app_user: 'Accounts',
     },
   },
   auth: {
     readOnly: 'Partner account: view only. Changes are made from the owner account.',
     notForCashier: 'This screen is not for a cashier account: it sells and takes payments only.',
     cashierBack: 'Back to selling',
+    ownerOnlyPage: 'This page is for the shop owner only.',
+    ownerOnlyBack: 'Back to home',
     title: 'Sign in',
     description:
       'The first time on this device needs an internet connection. After that the app works offline.',
-    username: 'Username',
+    username: 'Email or username',
+    usernameRequired: 'Enter your email or username',
     password: 'Password',
+    passwordRequired: 'Enter your password',
+    showPassword: 'Show password',
+    hidePassword: 'Hide password',
     submit: 'Sign in',
     submitting: 'Signing in…',
     signOut: 'Sign out',
+    newShop: 'Opening a new shop?',
+    createShop: 'Create your shop',
+    brand: {
+      headline: 'Your fabric shop, in one place',
+      till: 'Sell at the till, even without internet',
+      books: 'Stock, credit and suppliers that always add up',
+      partners: 'Partner shares and zakat, worked out for you',
+    },
     errors: {
-      invalid_credentials: 'Wrong username or password',
+      invalid_credentials: 'Wrong email, username or password',
       too_many_requests: 'Too many attempts. Wait a minute and try again',
       forbidden: 'This account is not allowed to sign in yet',
       network: 'No connection to the server. Signing in needs the internet',
       unknown: 'Could not sign in. Try again',
+    },
+    changePassword: {
+      title: 'Choose your own password',
+      description:
+        'You signed in with a temporary password from the shop owner. Choose your own to continue. Any other device signed in with this account is signed out.',
+      current: 'Temporary password',
+      newPassword: 'New password',
+      newPasswordHint:
+        'At least 12 characters. A few words in a row are easy to remember and hard to guess.',
+      confirm: 'Repeat the new password',
+      submit: 'Save and continue',
+      submitting: 'Saving…',
+      currentRequired: 'Enter the temporary password',
+      mismatch: 'The two passwords do not match',
+      short: 'Use at least 12 characters',
+      errors: {
+        wrong_password: 'This is not the temporary password.',
+        password_unchanged: 'Choose a password different from the temporary one.',
+        network: 'No connection to the server. Changing the password needs the internet.',
+        unknown: 'Could not save the password. Try again.',
+      },
+    },
+    deactivated: 'This account has been switched off. Ask the shop owner.',
+  },
+  sellingUnits: {
+    groupLabel: 'Selling units',
+    piece: {
+      title: 'Unit / Piece',
+      description: 'Items counted one by one, such as buttons, thread or ready-made goods.',
+    },
+    kg: {
+      title: 'Kilogram (kg)',
+      description:
+        'Fabric you buy by weight. It waits for a measurement before it can be sold by the meter or the piece.',
+    },
+    meter: { title: 'Meter (m)', description: 'Fabric you buy and sell by the meter.' },
+    on: 'On',
+    off: 'Off',
+    none: 'Turn on at least one unit.',
+    weightOnly:
+      'With only Kilogram on, you can buy and stock by weight, but nothing can be sold yet. Turn on Meter or Unit to sell.',
+    effect:
+      'These switches decide what you can add, buy and sell from now on. Products, stock and sales already recorded are never changed.',
+  },
+  signup: {
+    title: 'Create your shop',
+    description: 'Set up the owner account and the shop in a few steps.',
+    haveAccount: 'Already have an account?',
+    signIn: 'Sign in',
+    stepsLabel: 'Sign-up steps',
+    stepOf: (step: number, total: number) => `Step ${String(step)} of ${String(total)}`,
+    steps: { account: 'You', shop: 'Shop', selling: 'Selling', review: 'Review' },
+    checking: 'Checking…',
+    closed: {
+      title: 'Sign-up is closed',
+      description:
+        'This shop already has an owner. Sign in with your account, or ask the owner to add you.',
+      signIn: 'Go to sign in',
+    },
+    offline: {
+      title: 'Setting up needs the internet',
+      description: 'Connect this device to the internet, then try again.',
+      retry: 'Try again',
+    },
+    account: {
+      title: 'Your account',
+      description: 'You will be the owner of this shop. This is what you sign in with.',
+      fullName: {
+        label: 'Full name',
+        placeholder: 'e.g. Amina Alaoui',
+        required: 'Enter your full name',
+      },
+      email: {
+        label: 'Email',
+        placeholder: 'you@example.com',
+        required: 'Enter your email',
+        invalid: 'Enter a valid email address',
+        characters: 'This email has characters the sign-in cannot take',
+        taken: 'An account already uses this email',
+      },
+      password: {
+        label: 'Password',
+        hint: 'At least 12 characters. A few random words make a strong one.',
+        required: 'Enter a password',
+        tooShort: 'Use at least 12 characters',
+      },
+      confirmPassword: {
+        label: 'Confirm password',
+        required: 'Type the password again',
+        mismatch: 'The two passwords do not match',
+      },
+      strength: {
+        label: 'Password strength',
+        weak: 'Weak',
+        fair: 'Fair',
+        good: 'Good',
+        strong: 'Strong',
+      },
+    },
+    shop: {
+      title: 'Your shop',
+      description: 'The name and logo your shop shows in the app and on what you share.',
+      name: {
+        label: 'Shop name',
+        placeholder: 'e.g. Al Nour Fabrics',
+        required: 'Enter the shop name',
+        hint: (max: number) => `Up to ${String(max)} characters.`,
+      },
+      logo: {
+        label: 'Logo (optional)',
+        ready: 'Logo ready. It is saved when your shop is created.',
+      },
+    },
+    selling: {
+      title: 'What does your shop buy and sell in?',
+      description: 'Turn on the units your shop works in. You can change them later in Settings.',
+      currency: {
+        title: 'Currency',
+        description: 'How amounts are typed and shown. Saved amounts never change.',
+      },
+    },
+    review: {
+      title: 'Review and create',
+      description: 'Check everything. Your owner account and shop are created when you continue.',
+      edit: 'Edit',
+      account: 'Account',
+      shop: 'Shop',
+      selling: 'Selling',
+      fullName: 'Name',
+      email: 'Email',
+      password: 'Password',
+      passwordHidden: 'Hidden',
+      shopName: 'Shop name',
+      logo: 'Logo',
+      logoSet: 'Your logo',
+      logoNone: 'None: the built-in mark is shown',
+      units: 'Units',
+      unitsNone: 'None selected',
+      currency: 'Currency',
+      create: 'Create my shop',
+      creating: 'Creating your shop…',
+    },
+    nav: { next: 'Continue', back: 'Back' },
+    errors: {
+      registration_closed: 'Sign-up is closed: this shop already has an owner',
+      too_many_requests: 'Too many attempts. Wait a minute and try again',
+      validation_failed: 'The server did not accept some details. Check the steps and try again',
+      network: 'No connection to the server. Creating the shop needs the internet',
+      unknown: 'Could not create the shop. Nothing was saved. Try again',
     },
   },
   catalog: {
@@ -2020,6 +2225,8 @@ export const en: Messages = {
       image: 'Image (optional)',
       boughtIn: 'Bought in',
       soldIn: 'Sold by',
+      noSoldUnits:
+        'No unit to sell in is switched on. Turn on Unit / Piece or Meter in Settings > Selling units, then add the product.',
       conversion: 'Usual weight to length (optional)',
       conversionHint:
         'How much cloth a weight makes, for example 0.5 kg = 1 m. It fills the purchase form; leave it empty if you do not know.',
@@ -2793,6 +3000,140 @@ export const en: Messages = {
       supplier_payment_above_owed: 'More than we owe this supplier',
       supplier_payment_unknown_purchase: "This purchase is not one of this supplier's",
       period_locked: 'The date is in a settled period: open the period or pick a later date',
+    },
+  },
+  userAccounts: {
+    title: 'Accounts',
+    description:
+      'Who can sign in to the shop: cashiers and partners. Switching an account off never removes the person, the partner or any record.',
+    needsConnection:
+      'Accounts are kept on the server so that a switched-off account stops working at once. Connect to the internet to manage them.',
+    ownerOnly: 'Only the owner manages accounts.',
+    loadFailed: 'The accounts could not be loaded.',
+    reasonOptional: 'Reason (optional)',
+    count: (count: number) =>
+      plural(count, {
+        zero: 'No accounts',
+        one: '1 account',
+        other: `${String(count)} accounts`,
+      }),
+    filters: {
+      label: 'Filter accounts',
+      type: 'Type',
+      status: 'Status',
+      all: 'All',
+      clear: 'Clear filters',
+    },
+    statuses: { active: 'Active', inactive: 'Inactive' },
+    create: {
+      cashier: 'New cashier',
+      partner: 'Account for a partner',
+    },
+    empty: {
+      title: 'No accounts yet',
+      description:
+        'Create a cashier account so someone else can sell from their own login, or give a partner a login to read the shop’s numbers.',
+      filtered: 'No account matches these filters.',
+    },
+    row: {
+      username: 'Username',
+      partner: 'Partner',
+      noPartner: 'No partner',
+      mustChange: 'Has not chosen a password yet',
+      left: 'The partner left the shop on',
+      switchedOff: 'Switched off on',
+      createdOn: 'Created on',
+      actionsFor: (name: string) => `Actions for ${name}`,
+    },
+    actions: {
+      deactivate: 'Deactivate',
+      reactivate: 'Reactivate',
+      reset: 'Reset password',
+    },
+    cashierDialog: {
+      title: 'New cashier account',
+      description:
+        'The cashier signs in with their own username. You will see a temporary password once, and they choose their own at the first sign-in. This creates no employee and no partner.',
+      username: 'Username',
+      usernameHint: 'Letters, digits, dot, dash or underscore; at least 3 characters.',
+      usernameRequired: 'Enter a username',
+      usernameInvalid: 'Use letters, digits, dot, dash, underscore, @ or +; at least 3 characters.',
+      displayName: 'Name shown',
+      displayNameHint: 'Shown in the menu and in the audit log.',
+      displayNameRequired: 'Enter a name of at least 2 characters',
+      submit: 'Create account',
+      submitting: 'Creating…',
+    },
+    partnerDialog: {
+      title: 'Account for a partner',
+      description:
+        'Choose a partner who is already in the shop. This creates a login only: it does not create a partner, change their share or give them any owner permission.',
+      partner: 'Partner',
+      pick: 'Choose a partner',
+      pickRequired: 'Choose the partner this account is for',
+      none: 'Every partner in the shop already has an active account.',
+      noneHint: 'Add a partner under Settings, People & partners, or switch an account off first.',
+      loading: 'Loading the partners…',
+      submit: 'Create account',
+      submitting: 'Creating…',
+    },
+    deactivateDialog: {
+      title: (name: string) => `Deactivate ${name}?`,
+      description:
+        'The account can no longer sign in, and every device signed in with it is signed out now. Nothing else changes: the person, the partner, their balances, capital, settlements and past records all stay.',
+      confirm: 'Deactivate',
+      busy: 'Deactivating…',
+    },
+    reactivateDialog: {
+      title: (name: string) => `Reactivate ${name}?`,
+      description:
+        'The account is switched on again with a new temporary password. The old password stays dead, and the person chooses a new one at the next sign-in.',
+      confirm: 'Reactivate',
+      busy: 'Reactivating…',
+    },
+    resetDialog: {
+      title: (name: string) => `Reset the password of ${name}?`,
+      description:
+        'A new temporary password replaces the current one, and every device signed in with this account is signed out now.',
+      confirm: 'Reset password',
+      busy: 'Resetting…',
+    },
+    credential: {
+      created: 'Account created',
+      reset: 'New password issued',
+      reactivated: 'Account reactivated',
+      description:
+        'Give this temporary password to the person. It is shown only now and cannot be looked up later. They choose their own password the first time they sign in.',
+      username: 'Username',
+      password: 'Temporary password',
+      copy: 'Copy password',
+      copied: 'Copied',
+      copyFailed: 'Could not copy: select the password and copy it by hand.',
+      done: 'I have given it to them',
+    },
+    issues: {
+      username_taken: 'This username is already used by another account.',
+      partner_not_found: 'This partner no longer exists.',
+      partner_is_owner: 'The owner already has the owner account.',
+      partner_exited: 'This partner has left the shop.',
+      partner_has_account: 'This partner already has an active account.',
+      account_is_owner: 'The owner account is not managed here.',
+      account_already_active: 'This account is already active.',
+      account_already_inactive: 'This account is already switched off.',
+      account_not_linked:
+        'This partner account was never linked to a partner. Create a new one for the partner.',
+      account_inactive: 'This account is switched off. Reactivate it first.',
+    },
+    errors: {
+      forbidden: 'Only the owner can do this.',
+      not_found: 'This account no longer exists.',
+      validation_failed: 'The server did not accept these details.',
+      conflict: 'This conflicts with the current state of the accounts. Reload and try again.',
+      network: 'No connection to the server. Managing accounts needs the internet.',
+      unknown: 'Something went wrong. Nothing was changed. Try again.',
+    },
+    toast: {
+      deactivated: 'Account deactivated',
     },
   },
   voidDialog: {

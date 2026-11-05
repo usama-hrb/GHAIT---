@@ -186,7 +186,10 @@ export function AppShell({
     brand === undefined || brand === 'loading' ? { name: messages.app.name, logoSrc: null } : brand;
 
   return (
-    <SidebarProvider className="shop-sidebar" style={SIDEBAR_SIZES}>
+    <SidebarProvider
+      className="shop-sidebar [--bottom-nav:calc(4rem+env(safe-area-inset-bottom))] has-[input:focus]:[--bottom-nav:0px] has-[textarea:focus]:[--bottom-nav:0px] md:[--bottom-nav:0px]"
+      style={SIDEBAR_SIZES}
+    >
       <a
         href="#content"
         className="sr-only z-50 rounded-md bg-accent px-3 py-2 text-accent-foreground focus:not-sr-only focus:fixed focus:start-3 focus:top-3"
@@ -264,13 +267,23 @@ export function AppShell({
         </div>
       </SidebarInset>
 
-      <BottomNav nav={nav} current={current} />
+      <BottomNav nav={nav} current={current} account={account} signOut={signOut} />
       {!onSearch && <NavPalette nav={nav} open={searchOpen} onOpenChange={setSearchOpen} />}
     </SidebarProvider>
   );
 }
 
-function BottomNav({ nav, current }: { nav: readonly AppShellNavItem[]; current: string }) {
+function BottomNav({
+  nav,
+  current,
+  account,
+  signOut,
+}: {
+  nav: readonly AppShellNavItem[];
+  current: string;
+  account?: AppShellAccount;
+  signOut?: ReactNode;
+}) {
   const tabs = nav.filter((item) => item.tab);
   const more = nav.filter((item) => !item.tab);
   const moreActive = more.some((item) => isActive(current, item.href));
@@ -280,7 +293,8 @@ function BottomNav({ nav, current }: { nav: readonly AppShellNavItem[]; current:
   return (
     <nav
       aria-label={messages.nav.label}
-      className="fixed inset-x-0 bottom-0 z-30 border-t bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
+      // Hidden while a field has the keyboard: the page above it is what the person is typing into.
+      className="fixed inset-x-0 bottom-0 z-30 border-t bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur group-has-[input:focus]/sidebar-wrapper:hidden group-has-[textarea:focus]/sidebar-wrapper:hidden md:hidden"
     >
       <ul className="grid grid-cols-5">
         {tabs.map((item) => {
@@ -308,7 +322,7 @@ function BottomNav({ nav, current }: { nav: readonly AppShellNavItem[]; current:
               <DrawerHeader>
                 <DrawerTitle>{messages.nav.more}</DrawerTitle>
               </DrawerHeader>
-              <ul className="grid gap-1 px-4 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
+              <ul className="grid min-h-0 gap-1 overflow-y-auto px-4">
                 {more.map((item) => {
                   const active = isActive(current, item.href);
                   return (
@@ -328,6 +342,14 @@ function BottomNav({ nav, current }: { nav: readonly AppShellNavItem[]; current:
                   );
                 })}
               </ul>
+              <div className="mt-2 grid gap-2 border-t px-4 pt-3 pb-[calc(env(safe-area-inset-bottom)+1rem)]">
+                {account && (
+                  <p className="truncate text-sm text-muted-foreground">
+                    {[account.name, account.detail].filter(Boolean).join(' · ')}
+                  </p>
+                )}
+                {signOut}
+              </div>
             </DrawerContent>
           </Drawer>
         </li>

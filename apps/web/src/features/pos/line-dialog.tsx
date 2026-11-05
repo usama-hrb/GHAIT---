@@ -10,6 +10,7 @@ import {
 } from '@fabric/core';
 import { TriangleAlertIcon } from 'lucide-react';
 import { type KeyboardEvent, type PointerEvent, useId, useMemo, useState } from 'react';
+import { useSellingUnits } from '@/features/settings';
 import { messages } from '@/i18n';
 import {
   type BatchChoice,
@@ -110,8 +111,17 @@ export function LineDialog({
   const { user } = useSession();
   const owner = user?.role === 'owner' ? user.username : null;
 
-  const sellsMeter = product.sellingUnits.includes('meter') && product.availableCm > 0;
-  const sellsPiece = product.sellingUnits.includes('piece') && product.availablePieces > 0;
+  // A unit the shop has switched off is not offered for a new line (ADR 0023); a line already on
+  // the bill keeps its own unit, so it can still be changed.
+  const units = useSellingUnits();
+  const sellsMeter =
+    (units.meter || editing?.unit === 'meter') &&
+    product.sellingUnits.includes('meter') &&
+    product.availableCm > 0;
+  const sellsPiece =
+    (units.piece || editing?.unit === 'piece') &&
+    product.sellingUnits.includes('piece') &&
+    product.availablePieces > 0;
   const [saleUnit, setSaleUnit] = useState<CartUnit>(
     editing?.unit ?? (sellsMeter ? 'meter' : 'piece'),
   );
@@ -178,6 +188,7 @@ export function LineDialog({
   const chosen = batches?.find((choice) => choice.batch.id === batchChoice);
   const canSellWhole =
     saleUnit === 'meter' &&
+    units.piece &&
     product.sellingUnits.includes('piece') &&
     product.pricePerPieceCents != null &&
     chosen !== undefined &&

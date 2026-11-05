@@ -4,7 +4,7 @@ import {
   mayRead,
   periodDatesOf,
   type RecordBase,
-  redactForRole,
+  recordForAccount,
   type Role,
   SERVER_DEVICE_ID,
   SYNC_BATCH_MAX_BYTES,
@@ -146,7 +146,11 @@ export class SyncService implements OnModuleInit {
     const page = merged.slice(0, heavy < 0 ? limit : Math.max(heavy, 1));
     // The cursor moves past rows that are cut out too, or a device would ask for them forever.
     const changes = page.flatMap((change) => {
-      const record = redactForRole(role, change.entity, change.record as object);
+      const record = recordForAccount(
+        { role, partnerId: requestContext()?.actorPartnerId ?? null },
+        change.entity,
+        change.record as object,
+      );
       return record === null ? [] : [{ ...change, record }];
     });
     return {

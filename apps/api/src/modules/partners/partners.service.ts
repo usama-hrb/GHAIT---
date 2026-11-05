@@ -7,13 +7,14 @@ import {
   type PartnerInput,
   partnerAccountOf,
   partnerInputSchema,
+  ACCOUNT_ISSUES,
   SERVER_DEVICE_ID,
   type SyncEntity,
 } from '@fabric/contracts';
 import type { PartnerAccount } from '@fabric/core';
 import { HttpStatus, Injectable, type OnModuleInit } from '@nestjs/common';
 import { AppHttpException, requestContext } from '../../common/index.js';
-import { type SyncedRow, SyncRegistry, SyncService } from '../sync/index.js';
+import { type SyncedRow, SyncRegistry, SyncRejection, SyncService } from '../sync/index.js';
 import {
   CapitalMoveRepository,
   PartnerDrawRepository,
@@ -41,6 +42,20 @@ export class PartnersService implements OnModuleInit {
     this.registry.register(this.partners);
     this.registry.register(this.moves);
     this.registry.register(this.draws);
+    // A partner whose login is still switched on stays: switch the login off first, so the
+    // account never points at a partner who is gone (ADR 0024).
+    this.registry.addVoidGuard('partner', {
+      assertCanVoid: async (id) => {
+        if (!(await this.partners.hasActiveLogin(id))) return;
+        throw new SyncRejection('validation_failed', 'This partner still has an active login', [
+          {
+            path: ['partnerId'],
+            message: 'partner_has_active_login',
+            code: ACCOUNT_ISSUES.partnerHasLogin,
+          },
+        ]);
+      },
+    });
   }
 
   async list() {

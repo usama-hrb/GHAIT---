@@ -61,9 +61,11 @@ export {
   createLocalDb,
   type LocalDb,
   LocalDbProvider,
+  type RegistrationOpen,
   type SyncOverview,
   useLiveQuery,
   useCanSeeCosts,
+  useRegistrationOpen,
   useRepositories,
   useSession,
   useSyncStatus,
@@ -105,6 +107,7 @@ export type {
   SuppliersRepository,
 } from './tables';
 export type { SessionState } from './session';
+export type { UserAccountsRepository } from './user-accounts';
 export type {
   PayableView,
   SupplierAccountsRepository,

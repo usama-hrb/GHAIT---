@@ -88,10 +88,58 @@ export function useLiveQuery<T>(
 
 const LOADING_SESSION: SessionState = { status: 'loading', user: null, needsSignIn: false };
 
-export function useSession(): SessionState & Pick<Session, 'login' | 'logout'> {
+export function useSession(): SessionState &
+  Pick<Session, 'login' | 'logout' | 'register' | 'changePassword'> {
   const { session } = useLocalDb();
   const state = useSyncExternalStore(session.subscribe, session.getState, () => LOADING_SESSION);
-  return { ...state, login: (input) => session.login(input), logout: () => session.logout() };
+  return {
+    ...state,
+    login: (input) => session.login(input),
+    logout: () => session.logout(),
+    register: (input) => session.register(input),
+    changePassword: (input) => session.changePassword(input),
+  };
+}
+
+/** Whether the server takes the first owner's sign-up now; `unknown` until it answers or offline. */
+export type RegistrationOpen = 'unknown' | 'open' | 'closed';
+
+/**
+ * Asks the server once whether the first owner may still sign up (ADR 0023). `unknown` while the
+ * question is out and when it cannot be asked (offline, the server down): the login page then
+ * shows no sign-up link and the sign-up page says it needs the internet. `retry` asks again.
+ */
+export function useRegistrationOpen(): {
+  state: RegistrationOpen;
+  asking: boolean;
+  retry: () => void;
+} {
+  const { session } = useLocalDb();
+  const [attempt, setAttempt] = useState(0);
+  const [answer, setAnswer] = useState<{ attempt: number; state: RegistrationOpen } | null>(null);
+
+  useEffect(() => {
+    let current = true;
+    session
+      .registrationOpen()
+      .then((open) => {
+        if (current) setAnswer({ attempt, state: open ? 'open' : 'closed' });
+      })
+      .catch(() => {
+        if (current) setAnswer({ attempt, state: 'unknown' });
+      });
+    return () => {
+      current = false;
+    };
+  }, [session, attempt]);
+
+  return {
+    state: answer?.state ?? 'unknown',
+    asking: answer?.attempt !== attempt,
+    retry: () => {
+      setAttempt((count) => count + 1);
+    },
+  };
 }
 
 /**

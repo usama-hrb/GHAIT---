@@ -79,7 +79,7 @@ export function SaleDetailScreen() {
       {view.customer ? (
         <Link
           href={`/customers/view?id=${view.customer.id}`}
-          className="underline-offset-4 hover:underline"
+          className="w-fit py-2 underline-offset-4 hover:underline"
         >
           {view.customer.name}
         </Link>
@@ -88,18 +88,16 @@ export function SaleDetailScreen() {
       )}
 
       <div className="rounded-lg border bg-card">
-        <Table>
+        <Table stack>
           <TableHeader>
             <TableRow>
               <TableHead>{messages.pos.columns.item}</TableHead>
               <TableHead>{messages.pos.columns.batch}</TableHead>
               <TableHead className="text-end">{messages.pos.columns.length}</TableHead>
-              <TableHead className="text-end max-sm:hidden">{messages.pos.columns.price}</TableHead>
+              <TableHead className="text-end">{messages.pos.columns.price}</TableHead>
               <TableHead className="text-end">{messages.pos.columns.total}</TableHead>
               {seesCosts && (
-                <TableHead className="text-end max-sm:hidden">
-                  {messages.pos.columns.profit}
-                </TableHead>
+                <TableHead className="text-end">{messages.pos.columns.profit}</TableHead>
               )}
             </TableRow>
           </TableHeader>
@@ -129,22 +127,22 @@ export function SaleDetailScreen() {
                     </span>
                   )}
                 </TableCell>
-                <TableCell>
+                <TableCell label={messages.pos.columns.batch}>
                   <bdi dir="ltr" data-num>
                     {batch?.code}
                   </bdi>
                 </TableCell>
-                <TableCell className="text-end">
+                <TableCell className="text-end" label={messages.pos.columns.length}>
                   <Quantity unit={line.unit} amount={line.quantity} />
                 </TableCell>
-                <TableCell className="text-end max-sm:hidden">
+                <TableCell className="text-end" label={messages.pos.columns.price}>
                   <Money cents={line.actualPriceCents} />
                 </TableCell>
-                <TableCell className="text-end">
+                <TableCell className="text-end" label={messages.pos.columns.total}>
                   <Money cents={line.lineTotalCents} />
                 </TableCell>
                 {seesCosts && (
-                  <TableCell className="text-end max-sm:hidden">
+                  <TableCell className="text-end" label={messages.pos.columns.profit}>
                     {lineFigures?.profitCents == null ? (
                       '—'
                     ) : (
@@ -240,7 +238,7 @@ export function SaleDetailScreen() {
         <section aria-label={t.payments} className="grid gap-2">
           <h3 className="font-heading font-semibold">{t.payments}</h3>
           <div className="rounded-lg border bg-card">
-            <Table>
+            <Table stack>
               <TableHeader>
                 <TableRow>
                   <TableHead>{messages.customers.columns.date}</TableHead>
@@ -255,11 +253,11 @@ export function SaleDetailScreen() {
                     <TableCell>
                       <DateText value={payment.date} />
                     </TableCell>
-                    <TableCell className="text-end">
+                    <TableCell className="text-end" label={messages.customers.columns.amount}>
                       <Money cents={payment.amountCents} />
                     </TableCell>
                     {seesCosts && (
-                      <TableCell className="text-end">
+                      <TableCell className="text-end" label={t.capital}>
                         {payment.capitalCents === null ? (
                           '—'
                         ) : (
@@ -268,7 +266,7 @@ export function SaleDetailScreen() {
                       </TableCell>
                     )}
                     {seesCosts && (
-                      <TableCell className="text-end">
+                      <TableCell className="text-end" label={t.recognized}>
                         {payment.profitCents === null ? (
                           '—'
                         ) : (

@@ -204,7 +204,7 @@ function CardFact({
 }) {
   return (
     <div className={cn('grid min-w-0 content-start gap-0.5 text-sm', className)}>
-      <dt className="text-[10px] leading-tight font-semibold tracking-[0.12em] text-muted-foreground uppercase">
+      <dt className="text-[11px] leading-tight font-semibold tracking-[0.12em] text-muted-foreground uppercase rtl:tracking-normal">
         {label}
       </dt>
       <dd>{children}</dd>
@@ -275,7 +275,7 @@ function StatTile({
   children: ReactNode;
 }) {
   return (
-    <div className="grid min-w-36 shrink-0 content-start gap-1.5 rounded-xl border border-border/70 bg-card p-3 shadow-sm sm:min-w-0">
+    <div className="grid min-w-0 content-start gap-1.5 rounded-xl border border-border/70 bg-card p-3 shadow-sm max-sm:last:odd:col-span-2">
       <dt className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
         <Icon
           className={cn(
@@ -287,7 +287,7 @@ function StatTile({
         />
         {label}
       </dt>
-      <dd className="font-heading text-xl font-semibold tracking-tight whitespace-nowrap tabular-nums">
+      <dd className="font-heading text-lg font-semibold tracking-tight break-words tabular-nums sm:text-xl sm:whitespace-nowrap">
         {children}
       </dd>
     </div>
@@ -357,7 +357,7 @@ export function ProductInventoryScreen() {
 
       {data !== undefined && data.summary.products > 0 && (
         <section aria-label={t.overview.label}>
-          <dl className="-mx-4 flex gap-3 overflow-x-auto px-4 pb-1 sm:mx-0 sm:grid sm:grid-cols-[repeat(auto-fit,minmax(8.5rem,1fr))] sm:overflow-visible sm:px-0 sm:pb-0">
+          <dl className="grid grid-cols-2 gap-2 sm:grid-cols-[repeat(auto-fit,minmax(8.5rem,1fr))] sm:gap-3">
             <StatTile icon={PackageIcon} label={t.overview.products}>
               <span data-num>{data.summary.products}</span>
             </StatTile>
@@ -431,7 +431,7 @@ export function ProductInventoryScreen() {
         <div
           role="group"
           aria-label={t.filters.label}
-          className="col-span-2 flex gap-2 overflow-x-auto pb-1 lg:order-2 lg:col-span-1 lg:pb-0"
+          className="col-span-2 flex flex-wrap gap-2 lg:order-2 lg:col-span-1 lg:flex-nowrap"
         >
           {STOCK_FILTERS.map((value) => (
             <Button
@@ -440,7 +440,7 @@ export function ProductInventoryScreen() {
               size="sm"
               variant={filter === value ? 'secondary' : 'outline'}
               aria-pressed={filter === value}
-              className="shrink-0 touch-manipulation pointer-coarse:h-11"
+              className="shrink-0 touch-manipulation pointer-coarse:h-11 pointer-coarse:min-w-11"
               onClick={() => {
                 setFilter(value);
               }}

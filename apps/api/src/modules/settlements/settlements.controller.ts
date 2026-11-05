@@ -15,7 +15,7 @@ import {
 import { Controller, Get, HttpCode, Post, Put } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { z } from 'zod';
-import { ZodBody, ZodParam, ZodQuery, ZodResponse } from '../../common/index.js';
+import { OwnerOnly, ZodBody, ZodParam, ZodQuery, ZodResponse } from '../../common/index.js';
 import { SettlementsService } from './settlements.service.js';
 
 /**
@@ -35,13 +35,16 @@ export class SettlementsController {
     return this.settlements.list();
   }
 
-  /** The period ending on `end`, as approving it now would settle it. */
+  /** The period ending on `end`, as approving it now would settle it. Each partner's share is in it. */
+  @OwnerOnly()
   @Get('settlements/preview')
   @ZodResponse(settlementPreviewSchema)
   preview(@ZodQuery(settlementPreviewQuerySchema) query: { end: string }) {
     return this.settlements.preview(query.end);
   }
 
+  /** With every partner's share of it: a partner reads its own through sync (ADR 0024, PS3). */
+  @OwnerOnly()
   @Get('settlements/:id')
   @ZodResponse(settlementDetailSchema)
   get(@ZodParam('id', idSchema) id: string) {

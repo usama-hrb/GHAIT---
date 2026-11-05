@@ -7,7 +7,8 @@ import type { SyncEntity, SyncOp } from './sync.js';
  * RL1–RL5). The API enforces it; the screens only hide what the API would refuse.
  *
  * - owner: everything.
- * - partner: reads everything, changes nothing (the AuthGuard refuses every write).
+ * - partner: reads the shop's numbers, changes nothing (the AuthGuard refuses every write), and
+ *   never receives another partner's money (`partnerViewOf`, ADR 0024).
  * - cashier: sells and takes payments. It never receives a cost, a profit or any record of the
  *   partners' money, because the device keeps a copy of whatever the server sends it.
  */
@@ -78,6 +79,7 @@ export const CASHIER_SETTING_KEYS: readonly string[] = [
   'shop_name',
   'shop_logo',
   'remnant_threshold_cm',
+  'selling_units',
 ];
 
 /**
@@ -120,6 +122,53 @@ export function redactForRole<R extends object>(
     return typeof key === 'string' && CASHIER_SETTING_KEYS.includes(key) ? record : null;
   }
   return null;
+}
+
+/**
+ * What belongs to one partner and to nobody else who is a partner (ADR 0024, PS1–PS3): their
+ * contributions and withdrawals, their draws and their share of each settlement. The ownership
+ * percentages and the profit rules are the shop's structure, which every partner knows; the money
+ * is private.
+ */
+export const PARTNER_OWN_RECORDS = ['capital_move', 'partner_draw', 'settlement_share'] as const;
+
+/**
+ * A record as a partner's account may receive it, or null when it must not be sent. A partner
+ * account reads what the shop shows (SPEC §11) except another partner's money, and sees another
+ * partner's name and share but not how to reach them or what the owner noted about them.
+ * `partnerId` is the partner the account is linked to; a partner account that is linked to none
+ * (it cannot be: the database refuses it) would see no partner's private records at all.
+ */
+export function partnerViewOf<R extends object>(
+  entity: SyncEntity,
+  record: R,
+  partnerId: string | null,
+): R | null {
+  if ((PARTNER_OWN_RECORDS as readonly SyncEntity[]).includes(entity)) {
+    return partnerId !== null && (record as { partnerId?: unknown }).partnerId === partnerId
+      ? record
+      : null;
+  }
+  if (entity === 'partner') {
+    return partnerId !== null && (record as { id?: unknown }).id === partnerId
+      ? record
+      : { ...record, phone: null, notes: null, exitNote: null };
+  }
+  return record;
+}
+
+/**
+ * What an account may receive of a record: the role's redaction (RL1), then, for a partner's
+ * account, the cut that keeps another partner's money out (PS2). Null: do not send it.
+ */
+export function recordForAccount<R extends object>(
+  account: { role: Role; partnerId: string | null },
+  entity: SyncEntity,
+  record: R,
+): R | null {
+  const redacted = redactForRole(account.role, entity, record);
+  if (redacted === null || account.role !== 'partner') return redacted;
+  return partnerViewOf(entity, redacted, account.partnerId);
 }
 
 export const ACCESS_ISSUES = {

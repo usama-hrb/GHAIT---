@@ -1,18 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import {
+  ACCOUNT_ISSUES,
   type AccessTokenResponse,
   type AuthUser,
+  type ChangePasswordRequest,
   type LoginRequest,
   newPasswordSchema,
+  REGISTRATION_ISSUES,
   SERVER_DEVICE_ID,
   usernameSchema,
 } from '@fabric/contracts';
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
-import { AppHttpException, requestContext } from '../../common/index.js';
+import { AppHttpException, requestContext, sqlState } from '../../common/index.js';
 import { APP_CONFIG, type AppConfig } from '../../config/index.js';
 import { TransactionHost } from '../../database/index.js';
 import { AuditService } from '../audit/index.js';
-import { actAs } from './auth.decorators.js';
+import { actAs, type AuthenticatedUser } from './auth.decorators.js';
 import { PasswordHasher } from './password-hasher.js';
 import { SessionsRepository } from './sessions.repository.js';
 import { TokenService } from './token.service.js';
@@ -40,17 +43,30 @@ const REUSE_GRACE_MS = 30_000;
 const SIGN_IN_ROLES: ReadonlySet<string> = new Set(['owner', 'partner', 'cashier']);
 
 function toAuthUser(user: UserRow): AuthUser {
-  return { id: user.id, username: user.username, displayName: user.displayName, role: user.role };
+  return {
+    id: user.id,
+    username: user.username,
+    displayName: user.displayName,
+    role: user.role,
+    mustChangePassword: user.mustChangePassword,
+  };
 }
 
 /** What the audit log may show of a user: never the password hash. */
-function auditView(user: UserRow) {
+export function auditView(user: UserRow) {
   return {
     ...toAuthUser(user),
+    partnerId: user.partnerId,
     passwordChangedAt: user.passwordChangedAt,
+    deactivatedAt: user.deactivatedAt,
     voidedAt: user.voidedAt,
   };
 }
+
+const signUpClosed = () =>
+  new AppHttpException('forbidden', 'Sign-up is closed', HttpStatus.FORBIDDEN, [
+    { path: [], message: 'Sign-up is closed', code: REGISTRATION_ISSUES.registrationClosed },
+  ]);
 
 const unauthorized = (message: string) =>
   new AppHttpException('unauthorized', message, HttpStatus.UNAUTHORIZED);
@@ -79,6 +95,21 @@ export class AuthService {
         HttpStatus.UNAUTHORIZED,
       );
     }
+    // Said only to someone who knew the password, so it tells a stranger nothing (ADR 0024).
+    if (user.deactivatedAt) {
+      throw new AppHttpException(
+        'forbidden',
+        'This account has been deactivated',
+        HttpStatus.FORBIDDEN,
+        [
+          {
+            path: [],
+            message: 'This account has been deactivated',
+            code: ACCOUNT_ISSUES.deactivated,
+          },
+        ],
+      );
+    }
     if (!SIGN_IN_ROLES.has(user.role)) {
       throw new AppHttpException(
         'forbidden',
@@ -86,7 +117,7 @@ export class AuthService {
         HttpStatus.FORBIDDEN,
       );
     }
-    actAs(user.id, user.role);
+    actAs(user.id, user.role, user.partnerId);
     const issued = await this.startSession(user, randomUUID());
     await this.audit.record({
       entity: 'app_user',
@@ -96,6 +127,73 @@ export class AuthService {
       after: { sessionId: issued.sessionId },
     });
     return issued;
+  }
+
+  /**
+   * Whether the sign-up page may create an owner: only while the server has none (ADR 0023), and
+   * only if the operator has not turned it off.
+   */
+  async ownerSignupOpen(): Promise<boolean> {
+    return this.config.auth.ownerSignupEnabled && !(await this.hasOwner());
+  }
+
+  /**
+   * The first owner setting the shop up (ADR 0023): the account, whatever `setUpShop` writes for
+   * the shop, and the first session, in the request's one transaction, so a failure leaves nothing
+   * behind. The role is the server's choice, never the request's, and the database allows one
+   * owner only (a partial unique index), so two sign-ups racing each other cannot both succeed.
+   * Open only while the server has no owner.
+   */
+  async registerOwner(
+    account: { email: string; fullName: string; password: string },
+    setUpShop: (owner: AuthUser) => Promise<void>,
+  ): Promise<IssuedTokens> {
+    // Cheap refusals first: a closed server never hashes a password.
+    if (!(await this.ownerSignupOpen())) throw signUpClosed();
+    if (await this.users.findByUsername(account.email)) {
+      throw new AppHttpException('conflict', 'Email already in use', HttpStatus.CONFLICT, [
+        { path: ['email'], message: 'Email already in use', code: REGISTRATION_ISSUES.emailTaken },
+      ]);
+    }
+    const passwordHash = await this.hasher.hash(account.password);
+    let user: UserRow;
+    try {
+      user = await this.users.insert({
+        username: account.email,
+        displayName: account.fullName,
+        passwordHash,
+        role: 'owner',
+        deviceId: requestContext()?.deviceId ?? SERVER_DEVICE_ID,
+      });
+    } catch (error) {
+      // The other sign-up won the race for the single owner row.
+      if (sqlState(error) === '23505') throw signUpClosed();
+      throw error;
+    }
+    actAs(user.id, user.role);
+    await this.audit.record({
+      entity: 'app_user',
+      entityId: user.id,
+      action: 'create',
+      before: null,
+      after: auditView(user),
+      reason: 'owner signed up on the sign-up page',
+    });
+    await setUpShop(toAuthUser(user));
+
+    const issued = await this.startSession(user, randomUUID());
+    await this.audit.record({
+      entity: 'app_user',
+      entityId: user.id,
+      action: 'login',
+      before: null,
+      after: { sessionId: issued.sessionId },
+    });
+    return issued;
+  }
+
+  private async hasOwner(): Promise<boolean> {
+    return (await this.users.findByRole('owner')).some((owner) => !owner.voidedAt);
   }
 
   /**
@@ -130,7 +228,13 @@ export class AuthService {
         return { kind: 'reused' } as const;
       }
       const user = await this.users.findById(session.userId);
-      if (session.expiresAt <= now || !user || user.voidedAt || !SIGN_IN_ROLES.has(user.role)) {
+      if (
+        session.expiresAt <= now ||
+        !user ||
+        user.voidedAt ||
+        user.deactivatedAt ||
+        !SIGN_IN_ROLES.has(user.role)
+      ) {
         return { kind: 'invalid' } as const;
       }
       if (retry) await this.sessions.revokeFamily(session.familyId, now, { except: session.id });
@@ -166,13 +270,67 @@ export class AuthService {
 
   async me(userId: string): Promise<AuthUser> {
     const user = await this.users.findById(userId);
-    if (!user || user.voidedAt) throw unauthorized('User no longer exists');
+    if (!user || user.voidedAt || user.deactivatedAt) throw unauthorized('User no longer exists');
     return toAuthUser(user);
   }
 
   /**
+   * An account choosing its own password (ADR 0024): the one it has (the temporary one the owner
+   * gave it, at its first sign-in), then a new one. Every other session of the account is signed
+   * out; this one goes on. The account stops being asked for a new password.
+   */
+  async changePassword(
+    actor: AuthenticatedUser,
+    request: ChangePasswordRequest,
+  ): Promise<AuthUser> {
+    const current = await this.users.findById(actor.id);
+    if (!current || current.voidedAt || current.deactivatedAt) {
+      throw unauthorized('User no longer exists');
+    }
+    if (!(await this.hasher.verify(current.passwordHash, request.currentPassword))) {
+      throw new AppHttpException('validation_failed', 'Wrong password', HttpStatus.BAD_REQUEST, [
+        {
+          path: ['currentPassword'],
+          message: 'Wrong password',
+          code: ACCOUNT_ISSUES.wrongPassword,
+        },
+      ]);
+    }
+    if (await this.hasher.verify(current.passwordHash, request.newPassword)) {
+      throw new AppHttpException(
+        'validation_failed',
+        'Choose a different password',
+        HttpStatus.BAD_REQUEST,
+        [
+          {
+            path: ['newPassword'],
+            message: 'Choose a different password',
+            code: ACCOUNT_ISSUES.passwordUnchanged,
+          },
+        ],
+      );
+    }
+    const updated = await this.users.setPassword(
+      current.id,
+      await this.hasher.hash(request.newPassword),
+      requestContext()?.deviceId ?? SERVER_DEVICE_ID,
+    );
+    await this.sessions.revokeAllOfUser(current.id, new Date(), { except: actor.sessionId });
+    await this.audit.record({
+      entity: 'app_user',
+      entityId: current.id,
+      action: 'password_set',
+      before: auditView(current),
+      after: auditView(updated),
+      reason: 'password changed by the account itself',
+    });
+    return toAuthUser(updated);
+  }
+
+  /**
    * For the create-owner command: creates the single owner account, or sets a new password for
-   * it and signs it out everywhere. There is deliberately no HTTP route that creates an owner.
+   * it and signs it out everywhere. The only HTTP route that creates an owner is the first-owner
+   * sign-up (`register`), which refuses once an owner exists.
    */
   async setOwner(input: {
     username: string;
@@ -223,18 +381,6 @@ export class AuthService {
   }
 
   /**
-   * For the create-partner-user command: a read-only account for the partner (BUILD_PROMPTS
-   * 4.2), or a new password for it (signing it out everywhere).
-   */
-  setPartnerUser(input: {
-    username: string;
-    password: string;
-    displayName?: string;
-  }): Promise<'created' | 'password_reset'> {
-    return this.setRoleUser('partner', 'partner account created from the command line', input);
-  }
-
-  /**
    * For the create-cashier-user command: an account for a worker at the till (BUILD_PROMPTS 5.3):
    * it sells and takes payments, and never receives a cost or a profit. A new password signs it
    * out everywhere.
@@ -248,7 +394,7 @@ export class AuthService {
   }
 
   private async setRoleUser(
-    role: 'partner' | 'cashier',
+    role: 'cashier',
     createdReason: string,
     input: { username: string; password: string; displayName?: string },
   ): Promise<'created' | 'password_reset'> {

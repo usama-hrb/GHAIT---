@@ -19,12 +19,14 @@ import { UsersRepository } from './users.repository.js';
     JwtModule.register({}),
     // Only the routes with @UseGuards(ThrottlerGuard) are limited, each by its own throttler
     // (AuthController skips the other): login (AUTH_LOGIN_RATE_LIMIT a minute per client IP) and
-    // refresh (AUTH_REFRESH_RATE_LIMIT).
+    // refresh (AUTH_REFRESH_RATE_LIMIT) and the first owner's sign-up (AUTH_REGISTER_RATE_LIMIT, in
+    // the registration module).
     ThrottlerModule.forRootAsync({
       inject: [APP_CONFIG],
       useFactory: (config: AppConfig) => [
         { name: 'login', ttl: 60_000, limit: config.auth.loginRateLimit },
         { name: 'refresh', ttl: 60_000, limit: config.auth.refreshRateLimit },
+        { name: 'register', ttl: 60_000, limit: config.auth.registerRateLimit },
       ],
     }),
   ],
@@ -37,6 +39,7 @@ import { UsersRepository } from './users.repository.js';
     SessionsRepository,
     { provide: APP_GUARD, useClass: AuthGuard },
   ],
-  exports: [AuthService],
+  // The hasher and the sessions are what the accounts module needs to make a login and end one.
+  exports: [AuthService, PasswordHasher, SessionsRepository],
 })
 export class AuthModule {}

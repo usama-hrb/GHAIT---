@@ -1,5 +1,6 @@
 import {
   type PhotoImage,
+  type SellingUnits,
   SETTINGS,
   type SettingKey,
   settingSchema,
@@ -55,6 +56,11 @@ export class ShopSettingsRepository extends SettingsRepository {
       body: { value: checked, effectiveFrom: null },
     });
     await this.server.syncNow();
+  }
+
+  /** The units the shop works in (ADR 0023): every unit on until the owner chooses. */
+  sellingUnits(day = shopToday()): Promise<SellingUnits> {
+    return this.get('selling_units', day);
   }
 
   /** The money display unit, rial or dirham (display only: stored amounts are cents). */

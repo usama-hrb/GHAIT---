@@ -168,7 +168,7 @@ function ProductWorkspace({
         <>
           {/* Room under the last section for the bar below. */}
           <div className="h-16" aria-hidden />
-          <div className="fixed inset-x-4 bottom-20 z-20 md:bottom-4">
+          <div className="fixed inset-x-4 bottom-[calc(var(--bottom-nav,0px)+1rem)] z-20">
             <Button
               type="button"
               variant="accent"

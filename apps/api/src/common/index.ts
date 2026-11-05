@@ -1,6 +1,7 @@
 export { AllExceptionsFilter, AppHttpException, sqlState, toErrorResponse } from './errors.js';
 export { buildOpenApiDocument, configureHttp } from './http.js';
 export { loggingModule } from './logging.js';
+export { OWNER_ONLY, OwnerOnly } from './owner-only.js';
 export {
   type RequestContext,
   requestContext,

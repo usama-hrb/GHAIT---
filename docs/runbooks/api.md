@@ -22,7 +22,7 @@ These steps work for both stacks; add `STACK=prod` on the server (the default is
 
    You are asked for the password (12 characters or more). It is not echoed and never appears in the process list or the shell history. The account creation is in `audit_log`.
 
-There is no sign-up page and no setup route: the owner account exists only through this command.
+Instead of this command, the owner can open `/signup` in a browser on a server that has no owner yet and create the account and the shop there ([ADR 0023](../adr/0023-owner-self-registration-and-selling-units.md)). The page closes as soon as an owner exists. On a server reachable from the internet, do one of the two straight after the first start; to rule out the page altogether, set `OWNER_SIGNUP_ENABLED=false` in `.env` and use the command. The command stays the way to reset the owner's password.
 
 ## Forgotten password
 
@@ -59,21 +59,37 @@ Access tokens signed with the old secret stop working at once. Clients get a new
 
 `make logs SERVICE=api [STACK=prod]` shows JSON lines (pino). Every response has an `x-request-id` header. The same id is in that request's log lines, in its error body (`error.requestId`), and in the audit entries it wrote. Search the logs for it.
 
-## The partner's read-only account
+## Accounts: who can sign in
+
+The owner manages cashier and partner logins in the app, under **Settings > Accounts** (needs a connection, owner only; [ADR 0024](../adr/0024-account-management.md)). There the owner:
+
+- sees every account with its type, status and, for a partner account, the partner it belongs to, and filters by type and status;
+- creates a cashier account (any number; no partner, role or salary is asked for) or a login for an existing partner (only partners who are not the owner, have not left the shop and have no active login are offered; a partner has at most one active login);
+- switches an account off or on, and resets its credentials.
+
+The owner never types someone else's password. Creating, reactivating and resetting show a **temporary password once**, in a dialog that must be acknowledged; hand it to the person. They are asked to choose their own password at the first sign-in and can do nothing else until they do. A reset or reactivation signs the account out everywhere.
+
+Switching an account off takes effect on the next request: its sessions are revoked and every API call with an older token answers 401. It removes nothing: the partner, the employee, balances, capital, settlements and sales stay, and the account's audit history stays (`create`, `deactivate`, `reactivate`, `password_set` under the entity `app_user`). An account is never deleted. A partner who still has an active login cannot be removed (`partner_has_active_login`); switch the login off first. A device that was working when its account was switched off keeps the local data it has and shows "sign in again to sync" at its next contact with the server; the switched-off account cannot sign in again.
+
+The owner's own account is not managed there: `make owner USERNAME=<name>` creates it or resets its password.
+
+### The partner's read-only account
 
 ```sh
-make partner-user USERNAME=<name> [NAME="<display name>"]   # add STACK=prod on the server
+make partner-user USERNAME=<name> PARTNER=<partner name or id> [NAME="<display name>"]   # add STACK=prod on the server
 ```
 
-Creates the partner's account, or sets a new password for it (signing it out everywhere). It reads everything, on any device, and changes nothing: the API refuses its writes and its devices do not save any (ADR 0004, Roles). The owner keeps the only account that changes the shop.
+Command-line alternative to the screen, for a server without a browser at hand. It requires the partner (the account belongs to that partner record), goes through the same rules as the screen, prints a temporary password once (the account must change it at the first sign-in) and, if the partner already has an active login, resets that login's password instead (signing it out everywhere). A partner account reads the shop's numbers and its own money records only; it never sees another partner's capital, draws, settlement shares or contact details, nor the audit log, the integrity report or the accounts list. The API refuses its writes and its devices do not save any (ADR 0004, Roles; ADR 0024). The owner keeps the only account that changes the shop.
 
 ## A worker's account (cashier)
+
+The owner makes these under Settings > Accounts (see above). From the command line:
 
 ```sh
 make cashier-user USERNAME=<name> [NAME="<display name>"]   # add STACK=prod on the server
 ```
 
-Creates an account for someone who works the till, or sets a new password for it (signing it out everywhere). There can be several. It **sells, takes customers' payments and adds customers**, and nothing else; it never receives a cost, a profit, or any record of the partners' money ([ADR 0007](../adr/0007-returns-payables-roles.md), docs/accounting-assumptions.md RL1–RL5):
+Creates an account for someone who works the till, or sets a new password for it (signing it out everywhere). There can be several, with no fixed maximum. It **sells, takes customers' payments and adds customers**, and nothing else; it never receives a cost, a profit, or any record of the partners' money ([ADR 0007](../adr/0007-returns-payables-roles.md), docs/accounting-assumptions.md RL1–RL5):
 
 - the sync hub sends its device the catalog, the rolls **with their cost set to 0**, stock moves, customers, sales, payments, returns and three settings (the shop's name, the money unit, the remnant length); purchases, suppliers, expenses, partners, settlements, zakat, counts and conflicts are not sent;
 - every REST route except the sync hub, device registration and its own profile answers 403;

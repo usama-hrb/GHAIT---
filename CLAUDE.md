@@ -45,6 +45,7 @@ Fabric Shop OS: POS, inventory, credit, partner settlement and zakat for a singl
 - Balances are derived from movements, never stored as an editable field: batch remaining quantity (`product_batch`, [ADR 0012](docs/adr/0012-product-batches-single-stock-source.md)), customer balance, partner balance, partner capital, cash. A derived cache is fine if it can be rebuilt from movements.
 - Every change or void writes `audit_log` (who, when, entity, id, action, before, after, reason) through `AuditService.record`. A mutating request is one transaction that commits only if it wrote an audit entry ([ADR 0004](docs/adr/0004-api-foundation.md)); `@AuditExempt(why)` is the rare exception.
 - Roles (SPEC §11): the owner changes everything, a partner reads everything, a cashier sells and **never receives a cost or a profit**. Enforce it on the API, never only in the UI: the AuthGuard admits a cashier only on `@CashierMayCall()` routes, and the sync hub sends and accepts by `CASHIER_ACCESS` in `@fabric/contracts` ([ADR 0007](docs/adr/0007-returns-payables-roles.md)). A new synced entity must be listed there (the compiler refuses otherwise); a new REST route is closed to cashiers unless marked.
+- Login accounts ([ADR 0024](docs/adr/0024-account-management.md)): the owner makes cashier and partner accounts in Settings > Accounts; the role comes from the route, never from the client. A partner account belongs to exactly one existing partner (one active login per partner, enforced by the database). An account is not a partner or an employee: switching one off (`deactivated_at`, never a delete) removes no business record. Accounts are server-owned and online-only, like settings; a partner never receives another partner's money records or contact details.
 - Records inside a locked settlement period change only through an explicit, audit-logged unlock. A dated synced entity must be in `periodDatesOf` (`@fabric/contracts`) so the lock covers it ([ADR 0005](docs/adr/0005-settlement-and-period-lock.md)).
 
 ## Structure and dependency rules
@@ -113,7 +114,7 @@ How-to: [docs/design-usage.md](docs/design-usage.md); brand rationale: [docs/DES
 | `make migrate`                 | Apply pending migrations (the API also applies them on start)               |
 | `make migrate-new NAME=…`      | Generate a migration from the schema (`CUSTOM=1`: empty, hand-written SQL)  |
 | `make owner USERNAME=…`        | Create the owner account or reset its password; see docs/runbooks/api.md    |
-| `make partner-user USERNAME=…` | The partner's read-only account (create, or reset its password)             |
+| `make partner-user USERNAME=…` | A partner's login; needs `PARTNER=…` (also in Settings > Accounts)          |
 | `make cashier-user USERNAME=…` | A cashier's account: sells, never sees a cost or a profit (create or reset) |
 | `make e2e`                     | Playwright on the real stack (Postgres container, API, web build): offline  |
 | `make backup`                  | Compressed, timestamped Postgres dump, keeps the newest 14                  |

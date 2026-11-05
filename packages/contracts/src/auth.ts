@@ -6,11 +6,18 @@ export const ROLES = ['owner', 'partner', 'cashier'] as const;
 export const roleSchema = z.enum(ROLES);
 export type Role = z.infer<typeof roleSchema>;
 
+/**
+ * What a user signs in with: a short name (`owner`, a cashier's) or an email address, which is how
+ * an owner who registered on the web signs in. Lower case, so the two spellings of one address
+ * are one account.
+ */
+export const USERNAME_PATTERN = /^[a-z0-9._@+-]{3,254}$/;
+
 export const usernameSchema = z
   .string()
   .trim()
   .toLowerCase()
-  .regex(/^[a-z0-9._-]{3,32}$/, 'letters, digits, dot, dash or underscore; 3 to 32');
+  .regex(USERNAME_PATTERN, 'letters, digits, dot, dash, underscore, @ or +; 3 to 254');
 
 /** A new password (OWASP: length over composition rules; no upper bound below 64). */
 export const newPasswordSchema = z.string().min(12).max(256);
@@ -27,6 +34,12 @@ export const authUserSchema = z.object({
   username: z.string(),
   displayName: z.string(),
   role: roleSchema,
+  /**
+   * The owner gave this account a temporary password (ADR 0024): until it is replaced the server
+   * answers every route but `me` and the password change with `password_change_required`. The
+   * default keeps a user a device saved before this field existed.
+   */
+  mustChangePassword: z.boolean().default(false),
 });
 export type AuthUser = z.infer<typeof authUserSchema>;
 

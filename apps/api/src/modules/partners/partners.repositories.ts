@@ -47,6 +47,21 @@ export class PartnerRepository implements SyncHandler<'partner'> {
     return row && partnerOf(row);
   }
 
+  /** Whether a login account that is switched on belongs to this partner (ADR 0024). */
+  async hasActiveLogin(id: string): Promise<boolean> {
+    const [row] = await this.tx.db
+      .select({ id: schema.appUser.id })
+      .from(schema.appUser)
+      .where(
+        and(
+          eq(schema.appUser.partnerId, id),
+          isNull(schema.appUser.deactivatedAt),
+          isNull(schema.appUser.voidedAt),
+        ),
+      );
+    return row !== undefined;
+  }
+
   async write(record: Partner): Promise<SyncedRow<Partner>> {
     // S4, S17: one owner, who stays the owner, and no more than 100% owned between everyone. A
     // device that set the owner up again before it had pulled them would otherwise add a second.

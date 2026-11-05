@@ -214,13 +214,13 @@ export function PartnerAccountScreen() {
           <p className="text-muted-foreground">{t.noMoves}</p>
         ) : (
           <div className="rounded-lg border bg-card">
-            <Table>
+            <Table stack>
               <TableHeader>
                 <TableRow>
                   <TableHead>{t.columns.date}</TableHead>
                   <TableHead>{t.columns.type}</TableHead>
                   <TableHead className="text-end">{t.columns.amount}</TableHead>
-                  <TableHead className="max-sm:hidden">{t.columns.note}</TableHead>
+                  <TableHead>{t.columns.note}</TableHead>
                   <TableHead>
                     <span className="sr-only">{t.voidAction}</span>
                   </TableHead>
@@ -235,11 +235,11 @@ export function PartnerAccountScreen() {
                     <TableCell>
                       <DateText value={entry.date} />
                     </TableCell>
-                    <TableCell>{t.types[entry.type]}</TableCell>
-                    <TableCell className="text-end">
+                    <TableCell label={t.columns.type}>{t.types[entry.type]}</TableCell>
+                    <TableCell className="text-end" label={t.columns.amount}>
                       <Money cents={entry.amountCents} />
                     </TableCell>
-                    <TableCell className="max-sm:hidden">{entry.note}</TableCell>
+                    <TableCell label={t.columns.note}>{entry.note}</TableCell>
                     <TableCell className="text-end">
                       {canManage &&
                         entry.voidedAt === null &&
@@ -272,7 +272,7 @@ export function PartnerAccountScreen() {
           <p className="text-muted-foreground">{t.noDraws}</p>
         ) : (
           <div className="rounded-lg border bg-card">
-            <Table>
+            <Table stack>
               <TableHeader>
                 <TableRow>
                   <TableHead>{t.columns.date}</TableHead>
@@ -292,10 +292,10 @@ export function PartnerAccountScreen() {
                     <TableCell>
                       <DateText value={draw.date} />
                     </TableCell>
-                    <TableCell className="text-end">
+                    <TableCell className="text-end" label={t.columns.amount}>
                       <Money cents={draw.amountCents} />
                     </TableCell>
-                    <TableCell>{draw.reason}</TableCell>
+                    <TableCell label={t.fields.reason}>{draw.reason}</TableCell>
                     <TableCell className="text-end">
                       {canManage &&
                         draw.voidedAt === null &&
@@ -327,7 +327,7 @@ export function PartnerAccountScreen() {
           <p className="text-muted-foreground">{t.detail.noAllocations}</p>
         ) : (
           <div className="rounded-lg border bg-card">
-            <Table>
+            <Table stack>
               <TableHeader>
                 <TableRow>
                   <TableHead>{t.detail.columns.period}</TableHead>
@@ -347,7 +347,7 @@ export function PartnerAccountScreen() {
                         <span className="text-muted-foreground">{t.detail.none}</span>
                       )}
                     </TableCell>
-                    <TableCell className="text-end">
+                    <TableCell className="text-end" label={t.detail.columns.allocated}>
                       <Money cents={share.amountCents} tone="profit" />
                     </TableCell>
                     <TableCell className="text-end">

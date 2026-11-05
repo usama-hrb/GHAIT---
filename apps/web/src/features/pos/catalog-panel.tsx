@@ -1,5 +1,6 @@
 'use client';
 
+import { DEFAULT_SELLING_UNITS, type SellingUnits } from '@fabric/contracts';
 import { CheckIcon, SearchIcon } from 'lucide-react';
 import { useState } from 'react';
 import { messages } from '@/i18n';
@@ -13,9 +14,15 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from '@/shared/ui/input-
 
 const t = messages.pos.catalog;
 
-/** Whether the till can sell something of this product now (a weight awaiting a length cannot). */
-export const isSellable = (product: ProductStockView): boolean =>
-  product.availableCm > 0 || product.availablePieces > 0;
+/**
+ * Whether the till can sell something of this product now (a weight awaiting a length cannot).
+ * A unit the shop has switched off (ADR 0023) is not offered, though its stock stays on record.
+ */
+export const isSellable = (
+  product: ProductStockView,
+  units: SellingUnits = DEFAULT_SELLING_UNITS,
+): boolean =>
+  (units.meter && product.availableCm > 0) || (units.piece && product.availablePieces > 0);
 
 /**
  * What can be sold: a search box and a tile per product that has stock left. A tap picks the
@@ -23,11 +30,14 @@ export const isSellable = (product: ProductStockView): boolean =>
  */
 export function CatalogPanel({
   products,
+  units,
   photos,
   inBill,
   onPick,
 }: {
   products: readonly ProductStockView[];
+  /** The units the shop sells in now. */
+  units: SellingUnits;
   /** Each product's picture (a data: URL), by product id. */
   photos: ReadonlyMap<string, string>;
   /** What of each product is already on the bill, by product id (cm, or pieces). */
@@ -37,7 +47,7 @@ export function CatalogPanel({
   const [search, setSearch] = useState('');
 
   const tiles = products
-    .filter(isSellable)
+    .filter((product) => isSellable(product, units))
     .filter((product) => matchesSearch(search, [product.name, product.sku, ...product.tags]));
 
   return (
@@ -93,16 +103,19 @@ export function CatalogPanel({
                     </span>
                     <span className="flex flex-wrap items-baseline justify-between gap-x-2 text-sm font-normal">
                       <span className="text-base font-semibold">
-                        {meterPrice !== null && product.sellingUnits.includes('meter') && (
-                          <>
-                            <Money cents={meterPrice} />
-                            <span className="text-xs font-normal text-muted-foreground">
-                              {' '}
-                              / {messages.units.meter}
-                            </span>
-                          </>
-                        )}
+                        {meterPrice !== null &&
+                          units.meter &&
+                          product.sellingUnits.includes('meter') && (
+                            <>
+                              <Money cents={meterPrice} />
+                              <span className="text-xs font-normal text-muted-foreground">
+                                {' '}
+                                / {messages.units.meter}
+                              </span>
+                            </>
+                          )}
                         {piecePrice !== null &&
+                          units.piece &&
                           product.sellingUnits.includes('piece') &&
                           product.availablePieces > 0 && (
                             <>
