@@ -12,6 +12,7 @@ import {
   waitForAppShell,
 } from './helpers';
 import { type Finding, LANGUAGES, login, measure, settle, SIZES } from './responsive-kit';
+import { configureZakat, saveReport } from './zakat-kit';
 
 /**
  * The responsive audit. It is not part of the regular suite: it seeds sales, a supplier debt,
@@ -38,7 +39,7 @@ const ROUTES: readonly Route[] = [
   { path: '/home' },
   { path: '/pos' },
   { path: '/pos/history' },
-  { path: '/pos/view', via: ['/pos/history'] },
+  { path: '/pos/view', via: ['/customers', '/customers/view'] },
   { path: '/inventory' },
   { path: '/inventory/catalog' },
   { path: '/inventory/suppliers' },
@@ -57,6 +58,8 @@ const ROUTES: readonly Route[] = [
   { path: '/integrity' },
   { path: '/audit' },
   { path: '/zakat' },
+  { path: '/zakat/review' },
+  { path: '/zakat/settings' },
   { path: '/zakat/view', via: ['/zakat'] },
   { path: '/reports' },
   { path: '/settings' },
@@ -64,24 +67,18 @@ const ROUTES: readonly Route[] = [
   { path: '/settings/regional' },
   { path: '/settings/partners' },
   { path: '/settings/partners/view', via: ['/settings/partners'] },
-  { path: '/settings/partners/employee', via: ['/settings/partners'] },
+  { path: '/settings/partners/employee', via: ['/settings/partners?tab=employees'] },
   { path: '/settings/accounts' },
   { path: '/settings/sync' },
   { path: '/settings/data' },
   { path: '/login', open: true },
   { path: '/signup', open: true },
   { path: '/~offline', open: true },
+  // An address that matches no screen: Next answers 404 with `app/not-found.tsx`.
+  { path: '/this-page-does-not-exist', open: true },
 ];
 
 const stamp = Date.now().toString(36);
-
-/** A day `days` before today in the shop's time zone (YYYY-MM-DD). */
-function daysAgo(days: number): string {
-  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Casablanca' }).format(
-    new Date(),
-  );
-  return new Date(Date.parse(`${today}T00:00:00Z`) - days * 86_400_000).toISOString().slice(0, 10);
-}
 
 /** The first day of last month in the shop's time zone (YYYY-MM-DD). */
 function lastMonthFirst(): string {
@@ -212,8 +209,8 @@ test('seed: products, sales, a supplier debt, partners, an employee and an expen
   await bill.getByRole('button', { name: 'حفظ' }).click();
   await expect(bill).toBeHidden();
 
-  // Money in the shop and a zakat report for a hawl that began 400 days ago, so the report
-  // archive has a record to open.
+  // Money in the shop and a zakat report for a hawl that began 400 days ago, so the history has
+  // a report to open.
   await page.goto('/settings/partners');
   await page
     .getByRole('region')
@@ -225,14 +222,9 @@ test('seed: products, sales, a supplier debt, partners, an employee and an expen
   await capital.getByLabel('المبلغ').fill('50000');
   await capital.getByRole('button', { name: 'حفظ' }).click();
   await expect(capital).toBeHidden();
-  await page.goto('/zakat');
-  await page.getByLabel('بداية الحول الأول').fill(daysAgo(400));
-  await page.getByLabel('سعر غرام الذهب').fill('1');
-  await page.getByLabel('تاريخ السعر').first().fill(daysAgo(1));
-  await page.getByRole('button', { name: 'حفظ الإعدادات' }).click();
-  await expect(page.getByText('حُفظت إعدادات الزكاة')).toBeVisible();
-  await page.getByRole('button', { name: 'حفظ تقرير الحول' }).click();
-  await expect(page.getByText('حُفظ تقرير الزكاة')).toBeVisible();
+  await configureZakat(page);
+  // The review, read to its last step and confirmed: that is what saves the report.
+  await saveReport(page);
 
   // Last month, settled: the rent and the salary make a loss, which the settlement carries over.
   await page.goto('/settlements');

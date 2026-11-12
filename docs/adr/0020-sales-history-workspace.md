@@ -1,7 +1,9 @@
 # ADR 0020: The sales history as a workspace
 
 Status: accepted. No stored figure, contract, schema, sync handler or server check changed. The
-rules this records are rows SH1–SH6 in `accounting-assumptions.md`.
+rules this records are rows SH1–SH6 in `accounting-assumptions.md`. Decision 2 (the drawer is a quick
+look, and the invoice page does the rest) was replaced by [ADR 0025](0025-sale-drawer-carries-the-invoice.md):
+the drawer now carries the whole invoice and its actions.
 
 ## Context
 

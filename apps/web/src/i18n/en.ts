@@ -32,12 +32,18 @@ export const en: Messages = {
     customers: 'Customers',
     expenses: 'Expenses',
     settlements: 'Settlement',
-    integrity: 'Integrity check',
+    integrity: 'Financial Integrity',
     zakat: 'Zakat',
     reports: 'Reports',
     audit: 'Audit log',
     settings: 'Settings',
     more: 'More',
+    groups: {
+      main: 'Main',
+      operations: 'Operations',
+      finance: 'Finance',
+      admin: 'Administration',
+    },
   },
   shell: {
     skipToContent: 'Skip to content',
@@ -151,6 +157,14 @@ export const en: Messages = {
     pageDescription:
       'This page has not been saved on the device yet. Go back to stock: it works without internet.',
     backToApp: 'Back to stock',
+  },
+  // The page shown for an address that matches no screen of the app.
+  notFound: {
+    code: '404',
+    title: 'Page not found',
+    description:
+      'The address you opened does not exist, or its page has moved. Check the address, or go back to the home screen.',
+    backToHome: 'Back to home',
   },
   sync: {
     syncNow: 'Sync now',
@@ -1255,16 +1269,39 @@ export const en: Messages = {
     why: 'In a period settled and locked through',
   },
   integrity: {
-    title: 'Integrity check',
-    okTitle: 'Balanced',
-    okDescription:
-      "What the shop holds equals whose it is, to the cent, per this device's records.",
-    diffTitle: 'Difference:',
-    diffDescription:
-      'The records disagree with each other. Check the latest changes and sync every device. A positive difference: the shop holds more than the records explain.',
+    title: 'Financial Integrity',
+    subtitle: 'Understand what the shop holds and what it owes or belongs to others.',
+    status: {
+      balanced: 'Balanced',
+      balancedDescription:
+        'Everything the shop holds is accounted for: it equals what belongs to the partners plus what the shop owes, to the cent.',
+      difference: 'Difference detected',
+      heldMore: 'The shop holds more than the records explain.',
+      heldLess: 'The records explain more than the shop holds.',
+      differenceHelp:
+        'A record may be missing, entered twice or not synced yet. Review the latest changes, sync every device, then count the money.',
+      reviewChanges: 'Review the latest changes',
+      unable: 'Unable to verify',
+      unableNotReceived:
+        "This device has not received the shop's records yet, so the check cannot run. Connect to the internet and wait for the first sync.",
+      unableIncomplete:
+        'The check could not be completed on this device. A record may be incomplete or still syncing. Sync this device, then check again.',
+      checkAgain: 'Check again',
+      gap: 'Difference',
+      calculated: 'Calculated',
+      received: 'Shop records received',
+      basis: "Worked out from this device's records, to the cent.",
+    },
     holdings: 'What the shop holds',
-    claims: 'Whose it is',
-    total: 'Total',
+    holdingsDescription:
+      "Money, stock at cost, and the shop's capital waiting in customers' debts.",
+    holdingsTotal: 'Total held',
+    claims: 'Who it belongs to and what it owes',
+    claimsDescription:
+      "The partners' capital and profit, plus what the shop owes customers and suppliers.",
+    claimsTotal: 'Total belonging and owed',
+    partnersGroup: 'Belongs to the partners',
+    othersGroup: 'Owed to others',
     lines: {
       cash: 'Money per the records',
       stock_at_cost: 'Stock at cost',
@@ -1275,7 +1312,38 @@ export const en: Messages = {
       customer_credits: 'Credit balances owed to customers',
       supplier_payables: 'Supplier debts',
     },
+    helps: {
+      cash: 'The till and the shop bank account together, worked out from every recorded payment, expense and withdrawal. It is not a physical count.',
+      stock_at_cost: 'What the fabric in stock cost the shop to buy, not what it sells for.',
+      unrecovered_capital:
+        "The shop's own cost inside invoices customers have not paid yet: stock already sold and still to be collected.",
+      capital: 'Money the partners put in, plus profit they chose to leave in the shop.',
+      partner_balances: 'Profit already settled to the partners and not yet taken out.',
+      unsettled_net_profit:
+        'Profit earned since the last settlement. It is split between the partners at the next one.',
+      customer_credits: 'Money customers paid beyond what they owe. The shop holds it for them.',
+      supplier_payables: 'What the shop still has to pay suppliers for stock it has bought.',
+    },
+    negatives: {
+      cash: 'Negative: the records show more money going out than coming in. This is a bookkeeping result, not a reading of the till or the bank. Review the latest changes, or count the money.',
+      partner_balances: 'Negative: the partners have taken out more than has been settled to them.',
+      unsettled_net_profit: 'Negative: the open period is at a loss so far.',
+      supplier_payables: 'Negative: the shop has paid suppliers more than it owed them.',
+    },
+    cashHow: {
+      title: 'How is this worked out?',
+      added:
+        'Added: customer payments, money the partners put in, and any surplus found in a cash count.',
+      removed:
+        'Subtracted: refunds to customers, capital the partners took out, purchases paid, supplier payments, expenses paid, profit the partners drew, and any shortage found in a cash count.',
+      scope:
+        "It covers the till and the shop's bank account together; the records cannot tell them apart.",
+      counted:
+        'It is not a physical count. A cash count compares the money you really hold with this figure and moves it to the amount counted.',
+    },
     countsTitle: 'Cash counts',
+    countsDescription:
+      "Count the money you really hold, till and bank together, and compare it with the records. A difference becomes a surplus or a shortage in the period's result.",
     count: 'Cash count',
     countTitle: 'Count the money',
     countDescription:
@@ -1285,7 +1353,12 @@ export const en: Messages = {
     countedLabel: 'Money counted',
     expected: 'Money per the records',
     bank: 'of which paid by bank transfer',
+    lastCount: 'Last count',
+    noCountYet: 'No count yet',
+    countWaiting: "Counting needs the shop's records on this device. Wait for the first sync.",
     date: 'Date',
+    recordsSaid: 'Per the records',
+    countedColumn: 'Counted',
     reason: 'Reason',
     reasonRequired: 'A difference needs a reason',
     matches: 'Matches',
@@ -1293,20 +1366,96 @@ export const en: Messages = {
     short: 'Shortage',
     difference: 'Difference',
     counted: 'Count recorded',
-    noCounts: 'No counts yet.',
+    countedBy: 'The account that recorded each count is kept in the audit log.',
+    noCountsTitle: 'No cash count yet',
+    noCountsDescription:
+      'A count compares the money you really hold, till and bank together, with what the records say. Do one regularly to catch mistakes early.',
     voidAction: 'Void',
     voidTitle: 'Void the count',
     voidDescription:
       'It stays recorded as voided, with the reason, and its difference is not counted.',
     voidedDone: 'Count voided',
+    voided: 'Voided',
     recentTitle: 'Latest changes',
     recentDescription:
-      'What changed lately in the money and the stock: the first thing to check when a difference appears.',
-    noRecent: 'No changes yet.',
-    when: 'When',
+      'The newest entries on this device: the first place to look when something does not balance.',
+    recordedAt: 'Recorded at',
+    transactionDate: 'Transaction date',
+    datesHelp:
+      '"Recorded at" is when the entry was saved. "Transaction date" is the day it counts for in the books; the two differ when an entry is made later or for another day.',
     what: 'Change',
     amount: 'Amount',
-    voided: 'Voided',
+    noRecentTitle: 'No changes yet',
+    noRecentDescription:
+      'Sales, payments, purchases and the other entries show here as they are recorded.',
+    viewAudit: 'View audit log',
+    events: {
+      sale: { label: 'Sale', hint: 'A sale was recorded. The amount is the invoice total.' },
+      saleVoid: { label: 'Sale voided', hint: 'A sale was cancelled, with a reason.' },
+      saleReturn: {
+        label: 'Sale return',
+        hint: 'Goods came back from a customer. The amount is the credit given.',
+      },
+      payment: { label: 'Customer payment', hint: 'Money received from a customer.' },
+      refund: { label: 'Refund to a customer', hint: 'Money paid back to a customer.' },
+      writeOff: {
+        label: 'Bad debt written off',
+        hint: "A customer's debt was written off as a loss.",
+      },
+      purchase: {
+        label: 'Stock purchase',
+        hint: 'Stock was bought. The amount is what was paid at the time; the rest is owed to the supplier.',
+      },
+      supplierPayment: { label: 'Supplier payment', hint: 'Money paid to a supplier.' },
+      expensePaid: { label: 'Expense paid', hint: 'Money the shop spent.' },
+      expenseUnpaid: {
+        label: 'Expense not paid yet',
+        hint: 'Counted as a cost; no money has gone out yet.',
+      },
+      stockLoss: { label: 'Stock damaged', hint: 'Fabric was written off. No money moved.' },
+      stockLength: {
+        label: 'Length corrected',
+        hint: "A batch's length was corrected. No money moved.",
+      },
+      stockCount: {
+        label: 'Stock counted',
+        hint: 'Stock was adjusted to a count. No money moved.',
+      },
+      stockReturn: {
+        label: 'Stock returned',
+        hint: 'Fabric went back into stock. No money moved.',
+      },
+      stockRestored: {
+        label: 'Stock restored',
+        hint: 'A voided sale put its fabric back. No money moved.',
+      },
+      stockMeasured: {
+        label: 'Stock measured',
+        hint: "A batch's length was measured. No money moved.",
+      },
+      stockMove: { label: 'Stock movement', hint: 'The stock changed. No money moved.' },
+      capitalContribution: {
+        label: 'Capital added',
+        hint: 'A partner put money into the shop.',
+      },
+      capitalWithdrawal: {
+        label: 'Capital withdrawn',
+        hint: 'A partner took capital out of the shop.',
+      },
+      retainedProfit: {
+        label: 'Profit kept in the shop',
+        hint: 'Profit a partner left in the shop as capital. No money moved.',
+      },
+      partnerDraw: { label: 'Profit drawn', hint: 'A partner took profit out of the shop.' },
+      cashCount: {
+        label: 'Cash count',
+        hint: 'The money was counted. The amount is the difference found.',
+      },
+      settlement: {
+        label: 'Settlement',
+        hint: "A period's profit was split between the partners. The amount is the net profit.",
+      },
+    },
   },
   audit: {
     title: 'Audit log',
@@ -1412,10 +1561,435 @@ export const en: Messages = {
     title: 'Zakat',
     notFatwa:
       'This is a calculation tool, not a fatwa. Set the options to follow the scholarly opinion you adopt, and review them with a scholar you trust.',
-    settingsTitle: 'Zakat settings',
-    saveSettings: 'Save settings',
-    settingsSaved: 'Zakat settings saved',
-    settingsOffline: 'Changing the settings needs a connection.',
+    subtitle: "The hawl, the nisab and the zakat base, worked out from the shop's own records.",
+    readOnlyNote:
+      'You can read everything here. Only the owner changes the methodology or saves a report.',
+    actions: {
+      review: 'Review Zakat calculation',
+      methodology: 'Review methodology',
+      history: 'View history',
+      pay: 'Record payment',
+      back: 'Back to Zakat',
+    },
+    status: {
+      not_configured: {
+        title: 'Not configured',
+        description:
+          'No hawl start is set yet, so there is no hawl to follow. Set it in the methodology settings.',
+      },
+      review_required: {
+        title: 'Review required',
+        description:
+          'Something needs your attention before the calculation can be relied on. Open the review to see what.',
+      },
+      waiting_for_hawl: {
+        title: 'Waiting for the hawl',
+        description: 'The start of the first hawl is still ahead. Nothing is due.',
+      },
+      hawl_in_progress: {
+        title: 'Hawl in progress',
+        description: 'The first hawl has not been completed yet. Nothing is due until it is.',
+      },
+      nisab_not_reached: {
+        title: 'Nisab not reached',
+        description:
+          'The hawl has come, but the zakat base today is below the nisab, so no zakat is due on these records.',
+      },
+      zakat_due: {
+        title: 'Zakat due',
+        description:
+          'The hawl has come and the base reaches the nisab. The amount shown is an estimate until you review the calculation and save the report.',
+      },
+      calculation_completed: {
+        title: 'Calculation completed',
+        description: 'The report for the latest hawl is saved. No payment is recorded on it yet.',
+        noneDueDescription: 'The report for the latest hawl is saved. No zakat was due on it.',
+      },
+      payment_recorded: {
+        title: 'Payment recorded',
+        description: 'The report for the latest hawl is saved and a payment is recorded on it.',
+        paidInFullDescription:
+          'The report for the latest hawl is saved and its zakat is paid in full.',
+      },
+    },
+    lastCalculation: 'Last calculation',
+    noCalculation: 'No calculation has been saved yet',
+    attention: {
+      title: 'Needs attention',
+      openReview: 'Open the review',
+      notes: (count: number) =>
+        plural(count, {
+          one: '1 more note to know about in the review',
+          other: `${String(count)} more notes to know about in the review`,
+        }),
+    },
+    severity: {
+      blocking: 'Blocks the calculation',
+      review: 'Needs review',
+      info: 'Good to know',
+    },
+    items: {
+      hawl_start_missing: {
+        title: 'The hawl start is not set',
+        detail:
+          'Without the day the first hawl began there is no hawl to follow. Set it in the methodology settings.',
+      },
+      price_missing: {
+        title: 'The metal price is missing',
+        detail:
+          'The nisab is the price of a weight of gold or silver. Enter the price per gram of the metal chosen in the methodology settings.',
+      },
+      records_not_received: {
+        title: "This device has not received the shop's records",
+        detail:
+          'A calculation made from empty books would be wrong. Connect to the internet and let the app sync, then try again.',
+      },
+      price_in_future: {
+        title: 'The metal price is dated in the future',
+        detail: 'Check the date entered with the price.',
+      },
+      price_before_hawl: {
+        title: 'The metal price is older than the hawl',
+        detail:
+          'The price was entered for a day before the hawl it is applied to. Confirm it is still the price you want to use.',
+      },
+      goods_without_price: {
+        title: 'Goods with no selling price',
+        detail:
+          'Valued at market, these batches count as zero because their product has no price. Add the price in Stock, or review the valuation setting.',
+      },
+      goods_unmeasured_at_cost: {
+        title: 'Weight stock awaiting measurement',
+        detail: 'These batches have no length yet, so a market valuation counts them at cost.',
+      },
+      money_negative: {
+        title: 'Money on hand is negative in the records',
+        detail:
+          'A negative balance counts as zero in the base. Check the till and the bank records.',
+      },
+      position_not_on_hawl_day: {
+        title: 'The records are read as they are today',
+        detail: 'A report reads the records when it is made, not as they stood on the hawl day.',
+      },
+      doubtful_debts: {
+        title: 'Doubtful debts',
+        detail:
+          'Debts the shop has written off. They count in the base only when the methodology setting says so.',
+      },
+      unpaid_expenses: {
+        title: 'Bills recorded and not yet paid',
+        detail:
+          'The shop has recorded these as owed. The calculation does not deduct them from the base; whether it should is a methodology choice the app does not make for you.',
+      },
+    },
+    counts: {
+      batches: (count: number) =>
+        plural(count, { one: '1 batch', other: `${String(count)} batches` }),
+      customers: (count: number) =>
+        plural(count, { one: '1 customer', other: `${String(count)} customers` }),
+      daysAgo: (count: number) =>
+        plural(count, {
+          zero: 'today',
+          one: '1 day ago',
+          other: `${String(count)} days ago`,
+        }),
+    },
+    cards: {
+      hawl: {
+        title: 'Hawl',
+        start: 'Started',
+        latest: 'Latest hawl',
+        next: 'Next hawl',
+        notSet: 'No start is set.',
+        startsLater: 'The start day has not come yet, so no hawl year is running.',
+        elapsed: (elapsed: number, total: number) => `${String(elapsed)} of ${String(total)} days`,
+        left: (days: number) =>
+          plural(days, {
+            zero: 'Due today',
+            one: '1 day left',
+            other: `${String(days)} days left`,
+          }),
+        progress: 'How much of the hawl year has passed',
+      },
+      nisab: {
+        title: 'Nisab',
+        threshold: 'Threshold',
+        base: 'Base today',
+        reached: 'Reached',
+        notReached: 'Not reached',
+        progress: 'The base as a share of the nisab',
+        percentOf: (percent: number) => `${String(percent)}% of the nisab`,
+        unavailable:
+          "Worked out once the hawl start, the metal price and the shop's records are all in place.",
+      },
+      base: {
+        title: 'Zakat base',
+        estimate: 'Estimate',
+        saved: 'Saved report',
+        estimateNote: "Today's position. Nothing is saved.",
+        savedNote: 'As saved in the report for the hawl of',
+        unavailable: 'Not worked out yet.',
+      },
+      due: {
+        title: 'Zakat',
+        estimated: 'Estimated zakat',
+        final: 'Zakat due',
+        paid: 'Paid',
+        remaining: 'Remaining',
+        none: 'No zakat is due on these records.',
+        notDueYet: 'Not due yet: the hawl has not come.',
+        unavailable: 'Not worked out yet.',
+        progress: 'The share of the zakat paid',
+      },
+    },
+    history: {
+      title: 'Zakat reports',
+      description:
+        'Every saved calculation, newest hawl first. A saved report is never recalculated.',
+      emptyTitle: 'No zakat reports yet',
+      emptyDescription:
+        'When you review the calculation and save it, the report appears here with its payments.',
+      columns: {
+        hawl: 'Hawl',
+        base: 'Base',
+        nisab: 'Nisab',
+        due: 'Zakat due',
+        paid: 'Paid',
+        remaining: 'Remaining',
+        status: 'Status',
+      },
+      calculated: 'Calculated',
+      details: 'Details',
+    },
+    paymentState: {
+      none_due: 'Nothing due',
+      unpaid: 'Unpaid',
+      partial: 'Partly paid',
+      paid: 'Paid in full',
+      overpaid: 'Overpaid',
+      voided: 'Voided',
+    },
+    review: {
+      title: 'Review Zakat calculation',
+      intro: 'Go through each step. Nothing is recorded until you confirm at the end.',
+      stepOf: (step: number, total: number) => `Step ${String(step)} of ${String(total)}`,
+      progress: 'Progress through the review',
+      back: 'Back',
+      next: 'Next',
+      steps: {
+        settings: 'Settings',
+        base: 'Zakat base',
+        inventory: 'Inventory valuation',
+        nisab: 'Nisab',
+        hawl: 'Hawl',
+        result: 'Result',
+        confirm: 'Review and confirm',
+      },
+      blockedTitle: 'This step cannot be worked out yet',
+      blockedDescription:
+        'Resolve what is listed here first. Nothing is worked out from missing information.',
+    },
+    settingsStep: {
+      intro:
+        'These are the settings this calculation follows. None of them changes unless you change it in the methodology settings.',
+      change: 'Change settings',
+      changeOffline: 'Changing the settings needs a connection.',
+      notSet: 'Not set',
+      counted: 'Counted',
+      notCounted: 'Not counted',
+      reminder: (days: number) =>
+        plural(days, {
+          zero: 'No reminder',
+          one: '1 day before',
+          other: `${String(days)} days before`,
+        }),
+    },
+    baseStep: {
+      intro:
+        'The base is built from these parts: what the shop holds and is owed, less what it owes. Open a part to see the records behind it.',
+      formula:
+        'Money + inventory + expected receivables (+ doubtful receivables, if counted) − customer credits − supplier debts',
+      total: 'Zakat base',
+      categories: {
+        money: {
+          title: 'Money',
+          source: 'The till and the bank, from the cash records.',
+        },
+        inventory: {
+          title: 'Inventory',
+          source: 'Stock on hand, valued as the methodology says. The next step audits it.',
+        },
+        receivables: {
+          title: 'Expected receivables',
+          source: 'What customers still owe the shop, from their unpaid invoices.',
+        },
+        doubtful_receivables: {
+          title: 'Doubtful receivables',
+          source: 'Debts the shop has written off as bad.',
+        },
+        customer_credits: {
+          title: 'Customer credits',
+          source: 'Money the shop holds for customers.',
+        },
+        supplier_debts: {
+          title: 'Supplier debts',
+          source: 'What the shop owes its suppliers for purchases.',
+        },
+        unpaid_bills: {
+          title: 'Unpaid bills',
+          source: 'Expenses recorded as owed and not paid yet.',
+        },
+        other_assets: {
+          title: 'Other assets',
+          source: 'Anything else the shop holds that may be zakatable.',
+        },
+      },
+      effects: {
+        added: 'Added',
+        deducted: 'Deducted',
+        excluded: 'Not counted',
+        not_tracked: 'Not tracked',
+      },
+      notes: {
+        doubtfulCounted: 'Counted, because the methodology setting counts doubtful debts.',
+        doubtfulLeftOut: 'Left out, because the methodology setting does not count doubtful debts.',
+        unpaidBills: 'Shown for information. The calculation does not deduct them.',
+        otherAssets: 'The app does not record these, so they are not in this calculation.',
+        singleFigure: 'One figure from the cash records; there are no individual records to open.',
+        notKept: 'Not kept with this report.',
+      },
+      noRecords: 'No records.',
+    },
+    inventoryStep: {
+      intro:
+        'Each batch on hand and the way it was valued. The total counted here is the inventory figure in the base.',
+      valuation: 'Valuation used',
+      columns: {
+        batch: 'Batch',
+        left: 'Left',
+        cost: 'Cost',
+        price: 'Reference price',
+        basis: 'Valued by',
+        value: 'Counted',
+      },
+      bases: {
+        cost: 'Cost',
+        length: 'Length × reference price',
+        pieces: 'Pieces × piece price',
+        unmeasured: 'Cost, awaiting measurement',
+      },
+      awaiting: 'Awaiting measurement',
+      noPrice: 'No price: counted as zero',
+      totals: { cost: 'Total at cost', counted: 'Counted in the base' },
+      empty: 'No stock on hand.',
+    },
+    nisabStep: {
+      intro:
+        'The nisab is the weight of gold or silver set in the methodology, valued at the price you entered by hand.',
+      rows: {
+        metal: 'Measured in',
+        weight: 'Weight',
+        price: 'Price per gram',
+        priceDate: 'Price date',
+        threshold: 'Nisab',
+        base: 'Zakat base',
+        difference: 'Difference',
+      },
+      grams: (grams: number) => `${String(grams)} g`,
+      reached: 'The base reaches the nisab.',
+      notReached: 'The base is below the nisab.',
+      above: 'Above the nisab',
+      below: 'Below the nisab',
+      checkedOnce: 'The check is made once, against the base when the report is made.',
+    },
+    hawlStep: {
+      intro:
+        'A hawl is a full Hijri year. Each one falls on the Hijri anniversary of the first start.',
+      rows: {
+        start: 'Start of the first hawl',
+        hawl: 'Hawl this calculation is for',
+        today: 'Today',
+        next: 'Next hawl',
+        completed: 'Hawl completed',
+      },
+      yes: 'Yes',
+      no: 'Not yet',
+      none: 'None yet',
+      completedNote: 'The hawl has come.',
+      notCompletedNote:
+        'The hawl has not come yet, so a report cannot be saved. The figures show the position today.',
+      calendarNote:
+        'Hijri dates follow the Umm al-Qura calendar. If the shop follows a local moon-sighting announcement instead, a hawl may fall a day away.',
+    },
+    resultStep: {
+      intro:
+        'The zakat is the base times the rate, once the hawl has come and the base reaches the nisab.',
+      rows: { base: 'Zakat base', nisab: 'Nisab', rate: 'Rate', due: 'Zakat due' },
+      rate: (rate: string) => `${rate}%`,
+      outcomes: {
+        due: 'Zakat is due on these records.',
+        belowNisab: 'The base is below the nisab, so no zakat is due.',
+        hawlNotCompleted: 'The hawl has not come yet, so no zakat is due yet.',
+      },
+      estimate: 'This is an estimate. Nothing is saved until you confirm.',
+    },
+    confirm: {
+      intro:
+        'This is what will be saved. A saved report cannot be edited. While nothing is paid on it, it can be voided with a reason.',
+      rows: { hawl: 'Hawl', base: 'Zakat base', nisab: 'Nisab', due: 'Zakat due' },
+      nothingRecorded: 'Nothing has been recorded yet.',
+      acknowledgeFigures:
+        'I have reviewed the settings, the zakat base and the valuation used for this calculation.',
+      acknowledgeItems: (count: number) =>
+        plural(count, {
+          one: 'I have looked at the 1 item marked for review.',
+          other: `I have looked at the ${String(count)} items marked for review.`,
+        }),
+      save: 'Save the report',
+      noneDueNote:
+        'No zakat is due on these records. Saving still keeps the calculation as a report.',
+      blockedTitle: 'The report cannot be saved yet',
+      blocks: {
+        not_owner: 'Only the owner can save a report.',
+        blocking_items: 'Resolve the items that block the calculation first.',
+        hawl_not_completed: 'The hawl has not come yet. A report is saved once it has.',
+        already_saved: 'A report for this hawl is already saved.',
+      },
+      viewSaved: 'View the saved report',
+      saved: 'Zakat report saved',
+    },
+    settings: {
+      title: 'Zakat methodology',
+      intro: 'The options the calculation follows. Set them to the scholarly opinion you adopt.',
+      futureOnly:
+        'A change affects future calculations only. A saved report keeps the settings it was made with.',
+      groups: {
+        hawl: {
+          title: 'Hawl',
+          description: 'When the first hawl began, and the reminder before each one.',
+        },
+        methodology: {
+          title: 'Methodology',
+          description: 'How the base is valued and what it counts.',
+        },
+        prices: {
+          title: 'Market prices',
+          description:
+            'Entered by hand with the day the price was seen. The app does not fetch prices.',
+        },
+      },
+      save: 'Save changes',
+      saved: 'Zakat settings saved',
+      unchanged: 'No setting was changed.',
+      failed:
+        'The settings could not be saved. Some changes may have gone through: check the values after the next sync.',
+      offline: 'Changing the settings needs a connection.',
+      readOnly: 'Only the owner changes the methodology. You can read the settings here.',
+      errors: {
+        price: 'Enter the price and its date together, or leave both empty.',
+        reminder: 'Enter a whole number of days from 0 to 60.',
+      },
+    },
     fields: {
       hawlStart: 'Start of the first hawl',
       merchant: 'Type of merchant',
@@ -1428,27 +2002,22 @@ export const en: Messages = {
       reminderDays: 'Remind before the hawl (days)',
       amount: 'Amount',
       date: 'Date',
+      note: 'Note or reference',
+    },
+    hints: {
+      hawlStart: 'The day the first hawl began. Later hawls fall on its Hijri anniversary.',
+      nisabMetal: 'The nisab is the weight of this metal, valued at the price below.',
+      valuation:
+        "At market price: goods at the shop's reference price. At cost: goods at what they cost.",
+      doubtful: 'Debts the shop wrote off as bad. They count in the base only when this is on.',
+      price: 'The price per gram on the day you saw it.',
+      reminderDays: 'How many days before a hawl the Home screen reminds you.',
     },
     managing: 'Managing merchant',
     managingHint: 'Buys and sells every day: zakat each hawl on stock, money and debts.',
     metals: { gold: 'Gold (85 g)', silver: 'Silver (595 g)' },
     valuations: { market: 'At market price (the reference price)', cost: 'At cost' },
-    hawlTitle: 'The hawl',
-    lastHawl: 'Last hawl:',
-    nextHawl: 'Next hawl:',
-    inDays: (days: number) =>
-      plural(days, {
-        zero: 'Today',
-        one: 'In 1 day',
-        other: `In ${String(days)} days`,
-      }),
-    reportTitle: 'The zakat base',
-    save: 'Save the hawl report',
-    saved: 'Zakat report saved',
-    forHawl: 'For the hawl',
-    positionToday: 'The hawl has not come yet: this is the position today,',
-    alreadySaved: 'Saved in the archive',
-    fromDevice: "From this device's records",
+    perGram: 'per gram',
     issues: {
       zakat_hawl_start_missing: 'Choose the start of the first hawl in the settings.',
       zakat_metal_price_missing: 'Enter the price per gram of the metal the nisab is measured in.',
@@ -1456,6 +2025,11 @@ export const en: Messages = {
       zakat_report_exists_for_hawl: 'A report for this hawl is already saved.',
       zakat_payment_above_due: 'More than what is left of the zakat.',
       zakat_report_has_payments: 'Something has been paid on it: void the payments first.',
+      zakat_payment_id_reused: 'This payment was already recorded with other details.',
+      zakat_records_not_received:
+        "This device has not received the shop's records yet. Connect to the internet and let the app sync.",
+      zakat_figures_changed:
+        'The records changed while you were reviewing. The figures on the screen are updated: review them again.',
     },
     lines: {
       goods: 'Goods',
@@ -1464,46 +2038,46 @@ export const en: Messages = {
       debts: 'Debts due on the shop',
       base: 'Zakat base',
       nisab: 'Nisab',
-      due: 'Zakat due (2.5%)',
+      due: 'Zakat due',
     },
-    hawlNotCompleted: 'The hawl has not come: no zakat yet.',
-    reachesNisab: 'The base reached the nisab and the hawl has come.',
-    belowNisab: 'The base is below the nisab: no zakat.',
-    doubtfulApart: 'Doubtful debts, outside the base unless you choose to count them:',
-    goodsTitle: 'Goods, batch by batch',
-    receivablesTitle: 'Owed by customers',
-    debtsTitle: 'Owed to customers by the shop',
-    supplierDebtsTitle: 'Owed to suppliers by the shop',
-    doubtful: 'doubtful',
-    columns: {
+    notFound: 'This report is not on this device',
+    reportOf: 'Zakat for the hawl of',
+    report: {
+      calculated: 'Calculated',
       hawl: 'Hawl',
+      reference: 'Nisab reference',
+      asSaved: 'Shown exactly as it was saved. A saved report is never recalculated.',
+      voidedBanner:
+        'This report was voided. It is kept for the record, and no payment can be recorded on it.',
+      paymentTitle: 'Payment',
       due: 'Due',
       paid: 'Paid',
-      roll: 'Batch',
-      left: 'Left',
-      refPrice: 'Reference price',
-      value: 'Value',
+      remaining: 'Remaining',
+      excess: 'Paid beyond what is due',
+      progress: 'The share of the zakat paid',
+      noPayments: 'No payment has been recorded yet.',
+      paymentsTitle: 'Payments',
+      methodologyTitle: 'Methodology used',
+      methodologyNote:
+        'The settings this report was made with. Changing the settings later does not change it.',
+      baseTitle: 'How the base was built',
+      inventoryTitle: 'Inventory valuation',
+      unsupported:
+        'The app records the date, the amount and a note. It does not record how the zakat was given or who received it, beyond what you write in the note.',
     },
-    archiveTitle: 'Report archive',
-    noReports: 'No reports yet.',
-    view: 'Details',
-    fullyPaid: 'Paid in full',
-    notFound: 'This report is not on this device',
-    back: 'Back to zakat',
-    reportOf: 'Zakat for the hawl of',
-    perGram: 'per gram',
-    doubtfulIn: 'Doubtful debts counted',
-    doubtfulOut: 'Doubtful debts not counted',
-    paymentsTitle: 'Payment',
-    paidSoFar: 'Paid:',
-    left: 'Left:',
+    pay: {
+      title: 'Record a zakat payment',
+      description:
+        "The amount is split between the partners by ownership and recorded as a draw on each one's account. It is not an expense.",
+      due: 'Due',
+      paid: 'Already paid',
+      remaining: 'Remaining',
+      notePlaceholder: 'A receipt number, or who received it (optional)',
+      aboveRemaining: 'More than what is left to pay.',
+      recorded: 'Zakat payment recorded',
+    },
     paymentHint:
       "Taken off each partner's account in proportion to ownership, as a draw on their profit.",
-    pay: 'Record paying the zakat',
-    payTitle: 'Pay the zakat',
-    payDescription:
-      "The amount is split between the partners by ownership and recorded as a draw on each one's account.",
-    paid: 'Zakat payment recorded',
     shareAction: 'Share on WhatsApp',
     share: { title: (hawl: string) => `Zakat for the hawl of ${hawl}` },
     voidAction: 'Void the report',
@@ -2543,11 +3117,13 @@ export const en: Messages = {
       errorTitle: 'The sales could not be read',
       errorDescription: 'Something went wrong reading this device’s sales. Try again.',
       openDetails: (customer: string, date: string) => `Open the sale of ${customer}, ${date}`,
-      openInvoice: 'Open the invoice',
+      viewDetails: 'View details',
+      actionsFor: (customer: string, date: string) =>
+        `Actions for the sale of ${customer}, ${date}`,
       drawer: {
         title: 'Sale details',
         description:
-          'A quick look at this sale. Open the invoice to take payment, return goods or void it.',
+          'Everything on this sale: items, payments and returns, and what you can do about it.',
         customer: 'Customer',
         items: 'Items sold',
         quantity: 'Quantity',

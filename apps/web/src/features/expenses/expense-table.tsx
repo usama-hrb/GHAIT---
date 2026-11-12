@@ -43,11 +43,11 @@ export function ExpenseTable({
 }) {
   return (
     <div className="rounded-lg border bg-card">
-      <Table>
+      <Table stack>
         <TableHeader>
           <TableRow>
             <TableHead>{t.columns.expense}</TableHead>
-            <TableHead className="max-sm:hidden">{t.columns.date}</TableHead>
+            <TableHead>{t.columns.date}</TableHead>
             <TableHead className="text-end">{t.columns.amount}</TableHead>
             <TableHead>{t.columns.status}</TableHead>
             {canWrite && (
@@ -63,7 +63,7 @@ export function ExpenseTable({
             const paid = statusOfRow(row) === 'paid';
             const locked = isLockedOn(expense.paidDate, lockedThrough);
             return (
-              <TableRow key={expense.id} className="h-14">
+              <TableRow key={expense.id} className="sm:h-14">
                 <TableCell>
                   <div className="grid min-w-0 gap-0.5">
                     <span className="font-medium">{categoryLabel(expense.category)}</span>
@@ -80,19 +80,15 @@ export function ExpenseTable({
                         {expense.note}
                       </span>
                     )}
-                    <DateText
-                      value={expense.date}
-                      className="text-xs text-muted-foreground sm:hidden"
-                    />
                   </div>
                 </TableCell>
-                <TableCell className="text-muted-foreground max-sm:hidden">
+                <TableCell className="text-muted-foreground" label={t.columns.date}>
                   <DateText value={expense.date} />
                 </TableCell>
-                <TableCell className="text-end font-medium">
+                <TableCell className="text-end font-medium" label={t.columns.amount}>
                   <Money cents={expense.amountCents} />
                 </TableCell>
-                <TableCell>
+                <TableCell label={t.columns.status}>
                   <div className="grid justify-items-start gap-0.5">
                     <Badge variant={paid ? 'success' : 'warning'}>
                       {paid ? t.status.paid : t.status.unpaid}

@@ -32,7 +32,16 @@ export class MaintenanceRepository {
    * just not be here yet: a set-up screen waits instead of creating a second one.
    */
   async pulledOnce(): Promise<boolean> {
-    return (await this.store.getMeta(PULLED_AT)) !== undefined;
+    return (await this.lastPulledAt()) !== null;
+  }
+
+  /**
+   * When this device last finished pulling the whole shop (an ISO time), or null if it never has.
+   * A screen that checks the shop's books says how recent the records it read are.
+   */
+  async lastPulledAt(): Promise<string | null> {
+    const at = await this.store.getMeta(PULLED_AT);
+    return typeof at === 'string' ? at : null;
   }
 
   /** Changes the server refused, oldest first (never retried as they are, ADR 0002). */

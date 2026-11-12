@@ -154,7 +154,11 @@ export function Distribution({
           <InfoIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
           <p className="text-muted-foreground">{d.allocationNote}</p>
         </div>
-        <Button asChild variant="link" className="h-auto w-fit justify-start p-0">
+        <Button
+          asChild
+          variant="link"
+          className="h-auto min-h-6 w-fit justify-start p-0 pointer-coarse:min-h-11"
+        >
           <Link href="/settings/partners">{d.manage}</Link>
         </Button>
       </div>

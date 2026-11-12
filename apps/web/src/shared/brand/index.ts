@@ -4,6 +4,7 @@ export { BrandMark, type BrandIdentity } from './brand-mark';
 export { ConnectivityStatus, useOnlineStatus } from './connectivity-status';
 export { DiamondBullet } from './diamond-bullet';
 export { Logo } from './logo';
+export { NotFoundScreen } from './not-found-screen';
 export { OfflineNotice } from './offline-notice';
 export { ProductPhoto } from './product-photo';
 export { SearchTrigger } from './search-trigger';

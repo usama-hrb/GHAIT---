@@ -15,6 +15,7 @@ import { EmptyState, ErrorState, LoadingState, OfflineNotice } from '@/shared/br
 import { useMediaQuery } from '@/shared/hooks/use-media-query';
 import { shopToday } from '@/shared/lib/dates';
 import { Button } from '@/shared/ui/button';
+import { type SaleAction, SaleActionDialogs } from './sale-actions';
 import { SaleDrawer } from './sale-drawer';
 import { PeriodControl, SalesFilterBar } from './sales-filter-bar';
 import {
@@ -70,7 +71,13 @@ function SalesWorkspace({ rows }: { rows: readonly SaleSummary[] }) {
   const [filter, setFilter] = useState<HistoryFilter>(DEFAULT_FILTER);
   const [page, setPage] = useState(0);
   const [openId, setOpenId] = useState<string | null>(null);
+  // The action picked from a row's menu or the drawer: its dialog opens over the list.
+  const [pending, setPending] = useState<{ id: string; action: SaleAction } | null>(null);
   const today = shopToday();
+
+  const act = (id: string, action: SaleAction) => {
+    setPending({ id, action });
+  };
 
   const change = (next: HistoryFilter) => {
     setFilter(next);
@@ -127,7 +134,12 @@ function SalesWorkspace({ rows }: { rows: readonly SaleSummary[] }) {
           ) : (
             <div className="overflow-hidden rounded-lg border bg-card">
               {wide ? (
-                <SalesTable rows={paged.items} selectedId={openId} onOpen={setOpenId} />
+                <SalesTable
+                  rows={paged.items}
+                  selectedId={openId}
+                  onOpen={setOpenId}
+                  onAction={act}
+                />
               ) : (
                 <SalesCards rows={paged.items} selectedId={openId} onOpen={setOpenId} />
               )}
@@ -186,7 +198,17 @@ function SalesWorkspace({ rows }: { rows: readonly SaleSummary[] }) {
         onClose={() => {
           setOpenId(null);
         }}
+        onAction={act}
       />
+      {pending && (
+        <SaleActionDialogs
+          saleId={pending.id}
+          action={pending.action}
+          onClose={() => {
+            setPending(null);
+          }}
+        />
+      )}
     </div>
   );
 }

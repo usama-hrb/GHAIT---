@@ -87,6 +87,21 @@ test('a cashier sells and sees no cost or profit; the owner sees the sale’s pr
   await dialog.getByRole('button', { name: 'أضف إلى الفاتورة' }).click();
   await expect(till.getByText('الربح')).toHaveCount(0);
   await payInFull(till);
+  // The history's drawer shows the whole sale to the till as well, but never its cost or profit,
+  // and no way to return goods (the owner's).
+  await till.goto('/pos/history');
+  await till
+    .getByRole('table')
+    .getByRole('button', { name: /^افتح بيع/ })
+    .first()
+    .click();
+  const sheet = till.getByRole('dialog', { name: 'تفاصيل البيع' });
+  await expect(sheet).toContainText('مخمل - أحمر');
+  await expect(sheet.getByRole('button', { name: 'شارك الفاتورة' })).toBeVisible();
+  await expect(sheet.getByRole('button', { name: 'إرجاع بضاعة' })).toHaveCount(0);
+  await expect(sheet).not.toContainText(/الربح|التكلفة/);
+  await till.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
   const saleId = await openLastSale(till);
   await expect(till.getByText('الربح')).toHaveCount(0);
   await expect(till.getByText('التكلفة', { exact: true })).toHaveCount(0);

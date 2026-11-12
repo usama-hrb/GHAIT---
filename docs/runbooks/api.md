@@ -119,7 +119,7 @@ The same operations over the API, for scripts: `GET /settlements/preview?end=YYY
 
 ## The integrity check shows a difference
 
-The Integrity screen (فحص التطابق) compares what the shop holds with whose it is, to the cent, from that device's records (docs/accounting-assumptions.md I1–I8). `GET /integrity` gives the same check on the server's records.
+The Financial Integrity screen (التطابق المالي, under Reports in the menu) compares what the shop holds with whose it is, to the cent, from that device's records (docs/accounting-assumptions.md I1–I8). It answers _Balanced_, _Difference detected_ (with the exact amount and which way it goes) or _Unable to verify_: the last means the device has not received the shop's records yet, or holds incomplete ones, so connect it, wait for the first sync and press Check again; it never means the shop is balanced. `GET /integrity` gives the same check on the server's records (ADR 0027).
 
 1. **Sync every device**, then look again. A difference on one device only means that device lacks records, or the server refused one of its changes: Settings → sync issues.
 2. If the server shows it too (`GET /integrity`), look at the latest changes listed on the screen and in the audit log (سجل التعديلات, or `GET /audit?from=YYYY-MM-DD&to=YYYY-MM-DD`), filtered by the day the figures last agreed.
@@ -129,6 +129,15 @@ A cash count is not a fix for a difference: it records what was counted, and the
 
 ## Zakat
 
-The Zakat screen (الزكاة) holds the settings (hawl start, nisab metal and its price per gram with the day it was seen, valuation, doubtful debts, reminder days); changing them needs a connection. On the hawl, save the report (it works offline), then record the payment: it becomes a draw on each partner by ownership (docs/accounting-assumptions.md Z5–Z10). The figures are a calculation, not a ruling: the settings follow the scholar the owner follows.
+The Zakat screen (الزكاة, [ADR 0028](../adr/0028-zakat-management-center.md)) is the Zakat Management Center. It says where the hawl stands in one state (not configured, waiting for the hawl, hawl in progress, nisab not reached, review required, zakat due, calculation completed, payment recorded), worked out from the records and the settings, never from the reminder. Its one main action, "Review Zakat calculation", opens a seven-step review that records nothing until the last step is confirmed; items that block the calculation (no hawl start, no metal price, a device that never received the shop's records) must be fixed first.
 
-Over the API: `GET /zakat/reports`, `GET /zakat/reports/:id` (with what was paid), `POST /zakat/reports/:id/payments` with `{ amountCents, date }`, `POST /zakat/reports/:id/void` with `{ reason }` (refused while something is paid on it).
+The settings (hawl start, nisab metal and its price per gram with the day it was seen, valuation, doubtful debts, reminder days) are on their own page, "Methodology settings"; changing them needs a connection and affects future calculations only. On the hawl, save the report (it works offline), then record the payment, in one or several parts: each part becomes a draw on each partner by ownership (docs/accounting-assumptions.md Z5–Z10, Z18). A saved report is never recalculated or edited; a wrong one is voided with a reason, while nothing is paid on it, and the review is done again. The figures are a calculation, not a ruling: the settings follow the scholar the owner follows, and the assumptions marked `open` (Z11–Z18) are choices the owner has not yet confirmed.
+
+Over the API (the owner only; a cashier's token gets 403, a partner reads through sync):
+
+- `GET /zakat/reports`: every report, the latest hawl first, voided ones included.
+- `GET /zakat/reports/:id`: the report with what was paid and the draws that paid it.
+- `POST /zakat/reports/:id/payments` with `{ amountCents, date, note?, paymentId? }`. Naming the payment with a `paymentId` (a uuid) makes it safe to repeat: the same request again changes nothing and answers as the first time; the same `paymentId` with another amount or day is refused (`zakat_payment_id_reused`). More than what is left is refused (`zakat_payment_above_due`).
+- `POST /zakat/reports/:id/void` with `{ reason }`, refused while something is paid on it (`zakat_report_has_payments`).
+
+A report arriving through sync is refused unless its hawl has come (`zakat_hawl_not_reached`, `zakat_hawl_in_future`), its figures follow from its items by the core function (`zakat_report_does_not_match_core`). A database index allows one live report per hawl.

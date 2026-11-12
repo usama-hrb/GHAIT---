@@ -34,7 +34,7 @@ function AppliedTo({ row }: { row: PaymentRow }) {
           ) : (
             <Link
               href={`/purchases/view?id=${part.purchaseId}`}
-              className="underline-offset-4 hover:underline"
+              className="inline-flex min-h-6 items-center underline-offset-4 hover:underline pointer-coarse:min-h-11"
             >
               {t.purchaseOf} {part.date ? <DateText value={part.date} /> : null}
             </Link>
@@ -66,13 +66,13 @@ export function PaymentTable({
 }) {
   return (
     <div className="rounded-lg border bg-card">
-      <Table>
+      <Table stack>
         <TableHeader>
           <TableRow>
             <TableHead>{t.columns.date}</TableHead>
-            <TableHead className="max-sm:hidden">{t.columns.method}</TableHead>
-            <TableHead className="max-md:hidden">{t.columns.appliedTo}</TableHead>
-            <TableHead className="max-lg:hidden">{t.columns.note}</TableHead>
+            <TableHead>{t.columns.method}</TableHead>
+            <TableHead>{t.columns.appliedTo}</TableHead>
+            <TableHead>{t.columns.note}</TableHead>
             <TableHead className="text-end">{t.columns.amount}</TableHead>
             {canVoid && (
               <TableHead className="w-10">
@@ -87,7 +87,7 @@ export function PaymentTable({
             const voided = payment.voidedAt !== null;
             const locked = isLockedOn(payment.date, lockedThrough);
             return (
-              <TableRow key={payment.id} className="h-12" data-voided={voided || undefined}>
+              <TableRow key={payment.id} className="sm:h-12" data-voided={voided || undefined}>
                 <TableCell>
                   <DateText value={payment.date} className={voided ? 'line-through' : undefined} />
                   {voided && (
@@ -96,14 +96,17 @@ export function PaymentTable({
                     </Badge>
                   )}
                 </TableCell>
-                <TableCell className="max-sm:hidden">{t.methods[payment.method]}</TableCell>
-                <TableCell className="max-md:hidden">
+                <TableCell label={t.columns.method}>{t.methods[payment.method]}</TableCell>
+                <TableCell label={t.columns.appliedTo}>
                   <AppliedTo row={row} />
                 </TableCell>
-                <TableCell className="max-w-48 truncate text-muted-foreground max-lg:hidden">
+                <TableCell
+                  className="text-muted-foreground sm:max-w-48 sm:truncate"
+                  label={t.columns.note}
+                >
                   {payment.note ?? '—'}
                 </TableCell>
-                <TableCell className="text-end">
+                <TableCell className="text-end" label={t.columns.amount}>
                   <Money
                     cents={payment.amountCents}
                     tone={voided ? undefined : 'profit'}

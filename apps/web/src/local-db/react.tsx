@@ -5,6 +5,7 @@ import {
   createContext,
   type ReactNode,
   use,
+  useCallback,
   useEffect,
   useState,
   useSyncExternalStore,
@@ -84,6 +85,33 @@ export function useLiveQuery<T>(
   deps: readonly unknown[],
 ): T | undefined {
   return useDexieLiveQuery(query, [...deps]);
+}
+
+/** What a query on this device ended with: its value, or the error it threw. */
+export type Guarded<T> = { ok: true; value: T } | { ok: false; error: unknown };
+
+/**
+ * A live query that reports its failure instead of throwing it. `useLiveQuery` throws a failed
+ * query into the nearest error boundary, which would replace the whole page; here a section can say
+ * it could not be read and offer a retry while the rest of the page keeps working. `result` is
+ * undefined while the first answer is loading, and `retry` runs the query again.
+ */
+export function useGuardedQuery<T>(
+  query: () => Promise<T>,
+  deps: readonly unknown[],
+): { result: Guarded<T> | undefined; retry: () => void } {
+  const [attempt, setAttempt] = useState(0);
+  const result = useLiveQuery(async (): Promise<Guarded<T>> => {
+    try {
+      return { ok: true, value: await query() };
+    } catch (error: unknown) {
+      return { ok: false, error };
+    }
+  }, [...deps, attempt]);
+  const retry = useCallback(() => {
+    setAttempt((count) => count + 1);
+  }, []);
+  return { result, retry };
 }
 
 const LOADING_SESSION: SessionState = { status: 'loading', user: null, needsSignIn: false };

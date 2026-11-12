@@ -46,12 +46,12 @@ export function InvoiceTable({
 }) {
   return (
     <div className="rounded-lg border bg-card">
-      <Table>
+      <Table stack>
         <TableHeader>
           <TableRow>
             <TableHead>{t.columns.date}</TableHead>
-            <TableHead className="text-end max-md:hidden">{t.columns.total}</TableHead>
-            <TableHead className="text-end max-md:hidden">{t.columns.paid}</TableHead>
+            <TableHead className="text-end">{t.columns.total}</TableHead>
+            <TableHead className="text-end">{t.columns.paid}</TableHead>
             <TableHead className="text-end">{t.columns.due}</TableHead>
             <TableHead>{t.columns.status}</TableHead>
             <TableHead className="w-10">
@@ -64,11 +64,11 @@ export function InvoiceTable({
             const { sale, invoice } = row;
             const returned = invoice?.returnedCents ?? 0;
             return (
-              <TableRow key={sale.id} className="h-12">
+              <TableRow key={sale.id} className="sm:h-12">
                 <TableCell>
                   <Link
                     href={`/pos/view?id=${sale.id}`}
-                    className="underline-offset-4 hover:underline"
+                    className="underline-offset-4 hover:underline pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
                   >
                     <DateText value={sale.date} />
                   </Link>
@@ -78,7 +78,7 @@ export function InvoiceTable({
                     </p>
                   )}
                 </TableCell>
-                <TableCell className="text-end max-md:hidden">
+                <TableCell className="text-end" label={t.columns.total}>
                   <Money cents={originalTotalOf(row)} />
                   {returned > 0 && (
                     <p className="text-xs text-muted-foreground">
@@ -86,17 +86,17 @@ export function InvoiceTable({
                     </p>
                   )}
                 </TableCell>
-                <TableCell className="text-end max-md:hidden">
+                <TableCell className="text-end" label={t.columns.paid}>
                   {invoice ? <Money cents={invoice.paidCents} /> : '—'}
                 </TableCell>
-                <TableCell className="text-end">
+                <TableCell className="text-end" label={t.columns.due}>
                   {invoice && invoice.dueCents > 0 ? (
                     <Money cents={invoice.dueCents} tone="debt" className="font-semibold" />
                   ) : (
                     <span className="text-muted-foreground">—</span>
                   )}
                 </TableCell>
-                <TableCell>
+                <TableCell label={t.columns.status}>
                   <InvoiceStatusBadge status={row.status} />
                 </TableCell>
                 <TableCell className="text-end">

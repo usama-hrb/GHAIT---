@@ -86,6 +86,37 @@ export function connectivity(page: Page) {
   return page.getByRole('status').filter({ hasText: /متصل|دون اتصال/ });
 }
 
+/** A day `days` before today in the shop's time zone (YYYY-MM-DD). */
+export function daysAgo(days: number): string {
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Casablanca' }).format(
+    new Date(),
+  );
+  return new Date(Date.parse(`${today}T00:00:00Z`) - days * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** The two partners (set up once), and money in the shop: a contribution of 50 000 rial. */
+export async function shopWithMoney(page: Page): Promise<void> {
+  await page.goto('/settings/partners');
+  const setup = page.getByLabel('اسم المالك');
+  const ready = page.getByRole('region', { name: 'مال المحل حسب السجلات' });
+  await expect(setup.or(ready)).toBeVisible();
+  if (await setup.isVisible()) {
+    await setup.fill('أنا');
+    await page.getByLabel('اسم الشريك').fill('شريكي');
+    await page.getByRole('button', { name: 'حفظ' }).click();
+    await expect(ready).toBeVisible();
+  }
+  await page
+    .getByRole('region')
+    .filter({ has: page.getByRole('button', { name: 'مساهمة في رأس المال' }) })
+    .first()
+    .getByRole('button', { name: 'مساهمة في رأس المال' })
+    .click();
+  await page.getByRole('dialog').getByLabel('المبلغ').fill('50000');
+  await page.getByRole('dialog').getByRole('button', { name: 'حفظ' }).click();
+  await expect(page.getByRole('dialog')).toBeHidden();
+}
+
 /** What a purchase is typed as: amounts in rial and metres, as the forms take them. */
 export interface StockEntry {
   /** What it was bought in; metres when left out. */
@@ -236,12 +267,18 @@ export async function payInFull(page: Page): Promise<void> {
   await expect(page.getByText('لا أصناف').first()).toBeVisible();
 }
 
-/** The newest sale on this device, opened from the history; returns its id. */
+/**
+ * The newest sale on this device: its id is read from the first row of the history, then its
+ * invoice page is opened (the history itself shows a sale in a drawer and links to no page). Needs
+ * a viewport of 1024 px or more, where the history is a table.
+ */
 export async function openLastSale(page: Page): Promise<string> {
   await page.goto('/pos/history');
-  await page.getByRole('table').getByRole('link').first().click();
+  const row = page.getByRole('table').locator('tbody tr[data-sale-id]').first();
+  const saleId = (await row.getAttribute('data-sale-id')) ?? '';
+  await page.goto(`/pos/view?id=${saleId}`);
   await expect(page).toHaveURL(/\/pos\/view\?id=/);
-  return new URL(page.url()).searchParams.get('id') ?? '';
+  return saleId;
 }
 
 /** Every record of `entity` the server has, pulled page by page (voided ones included). */

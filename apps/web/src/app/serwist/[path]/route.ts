@@ -42,6 +42,8 @@ const SHELL_PAGES = [
   '/integrity',
   '/audit',
   '/zakat',
+  '/zakat/review',
+  '/zakat/settings',
   '/zakat/view',
   '/reports',
   '/settings',

@@ -1,173 +1,90 @@
 'use client';
 
-import Link from 'next/link';
-import { toast } from 'sonner';
+import { zakatPaymentStateOf } from '@fabric/contracts';
+import { useState } from 'react';
 import { messages } from '@/i18n';
-import { isPeriodLocked, useLiveQuery, useRepositories, ValidationError } from '@/local-db';
-import { LoadingState, OfflineNotice } from '@/shared/brand';
-import { DateText, Money } from '@/shared/format';
+import { useGuardedQuery, useRepositories, useSession } from '@/local-db';
+import { ErrorState, LoadingState, OfflineNotice } from '@/shared/brand';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
-import { Badge } from '@/shared/ui/badge';
-import { Button } from '@/shared/ui/button';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
-import { ZakatBreakdownView } from './zakat-breakdown';
-import { ZakatSettingsForm } from './zakat-settings';
+import { ZakatStatusCard } from './status-card';
+import { ZakatSummary } from './summary-cards';
+import { ZakatAttention } from './zakat-attention';
+import { ZakatHistory } from './zakat-history';
+import { ZakatPayDialog } from './zakat-pay-dialog';
 
 const t = messages.zakat;
 
 /**
- * Zakat (SPEC §10, BUILD_PROMPTS 5.1): the settings, the hawl in Hijri, the base for the latest
- * hawl with every item and the result against the nisab, saving it as a report, and the
- * archive. A calculation tool, not a fatwa: the note says so.
+ * The Zakat Management Center (SPEC §10, ADR 0028): where the shop stands on zakat in one state,
+ * what needs a look, the hawl, the nisab, the base and the zakat in four figures, and every saved
+ * report. It records nothing by itself: the one main action opens the guided review, and the
+ * methodology, the history and a payment are secondary. A calculation tool, not a fatwa: the note
+ * says so. The owner changes things; a partner reads.
  */
 export function ZakatScreen() {
   const repositories = useRepositories();
-  const data = useLiveQuery(async () => {
-    const [options, hawl, preview, history] = await Promise.all([
-      repositories.zakat.options(),
-      repositories.zakat.hawl(),
-      repositories.zakat.preview(),
+  const isOwner = useSession().user?.role === 'owner';
+  const [paying, setPaying] = useState(false);
+  const { result, retry } = useGuardedQuery(async () => {
+    const [review, history] = await Promise.all([
+      repositories.zakat.review(),
       repositories.zakat.history(),
     ]);
-    return { options, hawl, preview, history };
+    return { review, history };
   }, [repositories]);
 
-  if (data === undefined) return <LoadingState />;
-  const { hawl, preview } = data;
-  const savedForHawl = preview.ok
-    ? data.history.some(
-        (report) => report.hawlDate === preview.hawlDate && report.voidedAt === null,
-      )
-    : false;
+  const data = result?.ok ? result.value : null;
+  const latest = data?.review.latest ?? null;
+  const left =
+    latest === null
+      ? 0
+      : zakatPaymentStateOf({
+          dueCents: latest.zakatDueCents,
+          paidCents: latest.paidCents,
+          voided: false,
+        }).remainingCents;
 
   return (
-    <div className="mx-auto grid w-full max-w-4xl gap-6">
+    <div className="@container mx-auto grid w-full max-w-5xl gap-6">
       <OfflineNotice />
-      <h2 className="font-heading text-xl font-semibold">{t.title}</h2>
+      <p className="max-w-prose text-muted-foreground">{t.subtitle}</p>
       <Alert>
         <AlertDescription>{t.notFatwa}</AlertDescription>
       </Alert>
-
-      <section aria-label={t.settingsTitle} className="grid gap-3 rounded-xl border bg-card p-4">
-        <h3 className="font-heading font-semibold">{t.settingsTitle}</h3>
-        <ZakatSettingsForm key={JSON.stringify(data.options)} options={data.options} />
-      </section>
-
-      {hawl.start !== null && (
-        <section aria-label={t.hawlTitle} className="grid gap-1 rounded-xl border bg-card p-4">
-          <h3 className="font-heading font-semibold">{t.hawlTitle}</h3>
-          {hawl.last && (
-            <p>
-              {t.lastHawl} <DateText value={hawl.last} /> (
-              <DateText value={hawl.last} format="hijri" />)
-            </p>
-          )}
-          {hawl.next && (
-            <p>
-              {t.nextHawl} <DateText value={hawl.next} /> (
-              <DateText value={hawl.next} format="hijri" />) · {t.inDays(hawl.daysToNext ?? 0)}
-            </p>
-          )}
-        </section>
+      {!isOwner && (
+        <p role="note" className="text-sm text-muted-foreground">
+          {t.readOnlyNote}
+        </p>
       )}
 
-      <section aria-label={t.reportTitle} className="grid gap-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="font-heading font-semibold">{t.reportTitle}</h3>
-          {preview.ok && (
-            <Button
-              variant="accent"
-              disabled={!preview.fields.breakdown.hawlCompleted || savedForHawl}
-              onClick={() => {
-                repositories.zakat
-                  .save()
-                  .then(() => toast.success(t.saved, { description: messages.forms.saved }))
-                  .catch((error: unknown) => {
-                    const message =
-                      error instanceof ValidationError ? error.issues[0]?.message : undefined;
-                    toast.error(
-                      isPeriodLocked(error)
-                        ? messages.forms.periodLocked
-                        : ((message && t.issues[message]) ?? messages.forms.invalid),
-                    );
-                  });
-              }}
-            >
-              {t.save}
-            </Button>
-          )}
-        </div>
-        {preview.ok ? (
-          <>
-            <p className="text-sm text-muted-foreground">
-              {preview.fields.breakdown.hawlCompleted ? t.forHawl : t.positionToday}{' '}
-              <DateText value={preview.hawlDate} /> · {savedForHawl ? t.alreadySaved : t.fromDevice}
-            </p>
-            <ZakatBreakdownView
-              breakdown={preview.fields.breakdown}
-              baseCents={preview.fields.baseCents}
-              nisabCents={preview.fields.nisabCents}
-              zakatDueCents={preview.fields.zakatDueCents}
+      {result === undefined ? (
+        <LoadingState rows={3} />
+      ) : data === null ? (
+        <ErrorState onRetry={retry} />
+      ) : (
+        <>
+          <ZakatStatusCard
+            status={data.review.status}
+            latest={latest}
+            lastCalculatedAt={data.review.lastCalculatedAt}
+            canPay={isOwner && left > 0}
+            onPay={() => {
+              setPaying(true);
+            }}
+          />
+          <ZakatAttention items={data.review.items} />
+          <ZakatSummary review={data.review} />
+          <ZakatHistory rows={data.history} />
+          {latest !== null && (
+            <ZakatPayDialog
+              key={paying ? 'open' : 'closed'}
+              report={latest}
+              open={paying}
+              onOpenChange={setPaying}
             />
-          </>
-        ) : (
-          <Alert>
-            <AlertDescription>
-              {preview.issues.map((issue) => t.issues[issue.message] ?? messages.forms.invalid)}
-            </AlertDescription>
-          </Alert>
-        )}
-      </section>
-
-      <section aria-label={t.archiveTitle} className="grid gap-2">
-        <h3 className="font-heading font-semibold">{t.archiveTitle}</h3>
-        {data.history.length === 0 ? (
-          <p className="text-muted-foreground">{t.noReports}</p>
-        ) : (
-          <div className="rounded-lg border bg-card">
-            <Table stack>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t.columns.hawl}</TableHead>
-                  <TableHead className="text-end">{t.columns.due}</TableHead>
-                  <TableHead className="text-end">{t.columns.paid}</TableHead>
-                  <TableHead>
-                    <span className="sr-only">{t.view}</span>
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.history.map((report) => (
-                  <TableRow
-                    key={report.id}
-                    className={report.voidedAt ? 'text-muted-foreground line-through' : undefined}
-                  >
-                    <TableCell>
-                      <DateText value={report.hawlDate} format="hijri" />
-                    </TableCell>
-                    <TableCell className="text-end" label={t.columns.due}>
-                      <Money cents={report.zakatDueCents} />
-                    </TableCell>
-                    <TableCell className="text-end" label={t.columns.paid}>
-                      <Money cents={report.paidCents} />
-                      {report.voidedAt === null && report.paidCents >= report.zakatDueCents && (
-                        <Badge variant="success" className="ms-2">
-                          {t.fullyPaid}
-                        </Badge>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-end">
-                      <Button asChild size="sm" variant="link">
-                        <Link href={`/zakat/view?id=${report.id}`}>{t.view}</Link>
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-        )}
-      </section>
+          )}
+        </>
+      )}
     </div>
   );
 }

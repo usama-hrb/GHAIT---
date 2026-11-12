@@ -237,8 +237,15 @@ test('currency: rial or dirham, a display unit only; the stored amounts do not c
       ).searchParams.get('text') ?? '',
     );
   expect(await whatsapp()).toContain('الإجمالي: 800 ريال');
+  // The sale reaches the server through background sync, so wait for it to be there.
+  await expect
+    .poll(
+      async () =>
+        (await serverGet<{ figures?: Record<string, number> }>(request, `/sales/${saleId}`)).figures
+          ?.totalCents,
+    )
+    .toBe(4000);
   const before = await serverGet<{ figures?: Record<string, number> }>(request, `/sales/${saleId}`);
-  expect(before.figures?.totalCents).toBe(4000);
 
   // Choosing dirham changes the example only until it is saved.
   await page.goto('/settings/regional');
@@ -284,13 +291,13 @@ test('partners live inside Settings; the old addresses lead there; the sidebar n
 
   await page.goto('/settings');
   // Not in the main sidebar, but one tap away in Settings.
-  await expect(nav(page).getByRole('link', { name: /الشركاء/ })).toHaveCount(1);
+  await expect(nav(page).getByRole('link', { name: /^الأشخاص والشركاء/ })).toHaveCount(1);
   await expect(sidebar(page).getByRole('link', { name: 'الشركاء' })).toHaveCount(0);
   await nav(page)
-    .getByRole('link', { name: /الشركاء/ })
+    .getByRole('link', { name: /^الأشخاص والشركاء/ })
     .click();
   await expect(page).toHaveURL(/\/settings\/partners$/);
-  await expect(nav(page).getByRole('link', { name: /الشركاء/ })).toHaveAttribute(
+  await expect(nav(page).getByRole('link', { name: /^الأشخاص والشركاء/ })).toHaveAttribute(
     'aria-current',
     'page',
   );

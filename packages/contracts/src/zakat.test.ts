@@ -132,6 +132,57 @@ describe('the zakat report (SPEC §10, BUILD_PROMPTS 5.1)', () => {
     ]);
   });
 
+  describe('given the shop’s day (what the server checks a pushed report against)', () => {
+    const today = '2026-11-01';
+    const fieldsFor = (hawlCompleted: boolean) =>
+      zakatReportFieldsOf(t14, {
+        hawlDate: '2026-10-31',
+        hawlCompleted,
+        settings: MARKET,
+        metalPrice: CHEAP_GOLD,
+      });
+
+    it('accepts a report for a hawl that has come, on the day, or a day ahead for a device whose clock runs fast', () => {
+      const fields = fieldsFor(true);
+      expect(checkZakatReport(report(fields), today)).toEqual([]);
+      expect(checkZakatReport(report({ ...fields, hawlDate: today }), today)).toEqual([]);
+      expect(checkZakatReport(report({ ...fields, hawlDate: addDays(today, 1) }), today)).toEqual(
+        [],
+      );
+    });
+
+    it('refuses a report whose hawl is more than a day ahead', () => {
+      expect(
+        checkZakatReport(report({ ...fieldsFor(true), hawlDate: addDays(today, 2) }), today),
+      ).toEqual([
+        expect.objectContaining({ path: ['hawlDate'], message: ZAKAT_ISSUES.hawlInFuture }),
+      ]);
+    });
+
+    it('refuses a report that says its hawl was not completed: only a hawl that has come is reported', () => {
+      expect(checkZakatReport(report(fieldsFor(false)), today)).toEqual([
+        expect.objectContaining({ message: ZAKAT_ISSUES.hawlNotReached }),
+      ]);
+    });
+
+    it('says every problem at once, the date and the figures too', () => {
+      const issues = checkZakatReport(
+        report({ ...fieldsFor(false), hawlDate: addDays(today, 5), zakatDueCents: dh(1) }),
+        today,
+      );
+      expect(issues.map((found) => found.message).sort()).toEqual(
+        [ZAKAT_ISSUES.hawlInFuture, ZAKAT_ISSUES.hawlNotReached, ZAKAT_ISSUES.inconsistent].sort(),
+      );
+    });
+
+    it('without a day, only the figures are compared, as before', () => {
+      expect(checkZakatReport(report(fieldsFor(false)))).toEqual([]);
+      expect(checkZakatReport(report({ ...fieldsFor(true), hawlDate: addDays(today, 9) }))).toEqual(
+        [],
+      );
+    });
+  });
+
   it('the position from the records: stock left, money, what customers owe and are owed', () => {
     const shop = new Shop();
     shop.contribute(OWNER, dh(1000));

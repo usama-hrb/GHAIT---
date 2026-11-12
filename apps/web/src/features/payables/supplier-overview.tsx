@@ -83,7 +83,7 @@ export function SupplierOverview({
                   <div className="grid min-w-0 flex-1 gap-0.5">
                     <Link
                       href={`/purchases/view?id=${purchase.id}`}
-                      className="w-fit font-medium underline-offset-4 hover:underline"
+                      className="inline-flex min-h-6 w-fit items-center font-medium underline-offset-4 hover:underline pointer-coarse:min-h-11"
                     >
                       {t.purchaseOf} <DateText value={purchase.date} />
                     </Link>

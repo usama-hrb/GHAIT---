@@ -4,9 +4,11 @@ import { E2E } from './stack';
 
 /**
  * What the responsive audit specs share (`responsive.spec.ts`: every route; `responsive.workflows.spec.ts`:
- * the dialogs and drawers each page opens): the screen sizes, the in-page measurement, the sign-in.
+ * the dialogs and drawers each page opens; `responsive.integrity.spec.ts` and `responsive.zakat.spec.ts`:
+ * one feature in depth): the screen sizes, the in-page measurement, the contrast reader, the sign-in.
  * The measurement runs in the browser and reports, with no screenshot, what a person would see
- * wrong: the page scrolling sideways, a control off-screen or clipped, a control too small to hit.
+ * wrong: the page scrolling sideways, a control off-screen or clipped, a control too small to hit,
+ * a piece of text too faint against its background.
  */
 
 export interface Size {
@@ -134,6 +136,8 @@ export function measure(touch: boolean): Measured {
       html.scrollWidth > html.clientWidth + 1 &&
       html.clientWidth > 3 &&
       el.tagName !== 'svg' &&
+      // A field scrolls its own text when the value is longer than the box.
+      !['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName) &&
       el.closest('svg, [data-slot="chart"], img, picture, [data-slot="avatar"]') === null &&
       !el.querySelector('.truncate, [class*="line-clamp"], img')
     ) {
@@ -244,4 +248,130 @@ export async function settle(page: Page): Promise<void> {
     .toBe(0)
     .catch(() => undefined);
   await page.waitForTimeout(350);
+}
+
+/** A piece of text that is too faint against what is behind it. */
+export interface Weak {
+  where: string;
+  text: string;
+  ratio: number;
+  need: number;
+  fg: string;
+  bg: string;
+}
+
+/**
+ * Runs in the page: the text inside `scopes` whose contrast with its background is below what
+ * WCAG asks (4.5, or 3 for large text). The browser's own canvas turns any CSS colour (oklch
+ * included) into pixels, and each ancestor's background is painted over the one before it, so
+ * translucent surfaces are blended as they are on screen.
+ */
+export function contrastOf(scopes: string[]): Weak[] {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1;
+  canvas.height = 1;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return [];
+  const paint = (css: string) => {
+    ctx.fillStyle = css;
+    ctx.fillRect(0, 0, 1, 1);
+  };
+  const read = (): [number, number, number] => {
+    const data = ctx.getImageData(0, 0, 1, 1).data;
+    return [data[0] ?? 0, data[1] ?? 0, data[2] ?? 0];
+  };
+  const luminance = ([r, g, b]: [number, number, number]): number => {
+    const linear = (value: number) => {
+      const s = value / 255;
+      return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+    };
+    return 0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
+  };
+  const backgroundOf = (el: Element): [number, number, number] => {
+    const chain: Element[] = [];
+    for (let node: Element | null = el; node; node = node.parentElement) chain.unshift(node);
+    paint('#ffffff');
+    for (const node of chain) {
+      const background = getComputedStyle(node).backgroundColor;
+      if (background !== 'rgba(0, 0, 0, 0)' && background !== 'transparent') paint(background);
+    }
+    return read();
+  };
+  const colourOf = (
+    el: Element,
+    background: [number, number, number],
+  ): [number, number, number] => {
+    paint(`rgb(${background.join(',')})`);
+    paint(getComputedStyle(el).color);
+    const [r, g, b] = read();
+    let opacity = 1;
+    for (let node: Element | null = el; node; node = node.parentElement) {
+      opacity *= Number(getComputedStyle(node).opacity);
+    }
+    return opacity < 1
+      ? [
+          background[0] * (1 - opacity) + r * opacity,
+          background[1] * (1 - opacity) + g * opacity,
+          background[2] * (1 - opacity) + b * opacity,
+        ]
+      : [r, g, b];
+  };
+  const named = (el: Element): string => {
+    const classes =
+      typeof el.className === 'string'
+        ? el.className
+            .split(/\s+/)
+            .filter((c) => c !== '' && !/[:[\]/()]/.test(c))
+            .slice(0, 2)
+            .map((c) => `.${c}`)
+            .join('')
+        : '';
+    return `${el.parentElement?.tagName.toLowerCase() ?? ''}>${el.tagName.toLowerCase()}${classes}`;
+  };
+
+  const weak: Weak[] = [];
+  const seen = new Set<string>();
+  for (const scope of scopes) {
+    for (const root of document.querySelectorAll(scope)) {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const parent = node.parentElement;
+        const text = (node.textContent ?? '').replace(/\s+/g, ' ').trim();
+        if (!parent || text === '') continue;
+        const box = parent.getBoundingClientRect();
+        const style = getComputedStyle(parent);
+        if (
+          box.width === 0 ||
+          box.height === 0 ||
+          style.visibility === 'hidden' ||
+          style.display === 'none' ||
+          parent.closest(
+            '.sr-only, [hidden], [inert], svg, button:disabled, [aria-disabled="true"], [data-disabled]',
+          ) !== null
+        ) {
+          continue;
+        }
+        const background = backgroundOf(parent);
+        const colour = colourOf(parent, background);
+        const ratio = (luminance(colour) + 0.05) / (luminance(background) + 0.05);
+        const hi = Math.max(ratio, 1 / ratio);
+        const size = Number.parseFloat(style.fontSize);
+        const bold = Number.parseInt(style.fontWeight, 10) >= 700;
+        const need = size >= 24 || (size >= 18.66 && bold) ? 3 : 4.5;
+        if (hi + 0.005 >= need) continue;
+        const key = `${named(parent)}|${style.color}|${background.join(',')}`;
+        if (seen.has(key) || weak.length >= 30) continue;
+        seen.add(key);
+        weak.push({
+          where: named(parent),
+          text: text.slice(0, 32),
+          ratio: Math.round(hi * 100) / 100,
+          need,
+          fg: style.color,
+          bg: `rgb(${background.join(', ')})`,
+        });
+      }
+    }
+  }
+  return weak;
 }

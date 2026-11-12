@@ -167,9 +167,9 @@ export function CheckoutDialog({
             if (next === 'credit') pad.activate('paid');
           }}
         >
-          <TabsList className="w-full group-data-horizontal/tabs:h-12">
+          <TabsList className="w-full group-data-horizontal/tabs:h-14">
             {(['full', 'credit'] as const).map((option) => (
-              <TabsTrigger key={option} value={option} className="h-auto flex-1 text-base">
+              <TabsTrigger key={option} value={option} className="h-full flex-1 text-base">
                 {t.payment[option]}
               </TabsTrigger>
             ))}

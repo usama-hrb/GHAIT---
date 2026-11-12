@@ -79,11 +79,12 @@ test('the sales history: figures, filters, pages of rows, details drawer, offlin
   await page.getByRole('searchbox').fill('سجل');
   await expect(rowsOf(page)).toHaveCount(4);
 
-  // The details drawer: opens from a row, shows the sale, no cost or profit, closes with Escape.
+  // The details drawer: opens from a row, shows the whole sale (the owner sees its cost and profit),
+  // closes with Escape.
   await page.getByRole('searchbox').fill('مشتري سجل ب');
   await page
     .getByRole('table')
-    .getByRole('button', { name: /مشتري سجل ب/ })
+    .getByRole('button', { name: /^افتح بيع مشتري سجل ب/ })
     .click();
   const drawer = page.getByRole('dialog', { name: 'تفاصيل البيع' });
   await expect(drawer).toBeVisible();
@@ -92,7 +93,8 @@ test('the sales history: figures, filters, pages of rows, details drawer, offlin
   await expect(drawer).toContainText('800');
   await expect(drawer).toContainText(/المدفوع\s*300/);
   await expect(drawer).toContainText(/الباقي\s*500/);
-  await expect(drawer).not.toContainText(/الربح|التكلفة/);
+  await expect(drawer).toContainText(/التكلفة\s*640/);
+  await expect(drawer).toContainText(/الربح/);
   await page.keyboard.press('Escape');
   await expect(drawer).toBeHidden();
 
@@ -102,14 +104,47 @@ test('the sales history: figures, filters, pages of rows, details drawer, offlin
   await expect(rowsOf(page)).toHaveCount(4);
   await page
     .getByRole('table')
-    .getByRole('button', { name: /مشتري سجل ج/ })
+    .getByRole('button', { name: /^افتح بيع مشتري سجل ج/ })
     .click();
   await expect(page.getByRole('dialog', { name: 'تفاصيل البيع' })).toContainText(/الباقي\s*400/);
   await page.context().setOffline(false);
 
-  // From the drawer to the full invoice.
-  await page.getByRole('link', { name: 'افتح الفاتورة' }).click();
-  await expect(page).toHaveURL(/\/pos\/view\?id=/);
+  // The drawer is the whole invoice: its actions are at its foot, and it links to no invoice page.
+  const sheet = page.getByRole('dialog', { name: 'تفاصيل البيع' });
+  await expect(sheet.getByRole('link', { name: 'افتح الفاتورة' })).toHaveCount(0);
+  await expect(sheet.getByRole('button', { name: 'شارك الفاتورة' })).toBeVisible();
+  await expect(sheet.getByRole('link', { name: 'واتساب' })).toBeVisible();
+  await expect(sheet.getByRole('button', { name: 'إلغاء البيع' })).toBeVisible();
+
+  // Taking a payment from the drawer: the dialog opens over it and the drawer follows the change.
+  await sheet.getByRole('button', { name: 'تسجيل دفعة', exact: true }).click();
+  const payment = page.getByRole('dialog', { name: 'تسجيل دفعة' });
+  await payment.getByLabel('المبلغ').fill('150');
+  await payment.getByRole('button', { name: 'حفظ' }).click();
+  await expect(payment).toBeHidden();
+  await expect(sheet).toContainText(/المدفوع\s*150/);
+  await expect(sheet).toContainText(/الباقي\s*250/);
+  await page.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
+
+  // The row's Actions menu stands where the receipt link was: details, share, payment, void.
+  await page.getByRole('button', { name: /^إجراءات بيع مشتري سجل ب/ }).click();
+  const menu = page.getByRole('menu');
+  await expect(menu.getByRole('menuitem', { name: 'شارك الفاتورة' })).toBeVisible();
+  await expect(menu.getByRole('menuitem', { name: 'تسجيل دفعة' })).toBeVisible();
+  await menu.getByRole('menuitem', { name: 'عرض التفاصيل' }).click();
+  await expect(sheet).toContainText('مشتري سجل ب');
+  await page.keyboard.press('Escape');
+  await expect(sheet).toBeHidden();
+
+  // Voiding from the menu: a reason is asked for, and the sale stays in the list as voided.
+  await page.getByRole('button', { name: /^إجراءات بيع مشتري سجل ب/ }).click();
+  await page.getByRole('menuitem', { name: 'إلغاء البيع' }).click();
+  const voiding = page.getByRole('dialog', { name: 'إلغاء البيع' });
+  await voiding.getByLabel('السبب').fill('أُدخل مرتين');
+  await voiding.getByRole('button', { name: 'تأكيد الإلغاء' }).click();
+  await expect(voiding).toBeHidden();
+  await expect(rowsOf(page).filter({ hasText: 'مشتري سجل ب' })).toContainText('ملغى');
 });
 
 test('the history on a tablet held upright and a phone: cards, a full-screen sheet, no side scroll', async ({

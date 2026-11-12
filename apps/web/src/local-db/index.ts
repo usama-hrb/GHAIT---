@@ -59,10 +59,12 @@ export {
 } from './partners';
 export {
   createLocalDb,
+  type Guarded,
   type LocalDb,
   LocalDbProvider,
   type RegistrationOpen,
   type SyncOverview,
+  useGuardedQuery,
   useLiveQuery,
   useCanSeeCosts,
   useRegistrationOpen,
@@ -118,9 +120,13 @@ export type {
 export type { SyncState, SyncStatus } from './sync';
 export type {
   HawlView,
+  ZakatEstimate,
+  ZakatHistoryRow,
+  ZakatLatestReport,
   ZakatOptions,
   ZakatPreview,
   ZakatReminder,
   ZakatReportView,
   ZakatRepository,
+  ZakatReview,
 } from './zakat';

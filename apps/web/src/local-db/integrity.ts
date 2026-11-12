@@ -1,4 +1,5 @@
 import {
+  type CapitalMove,
   type CashAdjustment,
   cashAdjustmentSchema,
   cashCountFieldsOf,
@@ -8,6 +9,8 @@ import {
   integrityReportOf,
   type NewCashCountInput,
   newCashCountSchema,
+  type Payment,
+  type ProductStockMoveType,
   type SyncEntity,
 } from '@fabric/contracts';
 import { cashBalanceCents } from '@fabric/core';
@@ -27,6 +30,14 @@ class CashCountTable extends SyncedTable<CashAdjustment> {
   }
 }
 
+/**
+ * Which sort of record of its entity a recent change is, where an entity has more than one: a
+ * payment or a refund, a capital move's type, a stock move's type, and whether an expense has been
+ * paid yet. Lets the screen say what happened without reading the record again.
+ */
+export type RecentEventKind =
+  Payment['kind'] | CapitalMove['type'] | ProductStockMoveType | 'paid' | 'unpaid';
+
 /** One recent change, for "what may explain a difference" (BUILD_PROMPTS 4.4). */
 export interface RecentEvent {
   entity: SyncEntity;
@@ -38,7 +49,9 @@ export interface RecentEvent {
   /** Its money, signed as it moves the shop's money (null: none, e.g. a stocktake). */
   amountCents: number | null;
   voided: boolean;
-  /** Where to see it. */
+  /** Which sort of record it is, for the entities that have more than one; null for the rest. */
+  kind: RecentEventKind | null;
+  /** Where to see it; null when the record has no page of its own to open. */
   href: string | null;
 }
 
@@ -140,6 +153,7 @@ export class IntegrityRepository {
       date: string,
       amountCents: number | null,
       href: string | null,
+      kind: RecentEventKind | null = null,
     ): RecentEvent => ({
       entity,
       id: record.id,
@@ -147,6 +161,7 @@ export class IntegrityRepository {
       date,
       amountCents,
       voided: record.voidedAt !== null,
+      kind,
       href,
     });
     const events = [
@@ -159,23 +174,33 @@ export class IntegrityRepository {
           p.date,
           p.kind === 'payment' ? p.amountCents : -p.amountCents,
           p.customerId ? `/customers/view?id=${p.customerId}` : null,
+          p.kind,
         ),
       ),
       ...expenses.map((e) =>
-        event('expense', e, e.paidDate ?? e.date, -e.amountCents, '/expenses'),
+        event(
+          'expense',
+          e,
+          e.paidDate ?? e.date,
+          -e.amountCents,
+          '/expenses',
+          e.paidDate === null ? 'unpaid' : 'paid',
+        ),
       ),
       ...purchases.map((p) =>
         event('purchase', p, p.date, -p.paidCents, `/purchases/view?id=${p.id}`),
       ),
-      ...moves.map((m) =>
-        event(
+      ...moves.map((m) => {
+        const productId = productOf.get(m.batchId);
+        return event(
           'product_stock_move',
           m,
           m.date,
           null,
-          `/inventory/product?id=${productOf.get(m.batchId) ?? ''}`,
-        ),
-      ),
+          productId === undefined ? null : `/inventory/product?id=${productId}`,
+          m.type,
+        );
+      }),
       ...capitalMoves.map((m) =>
         event(
           'capital_move',
@@ -183,6 +208,7 @@ export class IntegrityRepository {
           m.date,
           m.amountCents,
           `/settings/partners/view?id=${m.partnerId}`,
+          m.type,
         ),
       ),
       ...draws.map((d) =>
@@ -195,7 +221,8 @@ export class IntegrityRepository {
         ),
       ),
       ...writeOffs.map((w) => event('write_off', w, w.date, null, `/pos/view?id=${w.saleId}`)),
-      ...counts.map((c) => event('cash_adjustment', c, c.date, c.diffCents, '/integrity')),
+      // A count has no page of its own: the counts are listed on the screen this feed is shown on.
+      ...counts.map((c) => event('cash_adjustment', c, c.date, c.diffCents, null)),
       ...settlements.map((s) =>
         event('settlement', s, s.periodEnd, s.netProfitCents, `/settlements/view?id=${s.id}`),
       ),

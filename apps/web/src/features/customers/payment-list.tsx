@@ -13,7 +13,10 @@ function AppliedTo({ row }: { row: PaymentRow }) {
     <ul className="grid gap-0.5">
       {row.applied.map((part) => (
         <li key={part.saleId} className="flex flex-wrap items-baseline gap-x-1.5">
-          <Link href={`/pos/view?id=${part.saleId}`} className="underline-offset-4 hover:underline">
+          <Link
+            href={`/pos/view?id=${part.saleId}`}
+            className="inline-flex min-h-6 items-center underline-offset-4 hover:underline pointer-coarse:min-h-11"
+          >
             {t.invoiceOf} <DateText value={part.date} />
           </Link>
           <span className="text-muted-foreground">
@@ -29,14 +32,14 @@ function AppliedTo({ row }: { row: PaymentRow }) {
 export function PaymentTable({ rows }: { rows: readonly PaymentRow[] }) {
   return (
     <div className="rounded-lg border bg-card">
-      <Table>
+      <Table stack>
         <TableHeader>
           <TableRow>
             <TableHead>{t.columns.date}</TableHead>
             <TableHead>{t.columns.kind}</TableHead>
-            <TableHead className="max-sm:hidden">{t.columns.method}</TableHead>
-            <TableHead className="max-md:hidden">{t.columns.appliedTo}</TableHead>
-            <TableHead className="max-lg:hidden">{t.columns.note}</TableHead>
+            <TableHead>{t.columns.method}</TableHead>
+            <TableHead>{t.columns.appliedTo}</TableHead>
+            <TableHead>{t.columns.note}</TableHead>
             <TableHead className="text-end">{t.columns.amount}</TableHead>
           </TableRow>
         </TableHeader>
@@ -44,19 +47,22 @@ export function PaymentTable({ rows }: { rows: readonly PaymentRow[] }) {
           {rows.map((row) => {
             const { payment } = row;
             return (
-              <TableRow key={payment.id} className="h-12">
+              <TableRow key={payment.id} className="sm:h-12">
                 <TableCell>
                   <DateText value={payment.date} />
                 </TableCell>
-                <TableCell>{t.kinds[payment.kind]}</TableCell>
-                <TableCell className="max-sm:hidden">{t.methods[payment.method]}</TableCell>
-                <TableCell className="max-md:hidden">
+                <TableCell label={t.columns.kind}>{t.kinds[payment.kind]}</TableCell>
+                <TableCell label={t.columns.method}>{t.methods[payment.method]}</TableCell>
+                <TableCell label={t.columns.appliedTo}>
                   <AppliedTo row={row} />
                 </TableCell>
-                <TableCell className="max-w-48 truncate text-muted-foreground max-lg:hidden">
+                <TableCell
+                  className="text-muted-foreground sm:max-w-48 sm:truncate"
+                  label={t.columns.note}
+                >
                   {payment.note ?? '—'}
                 </TableCell>
-                <TableCell className="text-end">
+                <TableCell className="text-end" label={t.columns.amount}>
                   <Money
                     cents={payment.amountCents}
                     tone={payment.kind === 'payment' ? 'profit' : undefined}

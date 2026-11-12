@@ -42,6 +42,8 @@ interface Codec {
   formatKey: string;
   addon: string;
   errors: Record<ParseError, string>;
+  /** The system keyboard when no keypad is on screen: `numeric` for whole numbers, else `decimal`. */
+  inputMode?: 'decimal' | 'numeric';
 }
 
 /**
@@ -66,6 +68,7 @@ export function DecimalInput({
   formatKey,
   addon,
   errors,
+  inputMode = 'decimal',
   ...inputProps
 }: DecimalInputProps & Codec) {
   const fallbackId = useId();
@@ -95,7 +98,7 @@ export function DecimalInput({
         <InputGroupInput
           {...inputProps}
           id={inputId}
-          inputMode={keypad ? 'none' : 'decimal'}
+          inputMode={keypad ? 'none' : inputMode}
           autoComplete="off"
           // Digits, sign and decimal point stay in LTR order; aligned to the RTL start edge.
           dir="ltr"

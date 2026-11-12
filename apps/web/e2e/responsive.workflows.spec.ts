@@ -89,11 +89,20 @@ function focusFit(): string[] {
   if (!field || !(field instanceof HTMLElement) || field === document.body) return [];
   const box = field.getBoundingClientRect();
   const height = window.innerHeight;
-  return box.bottom > height + 1 || box.top < -1
-    ? [
-        `the focused field is out of view: ${String(Math.round(box.top))}..${String(Math.round(box.bottom))} of ${String(height)}`,
-      ]
-    : [];
+  if (box.bottom <= height + 1 && box.top >= -1) return [];
+  // Name the field and the box that scrolls it, so the report says what to fix.
+  const named = `${field.tagName.toLowerCase()}${field.id ? `#${field.id}` : ''}`;
+  let scroller: HTMLElement | null = field.parentElement;
+  while (scroller && !/(auto|scroll)/.test(getComputedStyle(scroller).overflowY)) {
+    scroller = scroller.parentElement;
+  }
+  const holder = scroller
+    ? `; scrolled by ${scroller.tagName.toLowerCase()}[${String(Math.round(scroller.clientHeight))}px tall, at ${String(Math.round(scroller.scrollTop))} of ${String(Math.round(scroller.scrollHeight))}]`
+    : '; no scrolling box around it';
+  const sheet = field.closest<HTMLElement>('[role="dialog"]')?.getBoundingClientRect();
+  return [
+    `the focused field ${named} is out of view: ${String(Math.round(box.top))}..${String(Math.round(box.bottom))} of ${String(height)}${holder}; its dialog is ${sheet ? `${String(Math.round(sheet.top))}..${String(Math.round(sheet.bottom))}` : 'not found'}`,
+  ];
 }
 
 function record(c: Context, name: string, findings: Finding[], notes: string[] = []): void {
@@ -133,7 +142,13 @@ async function check(c: Context, name: string, selector = '[role="dialog"]'): Pr
     await field.focus();
     await page.setViewportSize({ width: size.width, height: Math.round(size.height * 0.55) });
     await page.waitForTimeout(300);
+    // Tapping the field again, as a person would with the keyboard open: the browser scrolls it into view.
+    await field.blur();
     await field.focus();
+    // A date field takes the focus without the browser scrolling to it in this emulation; a phone does.
+    await field.evaluate((el) => {
+      el.scrollIntoView({ block: 'nearest' });
+    });
     for (const detail of await overlay.evaluate(fitOf))
       findings.push(problem(`${name} with the keyboard up`, detail));
     for (const detail of await page.evaluate(focusFit))
@@ -145,11 +160,21 @@ async function check(c: Context, name: string, selector = '[role="dialog"]'): Pr
   return true;
 }
 
-/** Closes what is open (Escape twice covers a menu over a dialog). */
+/**
+ * Closes the overlay on top. A second Escape follows only when the first closed nothing (a menu
+ * over a dialog takes the first one and leaves the dialog); it must never close the drawer
+ * behind a dialog, which the flow may still need.
+ */
 async function dismiss(page: Page): Promise<void> {
+  const open = () =>
+    page
+      .locator('[role="dialog"], [role="menu"], [role="listbox"]')
+      .filter({ visible: true })
+      .count();
+  const before = await open();
   await page.keyboard.press('Escape');
   await page.waitForTimeout(250);
-  if ((await page.locator('[role="dialog"]').filter({ visible: true }).count()) > 0) {
+  if (before > 0 && (await open()) >= before) {
     await page.keyboard.press('Escape');
     await page.waitForTimeout(250);
   }
@@ -171,7 +196,7 @@ async function attempt(c: Context, name: string, flow: () => Promise<void>): Pro
 }
 
 async function tillFlow(c: Context): Promise<void> {
-  const { page, m, size } = c;
+  const { page, m } = c;
   await page.goto('/pos');
   await settle(page);
   const tile = page
@@ -185,26 +210,36 @@ async function tillFlow(c: Context): Promise<void> {
   await dialog.getByRole('button', { name: m.pos.addLine }).click();
   await expect(dialog).toBeHidden();
 
-  // On a phone or portrait tablet the bill is a drawer behind a bar at the bottom of the screen.
+  // On a phone or portrait tablet the bill is a drawer behind a bar at the bottom of the screen,
+  // and what is opened from it (a dialog) closes it: the flow opens it again each time.
   const bar = page.getByRole('button', { name: new RegExp(`^${m.pos.bill.open} ·`) });
-  if (await bar.isVisible()) {
-    await bar.click();
-    await check(c, 'pos: bill drawer');
-  }
+  const showBill = async () => {
+    if (await bar.isVisible()) await bar.click();
+  };
+  await showBill();
+  if (await dialog.count()) await check(c, 'pos: bill drawer');
   await page.getByRole('button', { name: m.pos.bill.addDiscount }).click();
   await check(c, 'pos: discount dialog');
   await dismiss(page);
-  await page.getByRole('button', { name: m.pos.bill.partialPay }).click();
+  await showBill();
+  const partial = page.getByRole('button', { name: m.pos.bill.partialPay });
+  // Say what is wrong when the button cannot be pressed, instead of waiting for it.
+  if ((await partial.count()) === 0) throw new Error('the bill is no longer on screen');
+  if (!(await partial.isEnabled()))
+    throw new Error(
+      `partial payment is disabled: ${(await page.getByRole('alert').allInnerTexts()).join(' | ')}`,
+    );
+  await partial.click();
   await check(c, 'pos: payment dialog');
   await dismiss(page);
+  await showBill();
 
-  await page.getByLabel(m.pos.fields.customer, { exact: true }).click();
+  await page.getByRole('combobox').filter({ hasText: m.pos.fields.customerPlaceholder }).click();
   await check(c, 'pos: customer picker', '[role="listbox"], [cmdk-list]');
   await dismiss(page);
   await page.getByRole('button', { name: m.customers.add }).click();
   await check(c, 'pos: new customer dialog');
   await dismiss(page);
-  if (size.width < 1024) await dismiss(page);
 }
 
 async function opens(
@@ -308,23 +343,67 @@ async function peopleFlows(c: Context): Promise<void> {
 
 async function saleFlows(c: Context): Promise<void> {
   const { page, m } = c;
-  await attempt(c, 'sale page: void and return dialogs', async () => {
+  await attempt(c, 'sale drawer: invoice, actions, payment, return and void dialogs', async () => {
     await page.goto('/pos/history');
     await settle(page);
-    const direct = page.locator('a[href^="/pos/view?id="]').first();
-    if ((await direct.count()) === 0) {
-      await page.locator('main button[aria-haspopup="dialog"]').first().click();
-      await page.locator('a[href^="/pos/view?id="]').first().waitFor();
+    // A row's date (a card on a phone) opens the drawer, which holds the whole invoice.
+    await page.locator('main button[aria-haspopup="dialog"]').first().click();
+    await check(c, 'sale: drawer');
+    const drawer = page.getByRole('dialog').first();
+    for (const [action, name] of [
+      [m.customers.recordPayment, 'sale: payment dialog'],
+      [m.sales.returnAction, 'sale: return dialog'],
+      [m.sales.voidAction, 'sale: void dialog'],
+    ] as const) {
+      // The newest sale may not offer every action (paid in full, goods already returned).
+      const button = drawer.getByRole('button', { name: action, exact: true });
+      if ((await button.count()) === 0) {
+        record(c, name, [], ['(this sale does not offer it)']);
+        continue;
+      }
+      await button.click();
+      await check(c, name);
+      await dismiss(page);
+      if ((await drawer.count()) === 0) break;
     }
+    await dismiss(page);
+  });
+  await attempt(c, 'history: row actions menu', async () => {
+    await page.goto('/pos/history');
+    await settle(page);
+    const menu = page.locator('main button[aria-haspopup="menu"]').first();
+    if ((await menu.count()) === 0) {
+      record(
+        c,
+        'history: row actions menu',
+        [],
+        ['(cards have no row menu: the drawer carries the actions)'],
+      );
+      return;
+    }
+    await menu.click();
+    await check(c, 'history: row actions menu', '[role="menu"]');
+    await dismiss(page);
+  });
+  await attempt(c, 'sale page: return and void dialogs', async () => {
+    await page.goto('/customers');
+    await settle(page);
+    const customer = await page
+      .locator('a[href^="/customers/view?id="]')
+      .first()
+      .getAttribute('href');
+    if (customer === null) throw new Error('no customer to open');
+    await page.goto(customer);
+    await settle(page);
     const href = await page.locator('a[href^="/pos/view?id="]').first().getAttribute('href');
     if (href === null) throw new Error('no sale to open');
     await page.goto(href);
     await settle(page);
     await page.getByRole('button', { name: m.sales.returnAction }).first().click();
-    await check(c, 'sale: return dialog');
+    await check(c, 'sale page: return dialog');
     await dismiss(page);
     await page.getByRole('button', { name: m.sales.voidAction }).first().click();
-    await check(c, 'sale: void dialog');
+    await check(c, 'sale page: void dialog');
     await dismiss(page);
   });
   await attempt(c, 'header: command palette', async () => {
@@ -352,6 +431,8 @@ for (const language of LANGUAGES) {
         deviceScaleFactor: size.touch ? 2 : 1,
       });
       const page = await context.newPage();
+      // A control that is not there is a note in the report within seconds, not a stalled run.
+      page.setDefaultTimeout(15_000);
       await login(page, language);
       const c: Context = { page, m: catalogs[language], size, language };
 

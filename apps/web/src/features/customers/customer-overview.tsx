@@ -81,7 +81,7 @@ export function CustomerOverview({
                 <div className="grid min-w-0 flex-1 gap-0.5">
                   <Link
                     href={`/pos/view?id=${row.sale.id}`}
-                    className="w-fit font-medium underline-offset-4 hover:underline"
+                    className="inline-flex min-h-6 w-fit items-center font-medium underline-offset-4 hover:underline pointer-coarse:min-h-11"
                   >
                     {t.invoiceOf} <DateText value={row.sale.date} />
                   </Link>

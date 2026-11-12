@@ -13,6 +13,7 @@ export function CountInput(props: DecimalInputProps) {
       format={(count) => String(count)}
       formatKey="pieces"
       addon={messages.units.piece}
+      inputMode="numeric"
       errors={messages.countInputErrors}
     />
   );

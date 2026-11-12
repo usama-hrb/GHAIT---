@@ -47,6 +47,8 @@ the line stores `minOverrideBy` and the audit log says why. Selling under the co
    and, from md up, the keypad beside them), the strips pinned above a footer that holds the line total
    and the actions. The height is `min(46rem, 100svh − 2rem)` whatever the line shows, so nothing moves
    when a total or a warning appears.
+   Replaced by [ADR 0026](0026-selling-dialog-sized-by-content-phone-keyboard.md): the dialog is now as
+   tall as its content, and a phone has no keypad.
 
 ## Tried and not chosen
 

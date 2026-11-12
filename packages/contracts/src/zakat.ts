@@ -11,8 +11,9 @@ import { z } from 'zod';
 import { cashFlowsOf } from './cash-counts.js';
 import { recordBaseSchema, type Supplier } from './catalog.js';
 import type { Customer } from './customers.js';
-import { idSchema, isoDateSchema } from './common.js';
+import { idSchema, isoDateSchema, optionalTextSchema } from './common.js';
 import type { ValidationIssue } from './errors.js';
+import { addDays } from './hijri.js';
 import type { IntegrityRecords } from './integrity.js';
 import { syncOrder } from './order.js';
 import { type Partner, type PartnerDraw, partnerDrawSchema } from './partners.js';
@@ -21,6 +22,7 @@ import type { Product } from './products.js';
 import { periodBasisOf } from './settlements.js';
 import { availableIn } from './stock.js';
 import { supplierAccountOf } from './supplier-payments.js';
+import { ZAKAT_NOTE_MAX } from './zakat-payment.js';
 
 const cents = z.int();
 
@@ -98,12 +100,20 @@ export const zakatReportSchema = recordBaseSchema.extend({
 export type ZakatReport = z.output<typeof zakatReportSchema>;
 export const storedZakatReportSchema = zakatReportSchema.extend({ serverSeq: z.int().positive() });
 
-/** Paying zakat on a report: an amount, split between the partners by ownership (Z7). */
+/**
+ * Paying zakat on a report: an amount, split between the partners by ownership (Z7).
+ * `paymentId` is the payment's identity, made once when the person starts it: sending the same
+ * one again records nothing new (zakatDrawIdOf). `note` is the person's own reference (a receipt
+ * number, who received it) and travels on the draws' reason (zakatPaymentReason).
+ */
 export const newZakatPaymentSchema = z.object({
   amountCents: z.int().min(1),
   date: isoDateSchema,
+  paymentId: idSchema.optional(),
+  note: optionalTextSchema(ZAKAT_NOTE_MAX).default(null),
 });
 export type NewZakatPayment = z.output<typeof newZakatPaymentSchema>;
+export type NewZakatPaymentInput = z.input<typeof newZakatPaymentSchema>;
 
 /** GET /zakat/reports/:id: the report, what was paid on it and the draws that paid it. */
 export const zakatReportDetailSchema = z.object({
@@ -117,11 +127,15 @@ export const ZAKAT_ISSUES = {
   noHawlStart: 'zakat_hawl_start_missing',
   noPrice: 'zakat_metal_price_missing',
   hawlNotReached: 'zakat_hawl_not_reached',
+  hawlInFuture: 'zakat_hawl_in_future',
   hawlTaken: 'zakat_report_exists_for_hawl',
   inconsistent: 'zakat_report_does_not_match_core',
   fixed: 'zakat_report_is_fixed',
   hasPayments: 'zakat_report_has_payments',
   aboveDue: 'zakat_payment_above_due',
+  paymentReused: 'zakat_payment_id_reused',
+  recordsNotReceived: 'zakat_records_not_received',
+  figuresChanged: 'zakat_figures_changed',
 } as const;
 
 const issue = (path: (string | number)[], message: string): ValidationIssue => ({
@@ -332,8 +346,24 @@ export function zakatReportFieldsOf(
   };
 }
 
-/** Re-checks a pushed report: its figures are what core gives on its own items. */
-export function checkZakatReport(report: ZakatReport): ValidationIssue[] {
+/**
+ * Re-checks a pushed report: its figures are what core gives on its own items. A report is only
+ * ever saved for a hawl that has come (the device refuses otherwise), so with `today` given (the
+ * shop's day, from the server's clock) a report that says its hawl was not completed, or whose
+ * hawl lies more than a day ahead (a device's clock may run a little fast), is refused too.
+ * What a report's items were is still the device's word: the server holds no copy of the books
+ * to re-derive them from (ADR 0028).
+ */
+export function checkZakatReport(report: ZakatReport, today?: string): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+  if (today !== undefined) {
+    if (!report.breakdown.hawlCompleted) {
+      issues.push(issue(['breakdown', 'hawlCompleted'], ZAKAT_ISSUES.hawlNotReached));
+    }
+    if (report.hawlDate > addDays(today, 1)) {
+      issues.push(issue(['hawlDate'], ZAKAT_ISSUES.hawlInFuture));
+    }
+  }
   const expected = zakatReportFieldsOf(report.breakdown, {
     hawlDate: report.hawlDate,
     hawlCompleted: report.breakdown.hawlCompleted,
@@ -348,7 +378,8 @@ export function checkZakatReport(report: ZakatReport): ValidationIssue[] {
       expected.breakdown,
     ]) ===
     JSON.stringify([report.nisabCents, report.baseCents, report.zakatDueCents, report.breakdown]);
-  return same ? [] : [issue(['breakdown'], ZAKAT_ISSUES.inconsistent)];
+  if (!same) issues.push(issue(['breakdown'], ZAKAT_ISSUES.inconsistent));
+  return issues;
 }
 
 /** What has been paid on a report: its live draws (Z7). */

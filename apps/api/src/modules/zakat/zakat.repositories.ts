@@ -2,6 +2,7 @@ import {
   checkUnchanged,
   checkZakatReport,
   metalPriceSchema,
+  shopDate,
   ZAKAT_ISSUES,
   type ZakatReport,
   zakatBreakdownSchema,
@@ -64,7 +65,8 @@ export class ZakatReportRepository implements SyncHandler<'zakat_report'> {
       }
       return current;
     }
-    const issues = checkZakatReport(record);
+    // A report is saved for a hawl that has come: the server's own day decides, not the device's.
+    const issues = checkZakatReport(record, shopDate(new Date()));
     if (issues.length > 0)
       throw new SyncRejection('validation_failed', 'Invalid zakat report', issues);
     const [row] = await this.tx.db

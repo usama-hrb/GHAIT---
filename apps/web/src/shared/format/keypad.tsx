@@ -103,7 +103,11 @@ const ROWS: readonly PadKey[] = [
   'backspace',
 ];
 
-/** Big number keys for a tablet; the field being typed in keeps the focus, so a keyboard still works. */
+/**
+ * Number keys for a tablet or a desktop (a phone uses its own keyboard instead): digits on filled
+ * keys, the point and the delete key outlined. The field being typed in keeps the focus, so a
+ * physical keyboard still works.
+ */
 export function Keypad({
   onPress,
   className,
@@ -126,8 +130,8 @@ export function Keypad({
         <Button
           key={key}
           type="button"
-          variant="outline"
-          className="h-14 touch-manipulation text-xl font-semibold select-none pointer-coarse:h-16"
+          variant={key === '.' || key === 'backspace' ? 'outline' : 'secondary'}
+          className="h-12 touch-manipulation text-xl font-semibold select-none pointer-coarse:h-14"
           aria-label={
             key === 'backspace'
               ? messages.keypad.backspace

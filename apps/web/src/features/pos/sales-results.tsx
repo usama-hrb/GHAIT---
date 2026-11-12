@@ -1,14 +1,12 @@
 'use client';
 
-import { ReceiptTextIcon } from 'lucide-react';
-import Link from 'next/link';
 import { messages } from '@/i18n';
 import type { SaleSummary } from '@/local-db';
 import { DateText, formatDate, Money } from '@/shared/format';
 import { cn } from '@/shared/lib/utils';
 import { Badge } from '@/shared/ui/badge';
-import { Button } from '@/shared/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
+import { type SaleAction, SaleActionsMenu } from './sale-actions';
 import { statusOf } from './sales-history';
 
 const t = messages.sales;
@@ -61,16 +59,18 @@ function Total({ row }: { row: SaleSummary }) {
 
 /**
  * The sales as a full-width table (desktop and tablet landscape): the date opens the details
- * drawer, so does the row; the receipt icon goes to the invoice page.
+ * drawer, so does the row; the last cell is the row's actions menu.
  */
 export function SalesTable({
   rows,
   selectedId,
   onOpen,
+  onAction,
 }: {
   rows: readonly SaleSummary[];
   selectedId: string | null;
   onOpen: (id: string) => void;
+  onAction: (id: string, action: SaleAction) => void;
 }) {
   return (
     <Table>
@@ -92,6 +92,7 @@ export function SalesTable({
         {rows.map((row) => (
           <TableRow
             key={row.sale.id}
+            data-sale-id={row.sale.id}
             data-state={row.sale.id === selectedId ? 'selected' : undefined}
             className="h-14 cursor-pointer"
             onClick={() => {
@@ -101,7 +102,7 @@ export function SalesTable({
             <TableCell>
               <button
                 type="button"
-                className="-m-2 rounded-md p-2 text-start underline-offset-4 hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+                className="-m-2 rounded-md p-2 text-start pointer-coarse:-my-3.5 pointer-coarse:py-3.5 underline-offset-4 hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
                 aria-label={h.openDetails(customerOf(row), formatDate(row.sale.date, 'medium'))}
                 aria-haspopup="dialog"
                 onClick={(event) => {
@@ -129,18 +130,16 @@ export function SalesTable({
               <SaleStatus row={row} />
             </TableCell>
             <TableCell>
-              <Button asChild variant="ghost" size="icon">
-                <Link
-                  href={`/pos/view?id=${row.sale.id}`}
-                  aria-label={h.openInvoice}
-                  title={h.openInvoice}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                  }}
-                >
-                  <ReceiptTextIcon aria-hidden />
-                </Link>
-              </Button>
+              <SaleActionsMenu
+                saleId={row.sale.id}
+                label={h.actionsFor(customerOf(row), formatDate(row.sale.date, 'medium'))}
+                onOpen={() => {
+                  onOpen(row.sale.id);
+                }}
+                onAction={(action) => {
+                  onAction(row.sale.id, action);
+                }}
+              />
             </TableCell>
           </TableRow>
         ))}

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { type Browser, expect, type Page, test } from '@playwright/test';
+import { ar } from '../src/i18n/ar';
 import { serverPut, setDeviceLanguage, signIn } from './helpers';
 import { E2E } from './stack';
 
@@ -264,6 +265,21 @@ test('the owner gives an existing partner a login, once, and the partner sees no
     await expect(partner.getByRole('main')).toBeVisible();
     await expect(partner.getByText('هذه الصفحة لصاحب المحل وحده.')).toHaveCount(0);
   }
+
+  // On the zakat pages a partner reads and changes nothing: no methodology to save, no report to
+  // save, no payment to record (the owner alone does, ADR 0028).
+  await partner.goto('/zakat');
+  await expect(partner.getByText(ar.zakat.readOnlyNote)).toBeVisible();
+  await expect(partner.getByRole('button', { name: ar.zakat.actions.pay })).toHaveCount(0);
+  await partner.goto('/zakat/settings');
+  await expect(partner.getByText(ar.zakat.settings.readOnly)).toBeVisible();
+  await expect(partner.getByRole('button', { name: ar.zakat.settings.save })).toHaveCount(0);
+  await partner.goto('/zakat/review');
+  for (let step = 1; step < 7; step += 1) {
+    await partner.getByRole('button', { name: ar.zakat.review.next }).click();
+  }
+  await expect(partner.getByText(ar.zakat.confirm.blocks.not_owner)).toBeVisible();
+  await expect(partner.getByRole('button', { name: ar.zakat.confirm.save })).toHaveCount(0);
 
   // A partner who still has a login cannot be removed: the login is switched off first.
   const login = await request.post(`${E2E.apiUrl}/auth/login`, { data: E2E.owner });

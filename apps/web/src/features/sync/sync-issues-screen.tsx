@@ -51,7 +51,7 @@ export function SyncIssues() {
           <p className="text-muted-foreground">{t.noReview}</p>
         ) : (
           <div className="rounded-lg border bg-card">
-            <Table>
+            <Table stack>
               <TableHeader>
                 <TableRow>
                   <TableHead>{t.columns.batch}</TableHead>
@@ -72,8 +72,8 @@ export function SyncIssues() {
                         </bdi>
                       </Link>
                     </TableCell>
-                    <TableCell>{product?.name}</TableCell>
-                    <TableCell className="text-end">
+                    <TableCell label={t.columns.item}>{product?.name}</TableCell>
+                    <TableCell className="text-end" label={t.columns.remaining}>
                       <Quantity
                         unit={ledger.remaining.unit}
                         amount={amountOfQuantity(ledger.remaining)}
@@ -101,7 +101,7 @@ export function SyncIssues() {
           <p className="text-muted-foreground">{t.noRejected}</p>
         ) : (
           <div className="rounded-lg border bg-card">
-            <Table>
+            <Table stack>
               <TableHeader>
                 <TableRow>
                   <TableHead>{t.columns.when}</TableHead>
@@ -115,8 +115,8 @@ export function SyncIssues() {
                     <TableCell>
                       <DateText value={entry.clientTs} format="dateTime" />
                     </TableCell>
-                    <TableCell>{entityName(entry.entity)}</TableCell>
-                    <TableCell>
+                    <TableCell label={t.columns.entity}>{entityName(entry.entity)}</TableCell>
+                    <TableCell label={t.columns.error}>
                       {(entry.error && t.errors[entry.error.code]) ?? messages.forms.invalid}
                     </TableCell>
                   </TableRow>
@@ -134,7 +134,7 @@ export function SyncIssues() {
           <p className="text-muted-foreground">{t.noConflicts}</p>
         ) : (
           <div className="rounded-lg border bg-card">
-            <Table>
+            <Table stack>
               <TableHeader>
                 <TableRow>
                   <TableHead>{t.columns.when}</TableHead>
@@ -149,14 +149,16 @@ export function SyncIssues() {
                     <TableCell>
                       <DateText value={conflict.createdAt} format="dateTime" />
                     </TableCell>
-                    <TableCell>{entityName(conflict.entity)}</TableCell>
-                    <TableCell>
+                    <TableCell label={t.columns.entity}>{entityName(conflict.entity)}</TableCell>
+                    <TableCell label={t.columns.record}>
                       {labelOf(conflict.winnerRecord, conflict.entityId)}
                       <span className="block text-xs text-muted-foreground">
                         {t.winner[conflict.winner]}
                       </span>
                     </TableCell>
-                    <TableCell>{labelOf(conflict.loser, conflict.entityId)}</TableCell>
+                    <TableCell label={t.lost}>
+                      {labelOf(conflict.loser, conflict.entityId)}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

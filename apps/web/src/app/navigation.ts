@@ -17,38 +17,43 @@ import { messages } from '@/i18n';
 import type { AppShellNavItem } from '@/shared/brand';
 
 /**
- * Shop navigation, in sidebar order (DESIGN_SYSTEM.md §3), labelled in the language shown now:
- * call it while rendering, never keep its result in a module-level constant.
+ * Shop navigation, in sidebar order (DESIGN_SYSTEM.md §3, ADR 0027), labelled in the language
+ * shown now: call it while rendering, never keep its result in a module-level constant.
+ * Five groups: Main (the day at the till, also the phone's four tabs), Operations, Finance,
+ * Reports (with the Financial Integrity report under it) and Administration.
  */
-export const shopNavigation = (): readonly AppShellNavItem[] => [
-  // The day at the till.
-  { href: '/home', label: messages.nav.home, icon: HouseIcon, group: 'daily', tab: true },
-  { href: '/pos', label: messages.nav.pos, icon: ShoppingCartIcon, group: 'daily', tab: true },
-  {
-    href: '/inventory',
-    label: messages.nav.inventory,
-    icon: PackageIcon,
-    group: 'daily',
-    tab: true,
-  },
-  {
-    href: '/customers',
-    label: messages.nav.customers,
-    icon: UsersIcon,
-    group: 'daily',
-    tab: true,
-  },
-  // The money and the books. The partners are a section of Settings (ADR 0017).
-  { href: '/payables', label: messages.nav.payables, icon: BanknoteIcon, group: 'books' },
-  { href: '/expenses', label: messages.nav.expenses, icon: ReceiptIcon, group: 'books' },
-  { href: '/settlements', label: messages.nav.settlements, icon: ScaleIcon, group: 'books' },
-  { href: '/integrity', label: messages.nav.integrity, icon: ShieldCheckIcon, group: 'books' },
-  { href: '/zakat', label: messages.nav.zakat, icon: HandCoinsIcon, group: 'books' },
-  { href: '/reports', label: messages.nav.reports, icon: ChartColumnIcon, group: 'books' },
-  // The shop itself.
-  { href: '/audit', label: messages.nav.audit, icon: HistoryIcon, group: 'system' },
-  { href: '/settings', label: messages.nav.settings, icon: SettingsIcon, group: 'system' },
-];
+export const shopNavigation = (): readonly AppShellNavItem[] => {
+  const { groups } = messages.nav;
+  const main = { group: 'main', groupLabel: groups.main } as const;
+  const operations = { group: 'operations', groupLabel: groups.operations } as const;
+  const finance = { group: 'finance', groupLabel: groups.finance } as const;
+  // No heading: the Reports item itself says what the group is.
+  const reports = { group: 'reports' } as const;
+  const admin = { group: 'admin', groupLabel: groups.admin } as const;
+  return [
+    { href: '/home', label: messages.nav.home, icon: HouseIcon, ...main, tab: true },
+    { href: '/pos', label: messages.nav.pos, icon: ShoppingCartIcon, ...main, tab: true },
+    { href: '/inventory', label: messages.nav.inventory, icon: PackageIcon, ...main, tab: true },
+    { href: '/customers', label: messages.nav.customers, icon: UsersIcon, ...main, tab: true },
+    // What the shop buys and spends. The partners are a section of Settings (ADR 0017).
+    { href: '/payables', label: messages.nav.payables, icon: BanknoteIcon, ...operations },
+    { href: '/expenses', label: messages.nav.expenses, icon: ReceiptIcon, ...operations },
+    // The partners' money.
+    { href: '/settlements', label: messages.nav.settlements, icon: ScaleIcon, ...finance },
+    { href: '/zakat', label: messages.nav.zakat, icon: HandCoinsIcon, ...finance },
+    { href: '/reports', label: messages.nav.reports, icon: ChartColumnIcon, ...reports },
+    {
+      href: '/integrity',
+      label: messages.nav.integrity,
+      icon: ShieldCheckIcon,
+      ...reports,
+      parent: '/reports',
+    },
+    // The shop itself.
+    { href: '/audit', label: messages.nav.audit, icon: HistoryIcon, ...admin },
+    { href: '/settings', label: messages.nav.settings, icon: SettingsIcon, ...admin },
+  ];
+};
 
 /**
  * What a cashier's screens are (SPEC §11, RL1): selling, the stock to sell from, the customers

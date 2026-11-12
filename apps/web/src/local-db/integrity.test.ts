@@ -5,9 +5,11 @@ import { ValidationError } from './errors';
 import { createRepositories, type Repositories } from './repositories';
 import { DEVICE_CODE } from './session';
 import { LocalStore } from './store';
+import { PULLED_AT } from './sync';
 import { seedBatch, seedPartners, seedProduct } from './test-helpers';
 
 let db: ShopDatabase;
+let store: LocalStore;
 let repos: Repositories;
 /** 3 November 2026, a minute later at each call: history order is creation order. */
 let now = Date.UTC(2026, 10, 3, 9, 0);
@@ -16,7 +18,7 @@ const dh = (amount: number) => amount * 100;
 beforeEach(async () => {
   now = Date.UTC(2026, 10, 3, 9, 0);
   db = new ShopDatabase(`test-${crypto.randomUUID()}`);
-  const store = new LocalStore(db, () => new Date((now += 60_000)));
+  store = new LocalStore(db, () => new Date((now += 60_000)));
   repos = createRepositories(store);
   await store.setMeta(DEVICE_CODE, 'A');
 });
@@ -138,6 +140,56 @@ describe('the integrity check on the device (BUILD_PROMPTS 4.4)', () => {
     ]);
   });
 
+  it('the latest changes say which sort of record each is and where to open it', async () => {
+    await t13();
+    await repos.expenses.save({
+      date: '2026-10-25',
+      category: 'rent',
+      amountCents: dh(5),
+      paidDate: null,
+    });
+    const recent = await repos.integrity.recent(100);
+    const kindsOf = (entity: string) =>
+      new Set(recent.filter((event) => event.entity === entity).map((event) => event.kind));
+    expect(kindsOf('payment')).toEqual(new Set(['payment']));
+    expect(kindsOf('expense')).toEqual(new Set(['paid', 'unpaid']));
+    expect(kindsOf('product_stock_move')).toEqual(new Set(['loss']));
+    expect(kindsOf('capital_move')).toEqual(new Set(['contribution']));
+    expect(kindsOf('sale')).toEqual(new Set([null]));
+    // The loss was on a real batch of a real product, so it opens that product.
+    const loss = recent.find((event) => event.entity === 'product_stock_move');
+    expect(loss?.href).toMatch(/^\/inventory\/product\?id=.+/);
+  });
+
+  it('a stock move whose batch is not on the device has no page to open, rather than a broken one', async () => {
+    await t13();
+    const [batch] = await db.productBatches.toArray();
+    if (!batch) throw new Error('a batch');
+    await db.productBatches.delete(batch.id);
+    const loss = (await repos.integrity.recent(100)).find(
+      (event) => event.entity === 'product_stock_move',
+    );
+    expect(loss).toMatchObject({ kind: 'loss', href: null });
+  });
+
+  it('a count shows as a cash count, signed by its difference', async () => {
+    await t13();
+    const expected = await repos.integrity.expectedCashCents();
+    await repos.integrity.recordCount({
+      date: '2026-11-03',
+      countedCents: expected + 300,
+      note: 'زيادة',
+    });
+    const [latest] = await repos.integrity.recent(1);
+    expect(latest).toMatchObject({
+      entity: 'cash_adjustment',
+      amountCents: 300,
+      kind: null,
+      voided: false,
+      href: null,
+    });
+  });
+
   it('a count dated in a settled period is refused, like any record in it', async () => {
     await db.settlements.put({
       id: crypto.randomUUID(),
@@ -174,5 +226,15 @@ describe('the integrity check on the device (BUILD_PROMPTS 4.4)', () => {
     await expect(
       repos.integrity.recordCount({ date: '2026-11-03', countedCents: 0 }),
     ).resolves.toBeTypeOf('string');
+  });
+});
+
+describe('when this device last received the shop’s records', () => {
+  it('is null until a pull has finished, then the time it finished', async () => {
+    expect(await repos.maintenance.lastPulledAt()).toBeNull();
+    expect(await repos.maintenance.pulledOnce()).toBe(false);
+    await store.setMeta(PULLED_AT, '2026-11-03T09:30:00.000Z');
+    expect(await repos.maintenance.lastPulledAt()).toBe('2026-11-03T09:30:00.000Z');
+    expect(await repos.maintenance.pulledOnce()).toBe(true);
   });
 });

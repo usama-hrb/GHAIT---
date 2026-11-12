@@ -1,15 +1,20 @@
 import {
+  accessTokenResponseSchema,
+  addDays,
   errorResponseSchema,
   HEADERS,
+  shopDate,
   storedZakatReportSchema,
   type SyncOp,
   syncPushResponseSchema,
   ZAKAT_ISSUES,
   type ZakatReport,
+  zakatDrawIdOf,
   zakatReportDetailSchema,
   zakatReportFieldsOf,
 } from '@fabric/contracts';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { AccountsService } from '../src/modules/accounts/index.js';
 import { createTestApp, type Session, type TestApp } from './support/app.js';
 
 const dh = (amount: number) => amount * 100;
@@ -175,5 +180,159 @@ describe('zakat reports and their payment (BUILD_PROMPTS 5.1)', () => {
     await as(t.http().post(`/zakat/reports/${report.id}/void`))
       .send({ reason: 'أُعيد الحساب' })
       .expect(200);
+  });
+
+  /** T14's position saved for `hawlDate`, as a device would: 900 dh due when the hawl is completed. */
+  function reportFor(hawlDate: string, hawlCompleted = true): ZakatReport {
+    const fields = zakatReportFieldsOf(
+      {
+        goods: [],
+        cashCents: dh(36_000),
+        receivables: [],
+        debts: [],
+        supplierDebts: [],
+      },
+      {
+        hawlDate,
+        hawlCompleted,
+        settings: { nisabMetal: 'gold', goodsValuation: 'market', includeDoubtfulDebts: false },
+        metalPrice: { pricePerGramCents: dh(300), date: '2026-10-19' },
+      },
+    );
+    const now = new Date().toISOString();
+    return {
+      id: crypto.randomUUID(),
+      createdAt: now,
+      updatedAt: now,
+      deviceId: 'desk',
+      voidedAt: null,
+      ...fields,
+    };
+  }
+
+  it('a report is saved only for a hawl that has come: not one that says it is unfinished, not one ahead of the shop’s day', async () => {
+    const today = shopDate(new Date());
+    expect(await push(reportFor('2026-09-01', false))).toMatchObject({
+      status: 'rejected',
+      error: { issues: [expect.objectContaining({ message: ZAKAT_ISSUES.hawlNotReached })] },
+    });
+    expect(await push(reportFor(addDays(today, 3)))).toMatchObject({
+      status: 'rejected',
+      error: { issues: [expect.objectContaining({ message: ZAKAT_ISSUES.hawlInFuture })] },
+    });
+    // Today's hawl, and tomorrow's for a device whose clock runs a little fast, are accepted.
+    expect(await push(reportFor(addDays(today, 1)))).toMatchObject({ status: 'applied' });
+  });
+
+  describe('a payment that names itself is recorded once', () => {
+    let target: ZakatReport;
+    const paymentId = crypto.randomUUID();
+    const body = { amountCents: dh(300), date: '2026-10-25', paymentId, note: 'إيصال 42 · حسن' };
+    const payOn = (id: string, payload: Record<string, unknown>) =>
+      as(t.http().post(`/zakat/reports/${id}/payments`)).send(payload);
+
+    beforeAll(async () => {
+      target = reportFor('2026-09-15');
+      expect(await push(target)).toMatchObject({ status: 'applied' });
+    });
+
+    it('draws that follow the payment’s id, and carry its note', async () => {
+      const first = zakatReportDetailSchema.parse((await payOn(target.id, body).expect(201)).body);
+      expect(first.paidCents).toBe(dh(300));
+      expect(first.payments.map((draw) => draw.id).sort()).toEqual(
+        [zakatDrawIdOf(paymentId, owner), zakatDrawIdOf(paymentId, partner)].sort(),
+      );
+      for (const draw of first.payments) {
+        expect(draw.reason).toBe('zakat 2026-09-15 · إيصال 42 · حسن');
+        expect(draw.zakatReportId).toBe(target.id);
+      }
+    });
+
+    it('sent again, it changes nothing and answers as before, even once nothing more can be paid', async () => {
+      const again = zakatReportDetailSchema.parse((await payOn(target.id, body).expect(201)).body);
+      expect(again.paidCents).toBe(dh(300));
+      expect(again.payments).toHaveLength(2);
+      // The rest of what is due, paid as a payment of its own...
+      await payOn(target.id, {
+        amountCents: dh(600),
+        date: '2026-10-26',
+        paymentId: crypto.randomUUID(),
+      }).expect(201);
+      // ...and the first one, sent a third time, still answers instead of being "above what is due".
+      const third = zakatReportDetailSchema.parse((await payOn(target.id, body).expect(201)).body);
+      expect(third.paidCents).toBe(dh(900));
+      expect(third.payments).toHaveLength(4);
+      // But nothing new fits now.
+      const above = await payOn(target.id, {
+        amountCents: dh(1),
+        date: '2026-10-26',
+        paymentId: crypto.randomUUID(),
+      }).expect(400);
+      expect(errorResponseSchema.parse(above.body).error.issues).toEqual([
+        expect.objectContaining({ message: ZAKAT_ISSUES.aboveDue }),
+      ]);
+    });
+
+    it('an id already used for another amount or day is refused, not recorded again', async () => {
+      for (const changed of [{ amountCents: dh(100) }, { date: '2026-10-30' }]) {
+        const refused = await payOn(target.id, { ...body, ...changed }).expect(400);
+        expect(errorResponseSchema.parse(refused.body).error.issues).toEqual([
+          expect.objectContaining({ message: ZAKAT_ISSUES.paymentReused }),
+        ]);
+      }
+      const after = zakatReportDetailSchema.parse(
+        (await as(t.http().get(`/zakat/reports/${target.id}`)).expect(200)).body,
+      );
+      expect(after.paidCents).toBe(dh(900));
+      // Each draw was audited once, when it was made: a payment sent again leaves no entry.
+      const audited = await t.sql.query<{ entity_id: string; action: string }>(
+        `SELECT entity_id, action FROM audit_log WHERE entity = 'partner_draw' AND entity_id = ANY($1)`,
+        [after.payments.map((draw) => draw.id)],
+      );
+      expect(audited.rows).toHaveLength(after.payments.length);
+      expect(new Set(audited.rows.map((row) => row.action))).toEqual(new Set(['create']));
+    });
+
+    it('without an id it still works as before: each request is a payment of its own', async () => {
+      const fresh = reportFor('2026-08-10');
+      expect(await push(fresh)).toMatchObject({ status: 'applied' });
+      for (const amount of [dh(100), dh(100)]) {
+        await payOn(fresh.id, { amountCents: amount, date: '2026-10-26' }).expect(201);
+      }
+      const detail = zakatReportDetailSchema.parse(
+        (await as(t.http().get(`/zakat/reports/${fresh.id}`)).expect(200)).body,
+      );
+      expect(detail.paidCents).toBe(dh(200));
+      expect(detail.payments).toHaveLength(4);
+      for (const draw of detail.payments) expect(draw.reason).toBe('zakat 2026-08-10');
+    });
+  });
+
+  it('a partner’s login reads the report list, and can neither read a report’s payments nor pay or void one', async () => {
+    await t.app.get(AccountsService).setPartnerLogin({
+      partner,
+      username: 'sara',
+      password: 'a-long-partner-password',
+      displayName: 'سارة',
+    });
+    const login = await t
+      .http()
+      .post('/auth/login')
+      .send({ username: 'sara', password: 'a-long-partner-password' })
+      .expect(200);
+    const token = accessTokenResponseSchema.parse(login.body).accessToken;
+    const asPartner = (request: ReturnType<ReturnType<TestApp['http']>['get']>) =>
+      request.auth(token, { type: 'bearer' }).set(HEADERS.deviceId, 'phone');
+    const id = report.id;
+
+    await asPartner(t.http().get('/zakat/reports')).expect(200);
+    await asPartner(t.http().get(`/zakat/reports/${id}`)).expect(403);
+    const refused = await asPartner(t.http().post(`/zakat/reports/${id}/payments`))
+      .send({ amountCents: dh(1), date: '2026-10-26', paymentId: crypto.randomUUID() })
+      .expect(403);
+    expect(errorResponseSchema.parse(refused.body).error.code).toBe('forbidden');
+    await asPartner(t.http().post(`/zakat/reports/${id}/void`))
+      .send({ reason: 'x' })
+      .expect(403);
   });
 });

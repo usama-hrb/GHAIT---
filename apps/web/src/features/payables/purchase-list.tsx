@@ -52,12 +52,12 @@ export function PurchaseTable({
 }) {
   return (
     <div className="rounded-lg border bg-card">
-      <Table>
+      <Table stack>
         <TableHeader>
           <TableRow>
             <TableHead>{t.columns.purchase}</TableHead>
-            <TableHead className="text-end max-md:hidden">{t.columns.total}</TableHead>
-            <TableHead className="text-end max-md:hidden">{t.columns.paid}</TableHead>
+            <TableHead className="text-end">{t.columns.total}</TableHead>
+            <TableHead className="text-end">{t.columns.paid}</TableHead>
             <TableHead className="text-end">{t.columns.due}</TableHead>
             <TableHead>{t.columns.status}</TableHead>
             <TableHead className="w-10">
@@ -70,30 +70,30 @@ export function PurchaseTable({
             const { purchase } = row.record;
             const dueCents = row.due?.dueCents ?? 0;
             return (
-              <TableRow key={purchase.id} className="h-14">
+              <TableRow key={purchase.id} className="sm:h-14">
                 <TableCell>
                   <Link
                     href={`/purchases/view?id=${purchase.id}`}
-                    className="underline-offset-4 hover:underline"
+                    className="underline-offset-4 hover:underline pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
                   >
                     <DateText value={purchase.date} />
                   </Link>
                   <PurchaseContents row={row} />
                 </TableCell>
-                <TableCell className="text-end max-md:hidden">
+                <TableCell className="text-end" label={t.columns.total}>
                   <Money cents={purchase.totalCostCents} />
                 </TableCell>
-                <TableCell className="text-end max-md:hidden">
+                <TableCell className="text-end" label={t.columns.paid}>
                   <Money cents={row.due?.settledCents ?? purchase.totalCostCents} />
                 </TableCell>
-                <TableCell className="text-end">
+                <TableCell className="text-end" label={t.columns.due}>
                   {dueCents > 0 ? (
                     <Money cents={dueCents} tone="debt" className="font-semibold" />
                   ) : (
                     <span className="text-muted-foreground">—</span>
                   )}
                 </TableCell>
-                <TableCell>
+                <TableCell label={t.columns.status}>
                   <PurchaseStatusBadge status={row.status} />
                 </TableCell>
                 <TableCell className="text-end">

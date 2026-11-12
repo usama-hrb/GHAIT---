@@ -11,6 +11,7 @@ import { Controller, Get, HttpCode, Post } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { z } from 'zod';
 import { OwnerOnly, ZodBody, ZodParam, ZodResponse } from '../../common/index.js';
+import { AuditExempt } from '../audit/index.js';
 import { ZakatService } from './zakat.service.js';
 
 /** Zakat reports (BUILD_PROMPTS 5.1); devices compute and save them offline, through sync. */
@@ -35,8 +36,14 @@ export class ZakatController {
     return this.zakat.detail(id);
   }
 
-  /** Pays zakat on it: a draw per partner by ownership (SPEC §10). */
+  /**
+   * Pays zakat on it: a draw per partner by ownership (SPEC §10). A payment that names itself and
+   * is sent again writes nothing, so the audit rule of a mutating request (an entry or a roll
+   * back) cannot apply to the route as a whole: the service opens its transaction and every draw
+   * it writes is audited in it (ADR 0028).
+   */
   @Post(':id/payments')
+  @AuditExempt('idempotent: audits each draw in its own transaction, the first time only')
   @ZodResponse(zakatReportDetailSchema)
   pay(@ZodParam('id', idSchema) id: string, @ZodBody(newZakatPaymentSchema) body: NewZakatPayment) {
     return this.zakat.pay(id, body);

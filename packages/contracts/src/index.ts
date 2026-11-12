@@ -34,4 +34,6 @@ export * from './stock.js';
 export * from './supplier-payments.js';
 export * from './sync.js';
 export * from './zakat.js';
+export * from './zakat-center.js';
+export * from './zakat-payment.js';
 export * from './legacy-upgrade.js';

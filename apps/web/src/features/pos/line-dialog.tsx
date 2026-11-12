@@ -34,7 +34,9 @@ import {
   usePadFields,
 } from '@/shared/format';
 import { ProductPhoto } from '@/shared/brand';
+import { useMediaQuery } from '@/shared/hooks/use-media-query';
 import { shopToday } from '@/shared/lib/dates';
+import { cn } from '@/shared/lib/utils';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import {
@@ -73,6 +75,12 @@ const keepFocus = (event: PointerEvent<HTMLElement>) => {
 const QUICK_LENGTHS = [2.5, 3] as const;
 const QUICK_PIECES = [1, 2, 5] as const;
 
+/**
+ * A phone: a narrow screen, or one held sideways (too short for two columns). It types with its own
+ * keyboard; a tablet or a desktop gets the keypad beside the fields.
+ */
+const PHONE = '(max-width: 639.98px), (max-height: 499.98px)';
+
 const quantityOf = (unit: CartUnit, text: string): number | null => {
   const parsed = unit === 'meter' ? parseLengthInput(text) : parseScaledDecimal(text, 0);
   return parsed.ok && parsed.value > 0 ? parsed.value : null;
@@ -80,8 +88,9 @@ const quantityOf = (unit: CartUnit, text: string): number | null => {
 
 /**
  * Adds a product to the bill, or changes a line already on it: the quantity and the price are
- * typed on the keypad (tap a field to type in it), the app proposes the batch(es) and shows the
- * line's total as it stands. Under the product's minimum price a cashier cannot go on; the owner
+ * typed on the keypad beside the fields (tap a field to type in it) on a tablet or a desktop, and
+ * with the phone's own numeric keyboard on a phone, where there is no keypad at all. The app
+ * proposes the batch(es) and shows the line's total as it stands. Under the product's minimum price a cashier cannot go on; the owner
  * can, after one explicit confirmation that is recorded on the line (ADR 0012). Under the line's
  * cost the owner confirms too, apart. Both are asked here, where the price is typed, and each is
  * tied to the price it was given for: change the price and it asks again. The payment does not ask
@@ -110,6 +119,8 @@ export function LineDialog({
   const { unit: moneyUnit } = useMoneyUnit();
   const { user } = useSession();
   const owner = user?.role === 'owner' ? user.username : null;
+  const phone = useMediaQuery(PHONE);
+  const keypad = !phone;
 
   // A unit the shop has switched off is not offered for a new line (ADR 0023); a line already on
   // the bill keeps its own unit, so it can still be changed.
@@ -326,8 +337,9 @@ export function LineDialog({
   };
 
   const field = (name: 'qty' | 'price' | 'whole') => ({
-    keypad: true,
+    keypad,
     large: true,
+    className: phone ? 'h-12 pointer-coarse:h-12' : 'h-14 pointer-coarse:h-14',
     text: pad.texts[name],
     onTextChange: (text: string) => {
       pad.type(name, text);
@@ -365,6 +377,16 @@ export function LineDialog({
   const needsMinimum = below;
   const needsCost = belowCost && owner !== null;
 
+  // Quick lengths and counts only when the stock can cover them.
+  const presets = (saleUnit === 'meter' ? QUICK_LENGTHS : QUICK_PIECES).filter((amount) => {
+    const asked = quantityOf(saleUnit, String(amount));
+    return (
+      asked !== null &&
+      asked <= (saleUnit === 'meter' ? product.availableCm : product.availablePieces)
+    );
+  });
+  const unitLabel = saleUnit === 'meter' ? messages.units.meter : messages.units.piece;
+
   return (
     <Dialog
       open
@@ -372,34 +394,47 @@ export function LineDialog({
         if (!open) onClose();
       }}
     >
-      {/* One height whatever the line shows: the body scrolls, the footer stays. */}
+      {/* As tall as its content: the body scrolls only when the screen is shorter, the footer stays. */}
       <DialogContent
-        className="flex h-[min(46rem,calc(100svh-2rem))] flex-col gap-3 overflow-hidden sm:max-w-xl md:max-w-3xl"
+        className={cn(
+          'flex flex-col gap-3 overflow-hidden',
+          keypad ? 'sm:max-w-2xl' : 'sm:max-w-md',
+        )}
         onKeyDown={onEnter}
       >
         <DialogHeader className="shrink-0 flex-row items-center gap-3 pe-10">
-          <ProductPhoto src={photo} className="size-12 shrink-0 rounded-lg" />
+          <ProductPhoto src={photo} className="size-11 shrink-0 rounded-lg" />
           <div className="grid min-w-0 gap-0.5">
             <DialogTitle className="truncate">{product.name}</DialogTitle>
-            <DialogDescription className="text-sm">
-              {t.available}: {product.availableCm > 0 && <Meters cm={product.availableCm} />}
-              {product.availableCm > 0 && product.availablePieces > 0 && ' · '}
-              {product.availablePieces > 0 && (
-                <Quantity unit="piece" amount={product.availablePieces} />
-              )}{' '}
-              · {t.reference}: <Money cents={normalCents} />
+            <DialogDescription className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+              <span>
+                {t.available}:{' '}
+                <span className="font-medium text-foreground">
+                  {product.availableCm > 0 && <Meters cm={product.availableCm} />}
+                  {product.availableCm > 0 && product.availablePieces > 0 && ' · '}
+                  {product.availablePieces > 0 && (
+                    <Quantity unit="piece" amount={product.availablePieces} />
+                  )}
+                </span>
+              </span>
+              <span>
+                {t.reference}:{' '}
+                <span className="font-medium text-foreground">
+                  <Money cents={normalCents} /> / {unitLabel}
+                </span>
+              </span>
             </DialogDescription>
           </div>
         </DialogHeader>
 
         <div className="-mx-4 min-h-0 flex-1 overflow-y-auto px-4">
-          {/* Fields, then the keypad; side by side from md up. */}
-          <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_17rem]">
+          {/* The fields; the keypad beside them on a tablet or a desktop, none on a phone. */}
+          <div className={cn('grid gap-4', keypad && 'grid-cols-[minmax(0,1fr)_15rem]')}>
             <FieldGroup className="gap-3">
               {sellsMeter && sellsPiece && (
                 <Field>
                   <FieldLabel>{t.fields.soldBy}</FieldLabel>
-                  <div role="group" aria-label={t.fields.soldBy} className="flex gap-2">
+                  <div role="group" aria-label={t.fields.soldBy} className="grid grid-cols-2 gap-2">
                     {(['meter', 'piece'] as const).map((choice) => (
                       <Button
                         key={choice}
@@ -424,7 +459,7 @@ export function LineDialog({
                 </Field>
               ) : (
                 <>
-                  <Field>
+                  <Field className="gap-1.5">
                     <FieldLabel htmlFor={`${id}-qty`}>
                       {saleUnit === 'meter' ? t.fields.length : t.fields.quantity}
                     </FieldLabel>
@@ -433,28 +468,29 @@ export function LineDialog({
                     ) : (
                       <CountInput id={`${id}-qty`} value={quantity} {...field('qty')} />
                     )}
-                    <div
-                      role="group"
-                      aria-label={t.line.quickLength}
-                      className="flex flex-wrap gap-2"
-                      onPointerDown={keepFocus}
-                    >
-                      {(saleUnit === 'meter' ? QUICK_LENGTHS : QUICK_PIECES).map((amount) => (
-                        <Button
-                          key={amount}
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="touch-manipulation pointer-coarse:h-11 pointer-coarse:px-4"
-                          onClick={() => {
-                            fill('qty', String(amount));
-                          }}
-                        >
-                          {amount}{' '}
-                          {saleUnit === 'meter' ? messages.units.meter : messages.units.piece}
-                        </Button>
-                      ))}
-                    </div>
+                    {presets.length > 0 && (
+                      <div
+                        role="group"
+                        aria-label={t.line.quickLength}
+                        className="flex flex-wrap gap-2"
+                        onPointerDown={keepFocus}
+                      >
+                        {presets.map((amount) => (
+                          <Button
+                            key={amount}
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="touch-manipulation pointer-coarse:px-4"
+                            onClick={() => {
+                              fill('qty', String(amount));
+                            }}
+                          >
+                            {amount} {unitLabel}
+                          </Button>
+                        ))}
+                      </div>
+                    )}
                     {proposal && proposal.shortfall > 0 && (
                       <p role="alert" className="flex items-start gap-2 text-sm text-destructive">
                         <TriangleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
@@ -477,7 +513,7 @@ export function LineDialog({
                       </p>
                     )}
                   </Field>
-                  <Field>
+                  <Field className="gap-1.5">
                     <FieldLabel htmlFor={`${id}-price`}>
                       {saleUnit === 'meter' ? t.fields.pricePerMeter : t.fields.pricePerPiece}
                     </FieldLabel>
@@ -499,7 +535,7 @@ export function LineDialog({
                           type="button"
                           variant="outline"
                           size="sm"
-                          className="touch-manipulation pointer-coarse:h-11 pointer-coarse:px-4"
+                          className="touch-manipulation pointer-coarse:px-4"
                           onClick={() => {
                             fill('price', format(cents));
                           }}
@@ -513,7 +549,7 @@ export function LineDialog({
               )}
 
               {batches && batches.length > 0 && (
-                <Field>
+                <Field className="gap-1.5">
                   <FieldLabel htmlFor={`${id}-batch`}>{t.fields.batch}</FieldLabel>
                   <Select
                     value={batchChoice}
@@ -522,7 +558,7 @@ export function LineDialog({
                       setWholePiece(false);
                     }}
                   >
-                    <SelectTrigger id={`${id}-batch`} className="pointer-coarse:h-11">
+                    <SelectTrigger id={`${id}-batch`} className="w-full pointer-coarse:h-11">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -575,7 +611,7 @@ export function LineDialog({
               )}
             </FieldGroup>
 
-            <Keypad onPress={pad.press} className="md:self-start" />
+            {keypad && <Keypad onPress={pad.press} className="sticky top-0 self-start" />}
           </div>
         </div>
 
@@ -616,8 +652,12 @@ export function LineDialog({
           </div>
         )}
 
-        <DialogFooter className="shrink-0 flex-row items-center gap-3 sm:justify-end">
-          <div className="me-auto grid min-w-24 gap-0.5" role="status">
+        <DialogFooter className="shrink-0 flex-row flex-wrap items-center gap-x-3 gap-y-2 py-3 sm:justify-end">
+          {/* The total: a row of its own on a phone, at the start of the footer from sm up. */}
+          <div
+            className="flex w-full items-baseline justify-between gap-3 sm:me-auto sm:grid sm:w-auto sm:min-w-24 sm:gap-0.5"
+            role="status"
+          >
             <span className="text-xs text-muted-foreground">{t.line.lineTotal}</span>
             <span className="text-xl leading-none font-semibold">
               {priced ? <Money cents={priced.totalCents} /> : '—'}
@@ -629,7 +669,7 @@ export function LineDialog({
           <Button
             type="button"
             variant="accent"
-            className="pointer-coarse:h-12 pointer-coarse:px-6"
+            className="pointer-coarse:h-12 pointer-coarse:px-6 max-sm:flex-1"
             disabled={!item || blocked}
             onClick={handleSubmit}
           >

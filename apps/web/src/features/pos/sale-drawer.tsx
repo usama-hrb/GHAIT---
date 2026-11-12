@@ -1,31 +1,37 @@
 'use client';
 
-import { ReceiptTextIcon, Share2Icon } from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';
 import { messages } from '@/i18n';
-import { useLiveQuery, useRepositories } from '@/local-db';
+import { useCanSeeCosts } from '@/local-db';
 import { LoadingState } from '@/shared/brand';
-import { DateText, Money, Quantity, useMoneyUnit } from '@/shared/format';
-import { shopToday } from '@/shared/lib/dates';
-import { whatsAppLink } from '@/shared/lib/whatsapp';
+import { DateText, Money, Quantity } from '@/shared/format';
 import { Badge } from '@/shared/ui/badge';
-import { Button } from '@/shared/ui/button';
 import { useDirection } from '@/shared/ui/direction';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/shared/ui/sheet';
-import { invoiceText } from './invoice-text';
-import { shareInvoice } from './share-invoice';
+import { SaleActionBar, type SaleAction } from './sale-actions';
+import { useSale } from './use-sale';
 
 const t = messages.sales;
 const h = messages.sales.history;
 const d = messages.sales.history.drawer;
 
 /**
- * A sale at a glance, beside the list (a full-screen sheet on a tablet held upright or a phone):
- * who bought what, the totals, what was paid and what is left. It shows no cost and no profit
- * (the invoice page does, to those who may see them); payments, returns and voiding happen there.
+ * A whole sale, beside the list (a full-screen sheet on a tablet held upright or a phone): who
+ * bought what and from which batch, the totals, the payments and returns, and at the foot what can
+ * be done about it (share, take a payment, return goods, void). The cost and the profit show to
+ * those who may see them (the owner and a partner), never to a cashier.
  */
-export function SaleDrawer({ saleId, onClose }: { saleId: string | null; onClose: () => void }) {
+export function SaleDrawer({
+  saleId,
+  onClose,
+  onAction,
+}: {
+  saleId: string | null;
+  onClose: () => void;
+  /** An action that needs a dialog: the list owns the dialogs, so the drawer stays under them. */
+  onAction: (saleId: string, action: SaleAction) => void;
+}) {
   // The last sale opened stays in the sheet while it slides out.
   const [shown, setShown] = useState(saleId);
   // Opens from the end of the line: beside the list, away from the sidebar (which is at the start).
@@ -46,7 +52,14 @@ export function SaleDrawer({ saleId, onClose }: { saleId: string | null; onClose
           <SheetTitle>{d.title}</SheetTitle>
           <SheetDescription>{d.description}</SheetDescription>
         </SheetHeader>
-        {shown !== null && <DrawerBody id={shown} />}
+        {shown !== null && (
+          <DrawerBody
+            id={shown}
+            onAction={(action) => {
+              onAction(shown, action);
+            }}
+          />
+        )}
       </SheetContent>
     </Sheet>
   );
@@ -69,14 +82,10 @@ function Row({
   );
 }
 
-function DrawerBody({ id }: { id: string }) {
-  const repositories = useRepositories();
-  const { unit } = useMoneyUnit();
-  const data = useLiveQuery(async () => {
-    const view = await repositories.sales.get(id);
-    if (!view) return null;
-    return { view, shopName: await repositories.settings.get('shop_name', shopToday()) };
-  }, [repositories, id]);
+function DrawerBody({ id, onAction }: { id: string; onAction: (action: SaleAction) => void }) {
+  // The partner sees the same numbers as the owner (SPEC §11); a cashier sees no cost or profit.
+  const seesCosts = useCanSeeCosts();
+  const data = useSale(id);
 
   if (data === undefined) {
     return (
@@ -88,11 +97,9 @@ function DrawerBody({ id }: { id: string }) {
   if (data === null) {
     return <p className="p-4 text-muted-foreground">{d.notFound}</p>;
   }
-  const { view, shopName } = data;
+  const { view } = data;
   const { sale, figures } = view;
   const voided = sale.voidedAt !== null;
-  const text = invoiceText(view, shopName, unit);
-  const link = whatsAppLink(text, view.customer?.phone ?? null);
 
   return (
     <>
@@ -108,7 +115,7 @@ function DrawerBody({ id }: { id: string }) {
               <div className="grid">
                 <Link
                   href={`/customers/view?id=${view.customer.id}`}
-                  className="w-fit font-medium underline-offset-4 hover:underline"
+                  className="inline-flex min-h-6 w-fit items-center font-medium underline-offset-4 hover:underline pointer-coarse:min-h-11"
                 >
                   {view.customer.name}
                 </Link>
@@ -126,7 +133,7 @@ function DrawerBody({ id }: { id: string }) {
           <section aria-label={d.items} className="grid gap-1">
             <h3 className="font-heading font-semibold">{d.items}</h3>
             <ul className="divide-y rounded-lg border bg-card">
-              {view.lines.map(({ line, product }) => (
+              {view.lines.map(({ line, product, batch, figures: lineFigures }) => (
                 <li key={line.id} className="grid gap-0.5 px-3 py-2.5">
                   <div className="flex items-baseline justify-between gap-3">
                     <span className="font-medium">
@@ -149,7 +156,40 @@ function DrawerBody({ id }: { id: string }) {
                         <Money cents={line.actualPriceCents} />
                       </>
                     )}
+                    {batch && (
+                      <>
+                        <span aria-hidden>·</span>
+                        <span className="sr-only">{messages.pos.columns.batch}:</span>
+                        <bdi dir="ltr" data-num>
+                          {batch.code}
+                        </bdi>
+                      </>
+                    )}
                   </div>
+                  {line.minOverrideBy !== null && (
+                    // Sold under the product's minimum price: who confirmed it and the price it went at.
+                    <span className="mt-1 grid gap-0.5 text-xs text-muted-foreground">
+                      <Badge variant="warning" className="w-fit">
+                        {messages.pos.bill.overrideBy(line.minOverrideBy)}
+                      </Badge>
+                      <span>
+                        {messages.pos.minimum.price}: <Money cents={line.minPriceCents} /> ·{' '}
+                        {messages.pos.minimum.sold}:{' '}
+                        <Money
+                          cents={line.wholePiece ? line.lineTotalCents : line.actualPriceCents}
+                        />
+                      </span>
+                    </span>
+                  )}
+                  {seesCosts && lineFigures?.profitCents != null && (
+                    <div className="flex items-baseline justify-between gap-3 text-sm">
+                      <span className="text-muted-foreground">{messages.pos.columns.profit}</span>
+                      <Money
+                        cents={lineFigures.profitCents}
+                        tone={lineFigures.profitCents < 0 ? 'loss' : 'profit'}
+                      />
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
@@ -200,6 +240,19 @@ function DrawerBody({ id }: { id: string }) {
                 )}
               </>
             )}
+            {seesCosts && figures.capitalCents !== null && figures.profitCents !== null && (
+              <>
+                <Row label={t.cost}>
+                  <Money cents={figures.capitalCents} tone="capital" />
+                </Row>
+                <Row label={t.profit}>
+                  <Money
+                    cents={figures.profitCents}
+                    tone={figures.profitCents < 0 ? 'loss' : 'profit'}
+                  />
+                </Row>
+              </>
+            )}
           </dl>
 
           {!voided && (
@@ -210,12 +263,31 @@ function DrawerBody({ id }: { id: string }) {
               ) : (
                 <ul className="divide-y rounded-lg border bg-card">
                   {figures.payments.map((payment) => (
-                    <li
-                      key={payment.allocationId}
-                      className="flex items-baseline justify-between gap-3 px-3 py-2.5"
-                    >
-                      <DateText value={payment.date} />
-                      <Money cents={payment.amountCents} />
+                    <li key={payment.allocationId} className="grid gap-0.5 px-3 py-2.5">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <DateText value={payment.date} />
+                        <Money cents={payment.amountCents} />
+                      </div>
+                      {seesCosts && (
+                        <div className="flex flex-wrap items-baseline justify-between gap-x-3 text-xs text-muted-foreground">
+                          <span>
+                            {t.capital}:{' '}
+                            {payment.capitalCents === null ? (
+                              '—'
+                            ) : (
+                              <Money cents={payment.capitalCents} tone="capital" />
+                            )}
+                          </span>
+                          <span>
+                            {t.recognized}:{' '}
+                            {payment.profitCents === null ? (
+                              '—'
+                            ) : (
+                              <Money cents={payment.profitCents} tone="profit" />
+                            )}
+                          </span>
+                        </div>
+                      )}
                     </li>
                   ))}
                 </ul>
@@ -228,12 +300,22 @@ function DrawerBody({ id }: { id: string }) {
               <h3 className="font-heading font-semibold">{d.returns}</h3>
               <ul className="divide-y rounded-lg border bg-card">
                 {view.returns.map((given) => (
-                  <li
-                    key={given.id}
-                    className="flex items-baseline justify-between gap-3 px-3 py-2.5"
-                  >
-                    <DateText value={given.date} />
-                    <Money cents={given.creditCents} />
+                  <li key={given.id} className="grid gap-0.5 px-3 py-2.5">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <DateText value={given.date} />
+                      <Money cents={given.creditCents} />
+                    </div>
+                    <p className="text-sm text-muted-foreground">{given.reason}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {given.lines
+                        .map((returned) => {
+                          const found = view.lines.find(
+                            (entry) => entry.line.id === returned.lineId,
+                          );
+                          return found?.product?.name ?? '';
+                        })
+                        .join(messages.forms.listSeparator)}
+                    </p>
                   </li>
                 ))}
               </ul>
@@ -246,6 +328,12 @@ function DrawerBody({ id }: { id: string }) {
               {sale.note}
             </p>
           )}
+          {view.writeOff && (
+            <p className="text-sm">
+              <span className="text-muted-foreground">{t.writeOffReason}: </span>
+              {view.writeOff.reason}
+            </p>
+          )}
           {view.saleVoid && (
             <p className="text-sm">
               <span className="text-muted-foreground">{t.voidReason}: </span>
@@ -255,28 +343,12 @@ function DrawerBody({ id }: { id: string }) {
         </div>
       </div>
 
-      <div className="flex flex-wrap gap-2 border-t p-4">
-        <Button asChild size="lg" className="flex-1">
-          <Link href={`/pos/view?id=${sale.id}`}>
-            <ReceiptTextIcon data-icon="inline-start" aria-hidden />
-            {h.openInvoice}
-          </Link>
-        </Button>
-        {!voided && (
-          <Button
-            type="button"
-            variant="outline"
-            size="lg"
-            className="flex-1"
-            onClick={() => {
-              shareInvoice(text, link);
-            }}
-          >
-            <Share2Icon data-icon="inline-start" aria-hidden />
-            {t.share}
-          </Button>
-        )}
-      </div>
+      <SaleActionBar
+        data={data}
+        onAction={onAction}
+        shareVariant="default"
+        className="flex max-h-[45dvh] flex-wrap gap-2 overflow-y-auto border-t p-4"
+      />
     </>
   );
 }

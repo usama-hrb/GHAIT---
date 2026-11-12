@@ -56,6 +56,7 @@ These are shadcn/ui (style `radix-nova`, Radix primitives, Lucide icons), vendor
 - `Button` adds `variant="accent"` (gold) and `pointer-coarse` touch sizes. `Badge` adds `success` and `warning`.
 - `Input`/`Textarea` are 16px at every width; `Input`, `InputGroup` and `SelectTrigger` are 44px on touch screens.
 - `Combobox` is our own Command + Popover (Radix only; shadcn's Base UI combobox is not used).
+- `CommandDialog` puts what it is given inside a `Command` root, so a caller passes only the parts (`CommandInput`, `CommandList`, `CommandEmpty`, …). cmdk's parts throw when they render outside a root; the radix-nova template leaves the root to the caller, and the sidebar's page search crashed the whole shop screen the first time it was opened because it did not add one. It also hands the keyboard back to whatever had it when it opened, because Radix returns focus only to a trigger button and this dialog is opened by state, with none. Keep both changes when the primitive is vendored again.
 - Forms use `Field` (shadcn replaced `form` with `field`) + react-hook-form + zod. Pattern: label above, error below with an icon (see the gallery's sale-line form).
 - Sheet and Sidebar position by a _physical_ `side` prop, so their side classes are physical (with a lint exception). The app sidebar is `side="right"`.
 - English screen-reader strings ("Close", "Toggle Sidebar"…) are replaced with `messages.ui.*`.
@@ -67,7 +68,7 @@ To add a component, run from `apps/web`: `pnpm dlx shadcn@4.23.0 add <name>`. Th
 
 ```tsx
 <AppShell
-  nav={shopNavigation()} // src/app/navigation.ts (a function: labels follow the language); `group` sets the dashed-line groups, `tab: true` = phone tab
+  nav={shopNavigation()} // src/app/navigation.ts (a function: labels follow the language); `group` sets the dashed-line groups, `groupLabel` the heading above a group, `parent` puts a page under another (one level), `tab: true` = phone tab
   account={{ name: user.displayName, detail: roleLabel }} // the card at the top of the sidebar
   title={messages.nav.pos}
   onSearch={() => setSearchOpen(true)} // also Ctrl+K / ⌘K
@@ -83,10 +84,11 @@ To add a component, run from `apps/web`: `pnpm dlx shadcn@4.23.0 add <name>`. Th
 </AppShell>
 ```
 
-- Desktop: a **light sidebar** at the start (right in Arabic, left in English; `useDirection()`): the account card (the logo mark and who is signed in), a page search (field with `Ctrl K`; `NavPalette`), the pages in groups set apart by dashed lines, the active page a burgundy pill with the gold diamond, a soft background on hover. The header's collapse button folds it to a rail of **large icons** (24 px in 44 px squares) without the names; a tooltip names each icon. The panel reads the page's tokens through the `.shop-sidebar` scope in `globals.css` (the brand file's burgundy sidebar tokens are untouched); the pill uses the brand's `sidebar-accent` pair. Phone: 4 tabs plus "المزيد", a drawer with the rest.
+- Desktop: a **light sidebar** at the start (right in Arabic, left in English; `useDirection()`): the account card (the logo mark and who is signed in), a page search (field with `Ctrl K`; `NavPalette`), the pages in groups set apart by dashed lines, each group under a small heading (Main, Operations, Finance, Administration; the Reports group has none, because its first item says what it is), a page that names a `parent` drawn indented below it (Financial Integrity under Reports; `nestNav` allows one level and keeps a page at the top level when its parent is not in the role's list), the active page a burgundy pill with the gold diamond (its parent is darker, not a pill, while a page under it is open), a soft background on hover. The header's collapse button folds it to a rail of **large icons** (24 px in 44 px squares) without the names or the headings, the nested page's icon in line with its parent's; a tooltip names each icon. See [ADR 0027](adr/0027-financial-integrity-screen-and-grouped-navigation.md). The panel reads the page's tokens through the `.shop-sidebar` scope in `globals.css` (the brand file's burgundy sidebar tokens are untouched); the pill uses the brand's `sidebar-accent` pair. Phone: 4 tabs plus "More" (`messages.nav.more`), a drawer with the rest in the same groups and with the same nesting.
 - `Logo` (`variant="full" | "mark"`): size it with `w-*` or `h-*`.
 - `DiamondBullet`: decorative, sized by font size (`text-xs`).
 - `EmptyState`, `ErrorState` (`onRetry`), `LoadingState` (`variant="skeleton" | "spinner"`). Pass `titleAs="h3"` when nested under an `h2`.
+- `NotFoundScreen`: the page for an address that matches no screen (`app/not-found.tsx`; Next answers it with status 404). It stands alone, with no sidebar and nothing read from the device's database, so it opens the same signed in, signed out or offline. Language and theme can be changed on it, and its one gold action leads to `/home`, which sends a signed-out visitor on to the sign-in page. The description is in the foreground colour at 80%, not the muted token, whose contrast on the page is just under AA.
 
 ## Format (`@/shared/format`)
 
@@ -107,7 +109,7 @@ To add a component, run from `apps/web`: `pnpm dlx shadcn@4.23.0 add <name>`. Th
 - Inputs accept Arabic-Indic and Persian digits and `.`/`٫`/`,` as the decimal point, use `inputmode="decimal"` and return integer cents/cm, or `null` while empty or invalid. Thousands separators are rejected.
 - Rial input must be a whole number of cents: half a rial (2.5 cents) is rejected with a message, never rounded (SPEC §0.2).
 - Errors show after the first blur; pass `showError` to show them after a submit attempt.
-- **Keypad (touch till).** `Keypad` is a 3×4 pad of big keys (digits, decimal point, delete). `usePadFields` keeps the typed text of the fields one pad serves and which of them it types into; `pressKey` is the pure rule (one decimal point, no leading zero, `moneyPad(unit)`: one decimal for rial, two for dirham, `LENGTH_PAD`: two). `MoneyInput`/`MeterInput` take the text from the parent with `text`/`onTextChange`, `keypad` (inputMode none: no system keyboard, a physical one still types) and `large` (a big figure). A key never takes the focus from the field, so the first digit after a field is chosen or filled by a quick button replaces what it holds. The pad only builds text; cents and cm come from the core parse helpers.
+- **Keypad (tablet and desktop till; none on a phone).** `Keypad` is a 3×4 pad of keys (digits, decimal point, delete). A phone (under 640 px wide, or under 500 px tall) renders no keypad and types with its own keyboard: the selling dialog reads `useMediaQuery(PHONE)` and passes `keypad={false}`, which gives the fields `inputMode="decimal"` (`CountInput`: `numeric`) ([ADR 0026](adr/0026-selling-dialog-sized-by-content-phone-keyboard.md)). `usePadFields` keeps the typed text of the fields one pad serves and which of them it types into; `pressKey` is the pure rule (one decimal point, no leading zero, `moneyPad(unit)`: one decimal for rial, two for dirham, `LENGTH_PAD`: two). `MoneyInput`/`MeterInput` take the text from the parent with `text`/`onTextChange`, `keypad` (inputMode none: no system keyboard, a physical one still types) and `large` (a big figure). A key never takes the focus from the field, so the first digit after a field is chosen or filled by a quick button replaces what it holds. The pad only builds text; cents and cm come from the core parse helpers.
 
 ## Photos of colours (`ProductPhoto`, `PhotoField`)
 
@@ -121,9 +123,9 @@ A colour has an optional picture ([ADR 0009](adr/0009-product-photos.md)), set b
 ## The POS (`features/pos`, for a touch tablet)
 
 - **Layout.** From `lg` (1024px) the catalog (search, a chip per fabric, a tile per colour that has cloth left) sits beside the bill (24rem): each scrolls on its own and the bill's Pay button stays at its foot. Below `lg` the bill is a drawer behind a gold bar at the bottom ("Invoice · 3 items · total"). On a tablet narrower than 1280px the main menu folds to its icons while selling and reopens afterwards.
-- **Flow.** Tap a tile → the line dialog: length and price in big fields typed on the keypad, quick lengths (1–5 m) and quick prices (reference, lowest), the proposed roll(s), the line's total with its warnings (profit for the owner only) → "Add to the invoice". Tap a line of the bill to change it; tap Pay → the payment dialog: paid in full, or credit/part payment (a customer is required; amount on the keypad; quick Nothing/Half/All; due date). A sale under cost asks for its confirmation there. "Half" is half the total rounded down to a whole rial: a suggestion to edit, not a rule.
+- **Flow.** Tap a tile → the line dialog, as tall as its content: length and price typed on the keypad beside the fields (on a phone: with the phone's keyboard, no keypad), quick lengths (the ones the stock covers) and quick prices (normal, minimum), the batch and the batches taken, the line's total (no profit: the selling screens show none) → "Add to the invoice". Tap a line of the bill to change it; tap Pay → the payment dialog: paid in full, or credit/part payment (a customer is required; amount on the keypad; quick Nothing/Half/All; due date). A sale under cost asks for its confirmation there. "Half" is half the total rounded down to a whole rial: a suggestion to edit, not a rule.
 - **Rules kept.** The bill is priced by `repositories.sales.preview` (core), the checkout prices it again with the payment; the sale is saved on the device first and offline works. A cashier never sees a cost or a profit.
-- **Tests.** `e2e/pos.spec.ts` drives the dialogs with `fill`; `e2e/pos-keypad.spec.ts` taps the keypad on a 1024×768 touch tablet.
+- **Tests.** `e2e/pos.spec.ts` drives the dialogs with `fill`; `e2e/pos-keypad.spec.ts` taps the keypad on a 1024×768 touch tablet. `e2e/line-dialog.spec.ts` measures the selling dialog on a desktop, both tablet orientations and four phone widths (no keypad on a phone, real key presses, the two owner confirmations, the keyboard up).
 
 ## Languages (`@/i18n`, `@/shared/language`)
 

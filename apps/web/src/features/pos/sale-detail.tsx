@@ -1,45 +1,30 @@
 'use client';
 
-import { Share2Icon } from 'lucide-react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useState } from 'react';
-import { toast } from 'sonner';
-import { PaymentDialog } from '@/features/customers';
 import { messages } from '@/i18n';
-import { useCanSeeCosts, useLiveQuery, useRepositories, useSession } from '@/local-db';
-import { EmptyState, LoadingState, OfflineNotice, VoidDialog } from '@/shared/brand';
-import { DateText, Money, Quantity, useMoneyUnit } from '@/shared/format';
-import { shopToday } from '@/shared/lib/dates';
+import { useCanSeeCosts } from '@/local-db';
+import { EmptyState, LoadingState, OfflineNotice } from '@/shared/brand';
+import { DateText, Money, Quantity } from '@/shared/format';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
-import { whatsAppLink } from '@/shared/lib/whatsapp';
-import { invoiceText } from './invoice-text';
-import { ReturnDialog } from './return-dialog';
-import { shareInvoice } from './share-invoice';
-import { isLockedOn, PeriodLockHint, useLockedThrough } from '@/features/settlements';
+import { SaleActionBar, SaleActionDialogs, type SaleAction } from './sale-actions';
+import { useSale } from './use-sale';
 
 const t = messages.sales;
 
-/** One sale (/pos/view?id=…): its lines and totals, shared on WhatsApp, voided with a reason. */
+/**
+ * One sale (/pos/view?id=…): its lines and totals, shared on WhatsApp, voided with a reason. The
+ * sales history shows the same thing in its details drawer; other screens link here.
+ */
 export function SaleDetailScreen() {
   const id = useSearchParams().get('id') ?? '';
-  const repositories = useRepositories();
-  const session = useSession();
-  const isOwner = session.user?.role === 'owner';
   // The partner sees the same numbers as the owner (SPEC §11); a cashier sees no cost or profit.
   const seesCosts = useCanSeeCosts();
-  const { unit } = useMoneyUnit();
-  const [voiding, setVoiding] = useState(false);
-  const [returning, setReturning] = useState(false);
-  const lockedThrough = useLockedThrough();
-  const [paying, setPaying] = useState(false);
-  const data = useLiveQuery(async () => {
-    const view = await repositories.sales.get(id);
-    if (!view) return null;
-    return { view, shopName: await repositories.settings.get('shop_name', shopToday()) };
-  }, [repositories, id]);
+  const [action, setAction] = useState<SaleAction | null>(null);
+  const data = useSale(id);
 
   if (data === undefined) return <LoadingState />;
   if (data === null) {
@@ -54,15 +39,9 @@ export function SaleDetailScreen() {
       />
     );
   }
-  const { view, shopName } = data;
+  const { view } = data;
   const { sale, figures } = view;
   const voided = sale.voidedAt !== null;
-  const text = invoiceText(view, shopName, unit);
-  const link = whatsAppLink(text, view.customer?.phone ?? null);
-
-  const share = () => {
-    shareInvoice(text, link);
-  };
 
   return (
     <div className="mx-auto grid w-full max-w-3xl gap-4">
@@ -318,97 +297,16 @@ export function SaleDetailScreen() {
         </p>
       )}
 
-      {!voided && (
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="accent" size="lg" onClick={share}>
-            <Share2Icon aria-hidden />
-            {t.share}
-          </Button>
-          <Button asChild variant="outline" size="lg">
-            <a href={link} target="_blank" rel="noopener noreferrer">
-              {t.whatsapp}
-            </a>
-          </Button>
-          {view.customer && figures.dueCents > 0 && (
-            <Button
-              type="button"
-              variant="outline"
-              size="lg"
-              onClick={() => {
-                setPaying(true);
-              }}
-            >
-              {messages.customers.recordPayment}
-            </Button>
-          )}
-          {isOwner &&
-            view.writeOff === undefined &&
-            figures.lines.some(
-              (entry) =>
-                entry.returnedQuantity <
-                (view.lines.find((l) => l.line.id === entry.lineId)?.line.quantity ?? 0),
-            ) && (
-              <Button
-                type="button"
-                variant="outline"
-                size="lg"
-                onClick={() => {
-                  setReturning(true);
-                }}
-              >
-                {t.returnAction}
-              </Button>
-            )}
-          {view.returns.length > 0 ? (
-            <p className="ms-auto self-center text-sm text-muted-foreground">{t.voidBlocked}</p>
-          ) : isLockedOn(sale.date, lockedThrough) ? (
-            <div className="ms-auto">
-              <PeriodLockHint date={sale.date} lockedThrough={lockedThrough} />
-            </div>
-          ) : (
-            <Button
-              type="button"
-              variant="destructive"
-              size="lg"
-              className="ms-auto"
-              onClick={() => {
-                setVoiding(true);
-              }}
-            >
-              {t.voidAction}
-            </Button>
-          )}
-        </div>
-      )}
-
-      {view.customer && (
-        <PaymentDialog
-          open={paying}
-          onOpenChange={setPaying}
-          customerId={view.customer.id}
-          invoices={[
-            {
-              saleId: sale.id,
-              date: sale.date,
-              dueCents: figures.dueCents,
-              writtenOff: view.writeOff !== undefined,
-            },
-          ]}
-          defaultTarget={sale.id}
+      <SaleActionBar data={data} onAction={setAction} />
+      {action && (
+        <SaleActionDialogs
+          saleId={sale.id}
+          action={action}
+          onClose={() => {
+            setAction(null);
+          }}
         />
       )}
-      <ReturnDialog open={returning} onOpenChange={setReturning} view={view} />
-      <VoidDialog
-        open={voiding}
-        onOpenChange={setVoiding}
-        title={t.voidTitle}
-        description={t.voidDescription}
-        onConfirm={async (reason) => {
-          await repositories.sales.voidSale(sale.id, reason);
-          setVoiding(false);
-          toast.success(t.voidedSaved, { description: messages.forms.saved });
-        }}
-      />
     </div>
   );
 }
