@@ -1,35 +1,41 @@
 #!/usr/bin/env bash
-# Dump the application database of the running stack to $BACKUP_DIR as
-# <db>_<UTC timestamp>.dump (pg_dump custom format, compressed), then keep only the
-# newest $BACKUP_KEEP dumps. See docs/runbooks/backup.md.
+# Dump the databases of the running stack to $BACKUP_DIR (pg_dump custom format, compressed), then
+# keep only the newest $BACKUP_KEEP dumps of each database. See docs/runbooks/backup.md.
 #
-# Usage: STACK=dev|prod infra/scripts/backup.sh
+# One-shop server: the application database, as $BACKUP_DIR/<db>_<UTC timestamp>.dump.
+# MULTI_SHOP=true: $BACKUP_DIR/<slug>/<database>_<UTC timestamp>.dump for each shop that is not
+#   closed (suspended ones too), and $BACKUP_DIR/control/<control database>_<UTC timestamp>.dump for
+#   the control database (ADR 0029). SHOP=<slug> backs up one shop, SHOP=control the control
+#   database, SHOP=all or no SHOP every one of them. Rotation works on one directory at a time.
+#
+# Usage: STACK=dev|prod [SHOP=<slug>|control|all] infra/scripts/backup.sh
 set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
 require_postgres
-db="$(app_db)"
-dir="$(backup_dir)"
-keep="$(env_get BACKUP_KEEP 14)"
-[[ "$keep" =~ ^[1-9][0-9]*$ ]] || die "BACKUP_KEEP must be a positive integer (got '$keep')"
+shop="${SHOP:-}"
+PARTIAL=""
+trap 'rm -f -- "$PARTIAL"' EXIT
 
-mkdir -p "$dir"
-file="$dir/${db}_$(date -u +%Y%m%dT%H%M%SZ).dump"
-partial="$file.partial"
-trap 'rm -f "$partial"' EXIT
+failed=()
+if ! multi_shop; then
+  [[ -z "$shop" ]] || die "SHOP is only for MULTI_SHOP=true: this server has one shop"
+  db="$(app_db)"
+  dump_database "$db" "$(backup_dir)" || failed+=("$db")
+else
+  targets="$(backup_targets "$shop")"
+  # The list is read from fd 3: `docker compose exec` reads stdin, and would eat the rest of it.
+  while read -r label db dir state <&3; do
+    # A shop that is still being made may have no database yet: nothing to dump, and not a failure.
+    if [[ "$state" == provisioning ]] && ! database_exists "$db"; then
+      echo "skipped: $label has no database yet (provisioning)"
+      continue
+    fi
+    dump_database "$db" "$dir" || failed+=("$label")
+  done 3<<<"$targets"
+fi
 
-# shellcheck disable=SC2016 # expanded inside the container
-pg sh -c 'pg_dump --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --format=custom --compress=9 --no-owner --no-privileges' >"$partial"
-
-# A dump that pg_restore cannot list is not a backup.
-pg pg_restore --list <"$partial" >/dev/null || die "pg_restore cannot read the dump; nothing kept"
-mv "$partial" "$file"
-echo "backup: $file ($(du -h "$file" | cut -f1))"
-
-# Rotation: newest first, delete everything after the first $keep.
-# shellcheck disable=SC2012 # names are generated (<db>_<timestamp>.dump); ls -t is the portable mtime sort
-old="$(ls -1t "$dir/${db}"_*.dump | tail -n "+$((keep + 1))")"
-if [[ -n "$old" ]]; then
-  while IFS= read -r f; do rm -f -- "$f"; done <<<"$old"
-  echo "rotation: removed $(wc -l <<<"$old" | tr -d ' ') old dump(s), kept $keep"
+if ((${#failed[@]} > 0)); then
+  echo "backup: FAILED for ${failed[*]}" >&2
+  exit 1
 fi

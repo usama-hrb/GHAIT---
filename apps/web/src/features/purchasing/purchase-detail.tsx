@@ -1,15 +1,19 @@
 'use client';
 
+import { mayPush } from '@fabric/contracts';
 import { costPerMeterCents } from '@fabric/core';
+import { PencilIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
+import { useState } from 'react';
 import { messages } from '@/i18n';
-import { useLiveQuery, useRepositories } from '@/local-db';
+import { useLiveQuery, useRepositories, useSession } from '@/local-db';
 import { EmptyState, LoadingState, OfflineNotice } from '@/shared/brand';
 import { DateText, Kilograms, Money, Quantity } from '@/shared/format';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
+import { PurchasePaymentDialog } from './purchase-payment-dialog';
 
 const t = messages.purchasing;
 
@@ -20,6 +24,10 @@ const t = messages.purchasing;
 export function PurchaseDetailScreen() {
   const id = useSearchParams().get('id') ?? '';
   const repositories = useRepositories();
+  const { user } = useSession();
+  // What was paid is the owner's to correct (SP9); a partner reads it.
+  const canEditPayment = user !== null && mayPush(user.role, 'purchase', 'upsert');
+  const [editing, setEditing] = useState(false);
   const data = useLiveQuery(async () => {
     const purchase = await repositories.purchases.get(id);
     if (!purchase) return null;
@@ -101,10 +109,23 @@ export function PurchaseDetailScreen() {
             <Money cents={purchase.totalCostCents} />
           </dd>
         </div>
-        <div className="flex justify-between gap-2">
+        <div className="flex items-center justify-between gap-2">
           <dt className="text-muted-foreground">{t.paid}</dt>
-          <dd>
+          <dd className="flex items-center gap-2">
             <Money cents={purchase.paidCents} />
+            {canEditPayment && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setEditing(true);
+                }}
+              >
+                <PencilIcon data-icon="inline-start" aria-hidden />
+                {t.payment.edit}
+              </Button>
+            )}
           </dd>
         </div>
         {owedCents > 0 && (
@@ -175,6 +196,15 @@ export function PurchaseDetailScreen() {
       </div>
       {views.some((view) => view?.ledger.measurementStatus === 'estimated') && (
         <p className="text-sm text-muted-foreground">{t.estimatedHint}</p>
+      )}
+      {editing && (
+        <PurchasePaymentDialog
+          purchaseId={purchase.id}
+          open
+          onOpenChange={(open) => {
+            if (!open) setEditing(false);
+          }}
+        />
       )}
     </div>
   );

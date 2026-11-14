@@ -3,16 +3,20 @@ import {
   batchLedgerOf,
   buildProductPurchase,
   checkProductPurchase,
+  checkPurchaseAmend,
   type NewProductPurchaseInput,
   newProductPurchaseSchema,
   type ProductBatch,
   type Purchase,
+  supplierAccountOf,
+  type ValidationIssue,
 } from '@fabric/contracts';
 import { type BatchCost, mulDivRoundHalfUp } from '@fabric/core';
 import type { Local } from './db';
 import { parseOrThrow, ValidationError } from './errors';
 import { DEVICE_CODE } from './session';
 import type { LocalStore } from './store';
+import { type PurchasePaymentChange, PurchasePaymentTable } from './tables';
 
 /** The counter the batch codes are numbered by (it continues the roll numbering of old versions). */
 const BATCH_COUNTER = 'rollCounter';
@@ -30,6 +34,18 @@ export interface PurchaseSummary {
   batchCount: number;
 }
 
+/** What a payment correction would leave: the same check and account as the save (SP9). */
+export interface PurchasePaymentPreview {
+  /** What the server would refuse; empty when the correction is valid. */
+  issues: ValidationIssue[];
+  /** What is still due on this purchase after it (payments made since count). */
+  purchaseDueCents: number;
+  /** What the shop owes the supplier in all after it; 0 with no supplier. */
+  owedCents: number;
+  /** What the supplier holds for the shop after it: payments made since can exceed the debt. */
+  advanceCents: number;
+}
+
 const newest = (a: Local<Purchase>, b: Local<Purchase>) =>
   b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt);
 
@@ -40,7 +56,11 @@ const newest = (a: Local<Purchase>, b: Local<Purchase>) =>
  * with its first stock are both this.
  */
 export class PurchasesRepository {
-  constructor(private readonly store: LocalStore) {}
+  private readonly payments: PurchasePaymentTable;
+
+  constructor(private readonly store: LocalStore) {
+    this.payments = new PurchasePaymentTable(store);
+  }
 
   /** Saves the purchase; throws ValidationError for invalid input. Returns the purchase id. */
   async create(input: NewProductPurchaseInput): Promise<string> {
@@ -91,6 +111,58 @@ export class PurchasesRepository {
     );
     this.store.changed();
     return purchaseId;
+  }
+
+  /**
+   * Corrects what was paid when the purchase was made (SP9): the stock, the cost and the date stay
+   * as they were, the supplier owes the rest. A supplier can be set only where there was none (a
+   * debt needs a supplier) and is never swapped. Throws ValidationError for what the server
+   * refuses, and while the purchase's month is settled and locked.
+   */
+  setPayment(id: string, change: PurchasePaymentChange): Promise<void> {
+    return this.payments.setPayment(id, change);
+  }
+
+  /**
+   * What correcting the payment would leave, before anything is saved; null for an unknown
+   * purchase. The check is the save's (checkPurchaseAmend) and the figures are the supplier
+   * account's (core), computed with the corrected purchase in place of the stored one.
+   */
+  async previewPayment(
+    id: string,
+    change: PurchasePaymentChange,
+  ): Promise<PurchasePaymentPreview | null> {
+    const { db } = this.store;
+    const purchase = await db.purchases.get(id);
+    if (!purchase) return null;
+    const next = { ...purchase, ...change };
+    const issues = checkPurchaseAmend(purchase, next);
+    // What the save would refuse has no account to show (core refuses a purchase paid beyond its total).
+    if (issues.length > 0) {
+      return { issues, purchaseDueCents: 0, owedCents: 0, advanceCents: 0 };
+    }
+    if (next.supplierId === null) {
+      return {
+        issues,
+        purchaseDueCents: Math.max(0, next.totalCostCents - next.paidCents),
+        owedCents: 0,
+        advanceCents: 0,
+      };
+    }
+    const [purchases, payments] = await Promise.all([
+      db.purchases.filter((other) => other.supplierId === next.supplierId).toArray(),
+      db.supplierPayments.where('supplierId').equals(next.supplierId).toArray(),
+    ]);
+    const account = supplierAccountOf(next.supplierId, {
+      purchases: [...purchases.filter((other) => other.id !== id), next],
+      payments,
+    });
+    return {
+      issues,
+      purchaseDueCents: account.purchases.find((due) => due.purchaseId === id)?.dueCents ?? 0,
+      owedCents: account.owedCents,
+      advanceCents: account.advanceCents,
+    };
   }
 
   /** The code the next batch will get (for the confirmation); null without a device code. */

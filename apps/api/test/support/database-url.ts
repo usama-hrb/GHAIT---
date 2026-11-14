@@ -1,6 +1,2 @@
-/** The same server, another database. */
-export function withDatabase(url: string, database: string): string {
-  const parsed = new URL(url);
-  parsed.pathname = `/${database}`;
-  return parsed.toString();
-}
+/** The same server, another database: the helper of the app itself (src/database/database-url.ts). */
+export { withDatabase } from '../../src/database/index.js';

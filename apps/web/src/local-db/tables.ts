@@ -1,4 +1,5 @@
 import {
+  checkPurchaseAmend,
   type Customer,
   type CustomerInput,
   customerInputSchema,
@@ -10,6 +11,8 @@ import {
   productSchema,
   periodDatesOf,
   productBatchSchema,
+  type Purchase,
+  purchaseSchema,
   SETTINGS,
   type SettingKey,
   settingInEffect,
@@ -25,7 +28,7 @@ import type { Table } from 'dexie';
 import type { z } from 'zod';
 import { matchesSearch } from '@/shared/lib/search';
 import type { Local } from './db';
-import { parseOrThrow } from './errors';
+import { parseOrThrow, ValidationError } from './errors';
 import type { LocalStore } from './store';
 
 type Base = {
@@ -49,6 +52,7 @@ export class SyncedTable<R extends Base> {
       | 'products'
       | 'suppliers'
       | 'productBatches'
+      | 'purchases'
       | 'customers'
       | 'expenses'
       | 'recurringExpenses'
@@ -209,6 +213,34 @@ export class BatchesTable extends SyncedTable<ProductBatch> {
       },
       id,
     );
+  }
+}
+
+/** What a purchase correction sets: what was paid, and the supplier only where there was none. */
+export interface PurchasePaymentChange {
+  paidCents: number;
+  supplierId: string | null;
+}
+
+/**
+ * A purchase is made with its stock and is never rewritten; afterwards only what was paid on it
+ * can be corrected (SP9), as an upsert op the server re-checks with the same function
+ * (checkPurchaseAmend). The rest of the record is the one that was made.
+ */
+export class PurchasePaymentTable extends SyncedTable<Purchase> {
+  constructor(store: LocalStore) {
+    super(store, 'purchases', 'purchase', purchaseSchema);
+  }
+
+  async setPayment(id: string, change: PurchasePaymentChange): Promise<void> {
+    const purchase = await this.get(id);
+    if (!purchase) throw new Error(`No purchase ${id}`);
+    if (purchase.paidCents === change.paidCents && purchase.supplierId === change.supplierId) {
+      return;
+    }
+    const issues = checkPurchaseAmend(purchase, { ...purchase, ...change });
+    if (issues.length > 0) throw new ValidationError(issues);
+    await this.write({ ...purchase, ...change }, id);
   }
 }
 

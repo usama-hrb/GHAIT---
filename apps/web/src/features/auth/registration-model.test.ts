@@ -147,6 +147,41 @@ describe('registrationRequestOf', () => {
   });
 });
 
+describe('the setup code', () => {
+  const withCode = (setupCode: string) => ({ ...valid(), setupCode });
+
+  it('is not asked for unless the shop asks for it', () => {
+    expect(accountProblems(valid())).toEqual({});
+    expect(accountProblems(valid(), false)).toEqual({});
+    expect(stepIsValid('account', valid())).toBe(true);
+    expect(firstInvalidStep(valid())).toBeNull();
+  });
+
+  it('is required when the shop asks for it', () => {
+    expect(accountProblems(valid(), true)).toEqual({ setupCode: 'required' });
+    expect(accountProblems(withCode('   '), true)).toEqual({ setupCode: 'required' });
+    expect(stepIsValid('account', valid(), true)).toBe(false);
+    expect(firstInvalidStep(valid(), true)).toBe('account');
+  });
+
+  it('is judged by its shape, read as the server reads it', () => {
+    expect(accountProblems(withCode('ABCD-EFGH'), true).setupCode).toBe('invalid');
+    expect(accountProblems(withCode('ABCD-EFGH-JKMN-P'), true).setupCode).toBe('invalid');
+    expect(accountProblems(withCode('ABCD-EFGH-JKM!'), true).setupCode).toBe('invalid');
+    for (const typed of ['ABCDEFGHJKMN', 'abcd-efgh-jkmn', ' ABCD EFGH JKMN ', 'oilo-0000-0000']) {
+      expect(accountProblems(withCode(typed), true)).toEqual({});
+    }
+    expect(firstInvalidStep(withCode('abcd-efgh-jkmn'), true)).toBeNull();
+  });
+
+  it('goes in the request only when the shop asks for it, as typed but for the edge spaces', () => {
+    const typed = withCode('  abcd-efgh-jkmn ');
+    expect(registrationRequestOf(typed, true).setupCode).toBe('abcd-efgh-jkmn');
+    expect(Object.keys(registrationRequestOf(typed))).not.toContain('setupCode');
+    expect(Object.keys(registrationRequestOf(typed, false))).not.toContain('setupCode');
+  });
+});
+
 describe('registrationFailureOf', () => {
   it('reads the server issue codes', () => {
     expect(

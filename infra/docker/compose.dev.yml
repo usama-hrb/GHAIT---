@@ -62,6 +62,12 @@ services:
       MIGRATE_ON_START: 'true'
       LOG_LEVEL: ${LOG_LEVEL:-info}
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-dev-only-change-me-insecure-access-secret}
+      # Off unless .env turns it on (ADR 0029).
+      MULTI_SHOP: ${MULTI_SHOP:-false}
+      CONTROL_DATABASE_NAME: ${CONTROL_DATABASE_NAME:-fabric_control}
+      SHOP_POOL_MAX: ${SHOP_POOL_MAX:-5}
+      # Hashes setup codes: `make shop-new` and `make shop-code` need it (empty is allowed).
+      SETUP_CODE_SECRET: ${SETUP_CODE_SECRET:-}
     ports:
       - 127.0.0.1:${API_HOST_PORT:-4000}:4000
     depends_on:

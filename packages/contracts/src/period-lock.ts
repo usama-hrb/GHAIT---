@@ -1,3 +1,5 @@
+import type { ProductPurchaseAggregate } from './product-purchase.js';
+import type { Purchase } from './purchasing.js';
 import type { SyncEntity, SyncPushPayload } from './sync.js';
 
 type DatesOf = { [E in SyncEntity]?: (payload: SyncPushPayload<E>) => (string | null)[] };
@@ -11,7 +13,10 @@ type DatesOf = { [E in SyncEntity]?: (payload: SyncPushPayload<E>) => (string | 
  * draws, are locked by their own date).
  */
 const DATES: DatesOf = {
-  purchase: (aggregate) => [aggregate.purchase.date],
+  // The purchase op, or the record of a payment correction (`amend`): the purchase's own date.
+  purchase: (payload: ProductPurchaseAggregate | Purchase) => [
+    'purchase' in payload ? payload.purchase.date : payload.date,
+  ],
   stock_move: (move) => [move.date],
   product_stock_move: (move) => [move.date],
   sale: (aggregate) => [aggregate.sale.date],

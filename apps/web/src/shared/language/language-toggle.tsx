@@ -15,7 +15,9 @@ export function LanguageToggle({ className }: { className?: string }) {
       variant="ghost"
       size="sm"
       className={className}
-      onClick={() => setLanguage(isArabic ? 'en' : 'ar')}
+      onClick={() => {
+        setLanguage(isArabic ? 'en' : 'ar');
+      }}
       aria-label={`Switch to ${isArabic ? 'English' : 'Arabic'}`}
       title={`Switch to ${isArabic ? 'English' : 'Arabic'}`}
     >

@@ -117,7 +117,7 @@ export function useGuardedQuery<T>(
 const LOADING_SESSION: SessionState = { status: 'loading', user: null, needsSignIn: false };
 
 export function useSession(): SessionState &
-  Pick<Session, 'login' | 'logout' | 'register' | 'changePassword'> {
+  Pick<Session, 'login' | 'logout' | 'register' | 'registrationOpen' | 'changePassword'> {
   const { session } = useLocalDb();
   const state = useSyncExternalStore(session.subscribe, session.getState, () => LOADING_SESSION);
   return {
@@ -125,6 +125,7 @@ export function useSession(): SessionState &
     login: (input) => session.login(input),
     logout: () => session.logout(),
     register: (input) => session.register(input),
+    registrationOpen: () => session.registrationOpen(),
     changePassword: (input) => session.changePassword(input),
   };
 }
@@ -135,26 +136,38 @@ export type RegistrationOpen = 'unknown' | 'open' | 'closed';
 /**
  * Asks the server once whether the first owner may still sign up (ADR 0023). `unknown` while the
  * question is out and when it cannot be asked (offline, the server down): the login page then
- * shows no sign-up link and the sign-up page says it needs the internet. `retry` asks again.
+ * shows no sign-up link and the sign-up page says it needs the internet. `setupCodeRequired`: the
+ * shop of this address asks for the code its operator made (ADR 0029). `retry` asks again.
  */
 export function useRegistrationOpen(): {
   state: RegistrationOpen;
+  setupCodeRequired: boolean;
   asking: boolean;
   retry: () => void;
 } {
   const { session } = useLocalDb();
   const [attempt, setAttempt] = useState(0);
-  const [answer, setAnswer] = useState<{ attempt: number; state: RegistrationOpen } | null>(null);
+  const [answer, setAnswer] = useState<{
+    attempt: number;
+    state: RegistrationOpen;
+    setupCodeRequired: boolean;
+  } | null>(null);
 
   useEffect(() => {
     let current = true;
     session
-      .registrationOpen()
-      .then((open) => {
-        if (current) setAnswer({ attempt, state: open ? 'open' : 'closed' });
+      .registrationStatus()
+      .then((status) => {
+        if (current) {
+          setAnswer({
+            attempt,
+            state: status.open ? 'open' : 'closed',
+            setupCodeRequired: status.setupCodeRequired,
+          });
+        }
       })
       .catch(() => {
-        if (current) setAnswer({ attempt, state: 'unknown' });
+        if (current) setAnswer({ attempt, state: 'unknown', setupCodeRequired: false });
       });
     return () => {
       current = false;
@@ -163,6 +176,7 @@ export function useRegistrationOpen(): {
 
   return {
     state: answer?.state ?? 'unknown',
+    setupCodeRequired: answer?.setupCodeRequired ?? false,
     asking: answer?.attempt !== attempt,
     retry: () => {
       setAttempt((count) => count + 1);

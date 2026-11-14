@@ -37,7 +37,7 @@ import type {
   ZakatReport,
 } from '@fabric/contracts';
 import { Dexie, type EntityTable } from 'dexie';
-import { upgradeToBatches, upgradeToPeople } from './upgrade';
+import { upgradeToBatches, upgradeToPeople, upgradeToProductSuppliers } from './upgrade';
 
 /** A synced record on the device, with the server_seq of the version it was last synced at. */
 export type Local<R> = R & {
@@ -200,5 +200,7 @@ export class ShopDatabase extends Dexie {
         expenses: 'id, date, paidDate, recurringExpenseId, createdAt, employeeId',
       })
       .upgrade(upgradeToPeople);
+    // v17: a product names the suppliers it is bought from; the products already here get none.
+    this.version(17).stores({}).upgrade(upgradeToProductSuppliers);
   }
 }

@@ -50,6 +50,12 @@ export const accessTokenResponseSchema = z.object({
   /** Seconds until the access token expires. */
   expiresIn: z.int().positive(),
   user: authUserSchema,
+  /**
+   * The shop this server answered for (ADR 0029), so a device never mixes two shops: it keeps the
+   * first one it signs in to and stops syncing when another one answers. Absent on a one-shop
+   * server (`MULTI_SHOP` off), and then nothing is checked.
+   */
+  shopId: idSchema.optional(),
 });
 export type AccessTokenResponse = z.infer<typeof accessTokenResponseSchema>;
 

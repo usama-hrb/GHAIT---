@@ -102,6 +102,12 @@ export const product = pgTable(
     pricePerPieceCents: bigint('price_per_piece_cents', { mode: 'number' }),
     minPricePerPieceCents: bigint('min_price_per_piece_cents', { mode: 'number' }),
     lowStockThreshold: integer(),
+    // The suppliers the shop buys it from. No foreign key: an array has none, and a supplier is
+    // only ever cancelled, never removed, so an id here always keeps its row.
+    supplierIds: uuid()
+      .array()
+      .notNull()
+      .default(sql`'{}'::uuid[]`),
     active: boolean().notNull().default(true),
   },
   (table) => [

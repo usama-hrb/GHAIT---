@@ -11,7 +11,7 @@ import {
 } from '@fabric/contracts';
 import { Controller, Get, HttpCode, Inject, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiNoContentResponse, ApiTags } from '@nestjs/swagger';
-import { SkipThrottle, ThrottlerGuard } from '@nestjs/throttler';
+import { SkipThrottle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { ZodBody, ZodResponse } from '../../common/index.js';
 import { APP_CONFIG, type AppConfig } from '../../config/index.js';
@@ -26,6 +26,7 @@ import {
 } from './auth.decorators.js';
 import { AuthService } from './auth.service.js';
 import { refreshCookieOptions, setRefreshCookie } from './refresh-cookie.js';
+import { ShopThrottlerGuard } from './shop-throttler.guard.js';
 
 /**
  * The access token is returned in the body (the web client keeps it in memory); the refresh
@@ -40,7 +41,7 @@ export class AuthController {
   ) {}
 
   @Public()
-  @UseGuards(ThrottlerGuard)
+  @UseGuards(ShopThrottlerGuard)
   @SkipThrottle({ refresh: true, register: true })
   @Post('login')
   @HttpCode(200)
@@ -58,7 +59,7 @@ export class AuthController {
   @AuditExempt(
     'rotation runs its own transaction: a reused token must revoke its family although the request fails',
   )
-  @UseGuards(ThrottlerGuard)
+  @UseGuards(ShopThrottlerGuard)
   @SkipThrottle({ login: true, register: true })
   @Post('refresh')
   @HttpCode(200)
@@ -101,7 +102,7 @@ export class AuthController {
   @CashierMayCall()
   @PartnerMayCall()
   @MayCallWhileChangingPassword()
-  @UseGuards(ThrottlerGuard)
+  @UseGuards(ShopThrottlerGuard)
   @SkipThrottle({ refresh: true, register: true })
   @Post('change-password')
   @HttpCode(200)

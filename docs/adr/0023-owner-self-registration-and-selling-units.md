@@ -6,6 +6,13 @@ one new API module (`registration`), new contracts, two new web screens (`/signu
 [ADR 0004](0004-api-foundation.md) (there is no HTTP setup route) and adds the rows SU1–SU5 and OS1–OS4
 to `accounting-assumptions.md`. No accounting rule and no stored amount changes.
 
+Superseded in part by [ADR 0029](0029-multi-shop-database-isolation.md) (2026-11-13). The sentences
+that say there is one shop per server no longer describe the product: one server can now serve many
+shops, each with its own database. The notes below mark each such sentence; the text itself stays as
+it was written. With `MULTI_SHOP=false` everything in this ADR holds exactly as written. With
+`MULTI_SHOP=true` the rule "the first owner, then closed" holds for each shop's database, and the
+sign-up also needs a setup code that the operator makes.
+
 ## Context
 
 Until now the owner account existed only through `make owner` on the server. That is safe, but a
@@ -21,6 +28,9 @@ Two requests came together:
 
 The app is a single-shop system (one owner, one partner, one database per shop). It is not
 multi-tenant, and this ADR does not make it so.
+
+Note (ADR 0029): "one database per shop" is still true and is the unit of the multi-shop design.
+"Single-shop system" and "not multi-tenant" are superseded: one server can serve many shops.
 
 ## Decision
 
@@ -98,7 +108,8 @@ units the shop buys in; the purchase page itself only shows purchases already ma
   `make owner` on the server.
 - **No multi-shop isolation.** There is one shop per server and one owner per shop. Isolating
   several shops would need a shop id on every table and every query, which is a different
-  project.
+  project. (Superseded by ADR 0029, which isolates shops with one database for each shop. That
+  needs no shop id on any table, so this reason no longer applies.)
 - **No sign-up for partners or cashiers.** The owner creates their accounts. At first this was done
   only with `make partner-user` and `make cashier-user`; [ADR 0024](0024-account-management.md) adds
   Settings > Accounts for it (the commands remain).
@@ -119,8 +130,12 @@ units the shop buys in; the purchase page itself only shows purchases already ma
 - **Kilogram as a selling unit.** Rejected by the owner: it changes accounting and needs a ledger
   migration for what is a way of buying.
 - **Open registration creating a new shop each time.** Rejected: the product is single-shop, and
-  multi-tenancy is a rewrite, not a feature of a sign-up page.
+  multi-tenancy is a rewrite, not a feature of a sign-up page. (ADR 0029 keeps this rejection: only
+  the operator of the server makes shops, and the sign-up page only makes the first owner of a shop
+  that already exists. What it changed is the reason "the product is single-shop".)
 - **A one-time setup token printed by the server.** Safer on an exposed server, but the owner asked
-  for a plain sign-up page. The switch and the runbook cover the exposed case.
+  for a plain sign-up page. The switch and the runbook cover the exposed case. (ADR 0029 reverses
+  this for multi-shop mode only: a new shop's address is public from the moment it gets a
+  certificate, so its first owner needs a setup code. The one-shop server keeps the plain sign-up.)
 - **A server-side check of units on every synced record.** Rejected: it would reject offline work
   that was valid when it was recorded.

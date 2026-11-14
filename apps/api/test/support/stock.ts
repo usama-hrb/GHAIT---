@@ -20,7 +20,7 @@ import type { Session, TestApp } from './app.js';
  * when needed.
  */
 export function stockKit(
-  t: TestApp,
+  t: Pick<TestApp, 'http'>,
   session: () => Session,
   push: (...ops: SyncOp[]) => Promise<SyncOpResult[]>,
   device = 'desk',

@@ -16,6 +16,11 @@ export const ERROR_CODES = [
   'period_locked',
   'too_many_requests',
   'internal_error',
+  /**
+   * The server cannot serve this request yet and nothing is wrong with the request (503): the shop
+   * at this address is being made, or the list of shops cannot be reached (ADR 0029). Try again.
+   */
+  'service_unavailable',
 ] as const;
 export const errorCodeSchema = z.enum(ERROR_CODES);
 export type ErrorCode = z.infer<typeof errorCodeSchema>;

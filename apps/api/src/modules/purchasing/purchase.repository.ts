@@ -1,8 +1,8 @@
-import type { Purchase } from '@fabric/contracts';
+import { checkPurchaseAmend, type Purchase } from '@fabric/contracts';
 import { Injectable } from '@nestjs/common';
 import { asc, desc, eq, gt } from 'drizzle-orm';
 import { schema, TransactionHost } from '../../database/index.js';
-import type { SyncedRow } from '../sync/index.js';
+import { type SyncedRow, SyncRejection } from '../sync/index.js';
 
 type PurchaseRow = typeof schema.purchase.$inferSelect;
 
@@ -57,6 +57,38 @@ export class PurchaseRepository {
       })
       .returning();
     if (!row) throw new Error('insert returned no row');
+    return purchaseOf(row);
+  }
+
+  /**
+   * A correction of what was paid (SP9), as an upsert op of the record. Only that changes (and a
+   * supplier where there was none): checkPurchaseAmend refuses the rest, so the stock a purchase
+   * brought in and what it cost stay as they were.
+   */
+  async amend(record: Purchase): Promise<SyncedRow<Purchase>> {
+    const current = await this.find(record.id);
+    if (!current) {
+      throw new SyncRejection('not_found', 'A purchase is made together with its stock');
+    }
+    const issues = checkPurchaseAmend(current.record, record);
+    if (issues.length > 0) {
+      throw new SyncRejection(
+        'validation_failed',
+        'Only what was paid on a purchase can change',
+        issues,
+      );
+    }
+    const [row] = await this.tx.db
+      .update(schema.purchase)
+      .set({
+        paidCents: record.paidCents,
+        supplierId: record.supplierId,
+        updatedAt: new Date(record.updatedAt),
+        deviceId: record.deviceId,
+      })
+      .where(eq(schema.purchase.id, record.id))
+      .returning();
+    if (!row) throw new Error(`no purchase ${record.id}`);
     return purchaseOf(row);
   }
 

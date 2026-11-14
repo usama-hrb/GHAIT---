@@ -65,3 +65,23 @@ not use.
 - iOS Safari does not resize the page when its keyboard opens (`interactiveWidget` is not supported
   there), so the dialog relies on the browser scrolling the field in. This was measured by shrinking
   the window, not on a device.
+
+## Amendment (2026-11-14): the footer, and a price typed as a total
+
+- **The footer band reaches the bottom of every dialog.** `DialogFooter` is `sticky bottom-0` with
+  `-mb-4` to run to the dialog's edge, but a sticky box is held inside its scroll container's
+  padding, so the band stopped 16 px short and a strip of dialog colour showed under it. It is now
+  `sticky -bottom-4`. Measured in the browser on the selling dialog on four screen sizes and on a
+  dialog that scrolls (`footerFlush` in `apps/web/e2e/line-dialog.spec.ts`).
+- **A checkbox for a price given as a total.** Under the price the dialog has "Enter the total price
+  instead of the price per meter" (per piece for a piece). On, the price field is replaced by a
+  total field; the price per unit is worked out by `unitPriceForLineTotal` in `@fabric/core` and
+  shown ("Works out to 48.40 / m"), and when rounding moves the line by a cent or more the total it
+  really comes to is shown too. Off, the worked-out price stays in the price field. The line carries
+  a per-unit price like any other, so cart, sync, server checks and returns are unchanged (rule LT1
+  and LT2 in `docs/accounting-assumptions.md`). A whole piece is already priced as a total, so the
+  switch is not offered there. The quick Normal and Minimum buttons are hidden while it is on,
+  since they are prices per unit.
+- **Rejected:** a sale line with a fixed total for any quantity (it would change the sale line, the
+  server's check, returns and sync for a convenience at the till), and a total field beside the
+  price field (the two could disagree; one is shown at a time).

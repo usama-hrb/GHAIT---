@@ -78,6 +78,21 @@ describe('product', () => {
     expect(issues({ pricePerMeterCents: -1 }).length).toBeGreaterThan(0);
   });
 
+  it('keeps the suppliers a product is bought from, each once', () => {
+    const [first, second] = [crypto.randomUUID(), crypto.randomUUID()];
+    expect(productInputSchema.parse(product).supplierIds).toEqual([]);
+    expect(
+      productInputSchema.parse({ ...product, supplierIds: [first, second] }).supplierIds,
+    ).toEqual([first, second]);
+    const twice = productInputSchema.safeParse({ ...product, supplierIds: [first, first] });
+    expect(twice.success ? [] : twice.error.issues.map((issue) => issue.message)).toEqual([
+      'duplicate_product_supplier',
+    ]);
+    expect(productInputSchema.safeParse({ ...product, supplierIds: ['atlas'] }).success).toBe(
+      false,
+    );
+  });
+
   it('accepts a measured or estimated integer conversion only', () => {
     const measured = { weightG: 500, lengthCm: 100, source: 'measured' };
     expect(

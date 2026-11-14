@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   buildPurchaseAggregate,
   checkPurchaseAggregate,
+  checkPurchaseAmend,
   type NewPurchase,
   newPurchaseSchema,
   PURCHASE_ISSUES,
   purchasePaymentIssues,
+  type Purchase,
   type PurchaseAggregate,
   purchaseAggregateSchema,
   rollCode,
@@ -219,6 +221,75 @@ describe('checkPurchaseAggregate: the server re-checks with core', () => {
         a.purchase.method = 'piece';
       }),
     ).toEqual([expect.objectContaining({ message: PURCHASE_ISSUES.inconsistent })]);
+  });
+});
+
+describe('checkPurchaseAmend (SP9: what was paid when the purchase was made)', () => {
+  const supplierId = crypto.randomUUID();
+  /** 5000 dh bought from a supplier and recorded as paid in full: the slip to correct. */
+  const made: Purchase = {
+    ...build(t1).purchase,
+    supplierId,
+    totalCostCents: 500_000,
+    paidCents: 500_000,
+  };
+  const amended = (patch: Partial<Purchase>): Purchase => ({
+    ...made,
+    updatedAt: '2026-11-14T09:00:00.000Z',
+    deviceId: 'desk-2',
+    ...patch,
+  });
+
+  it('takes a smaller figure paid: 1000 of 5000 leaves 4000 owed', () => {
+    expect(checkPurchaseAmend(made, amended({ paidCents: 100_000 }))).toEqual([]);
+    expect(checkPurchaseAmend(made, amended({ paidCents: 0 }))).toEqual([]);
+  });
+
+  it('takes a figure back up to the total', () => {
+    const part = amended({ paidCents: 100_000 });
+    expect(checkPurchaseAmend(part, amended({ paidCents: 500_000 }))).toEqual([]);
+  });
+
+  it('refuses more than the purchase cost', () => {
+    expect(checkPurchaseAmend(made, amended({ paidCents: 500_001 }))).toEqual([
+      expect.objectContaining({ path: ['paidCents'], message: PURCHASE_ISSUES.paidAboveTotal }),
+    ]);
+  });
+
+  it('adds a supplier where there was none, and a debt needs one', () => {
+    const anonymous: Purchase = { ...made, supplierId: null };
+    expect(checkPurchaseAmend(anonymous, { ...anonymous, paidCents: 100_000 })).toEqual([
+      expect.objectContaining({ path: ['supplierId'], message: PURCHASE_ISSUES.debtNeedsSupplier }),
+    ]);
+    expect(checkPurchaseAmend(anonymous, { ...anonymous, paidCents: 100_000, supplierId })).toEqual(
+      [],
+    );
+  });
+
+  it('never swaps or removes the supplier: payments may already name the purchase', () => {
+    for (const next of [crypto.randomUUID(), null]) {
+      expect(checkPurchaseAmend(made, amended({ supplierId: next }))).toEqual([
+        expect.objectContaining({ path: ['supplierId'], message: PURCHASE_ISSUES.fieldsFixed }),
+      ]);
+    }
+  });
+
+  it('keeps everything else of the purchase fixed', () => {
+    const changes: Partial<Purchase> = {
+      date: '2026-01-01',
+      totalCostCents: 400_000,
+      pricePerMeterCents: 1,
+      weightG: 5,
+      estCmPerKg: 5,
+      notes: 'changed',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      voidedAt: '2026-11-14T09:00:00.000Z',
+    };
+    for (const [key, value] of Object.entries(changes)) {
+      expect(checkPurchaseAmend(made, amended({ [key]: value }))).toEqual([
+        expect.objectContaining({ path: [key], message: PURCHASE_ISSUES.fieldsFixed }),
+      ]);
+    }
   });
 });
 

@@ -35,6 +35,7 @@ import { ReceivablesModule } from './modules/receivables/index.js';
 import { SalesModule } from './modules/sales/index.js';
 import { SettingsModule } from './modules/settings/index.js';
 import { SettlementsModule } from './modules/settlements/index.js';
+import { ShopsModule } from './modules/shops/index.js';
 import { SyncModule } from './modules/sync/index.js';
 import { ZakatModule } from './modules/zakat/index.js';
 
@@ -47,11 +48,14 @@ export class AppModule implements NestModule {
         ConfigModule.forRoot(config),
         loggingModule(config),
         DatabaseModule,
+        // After the logger, so its request logger exists when the shop is chosen; before the rest,
+        // so a request is bound to its shop before any of them runs (ADR 0029).
+        ...(config.multiShop ? [ShopsModule] : []),
         AuditModule,
         AuthModule,
         AccountsModule,
         SettingsModule,
-        RegistrationModule,
+        RegistrationModule.forRoot(config),
         SyncModule,
         CatalogModule,
         PhotosModule,

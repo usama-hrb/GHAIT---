@@ -14,7 +14,7 @@ import type { Table } from 'dexie';
 import { ApiError, NetworkError } from './api';
 import type { Local, OutboxEntry, ShopDatabase } from './db';
 import { withLock } from './locks';
-import { type Session, SignedOutError } from './session';
+import { type Session, SignedOutError, WrongShopError } from './session';
 import type { LocalStore } from './store';
 
 const PULL_CURSOR = 'pullCursor';
@@ -155,7 +155,8 @@ function toOp(entry: OutboxEntry): SyncOp {
   };
 }
 
-export type SyncState = 'idle' | 'syncing' | 'offline' | 'signed_out' | 'error';
+/** `wrong_shop`: the address now answers for another shop than this device holds (ADR 0029). */
+export type SyncState = 'idle' | 'syncing' | 'offline' | 'signed_out' | 'wrong_shop' | 'error';
 
 export interface SyncStatus {
   state: SyncState;
@@ -292,6 +293,11 @@ export class SyncEngine {
     } catch (error) {
       if (error instanceof SignedOutError) {
         this.set({ state: 'signed_out' });
+        return;
+      }
+      // Not retried sooner than the next round: only the shop at this address changing helps.
+      if (error instanceof WrongShopError) {
+        this.set({ state: 'wrong_shop' });
         return;
       }
       this.set({ state: error instanceof NetworkError ? 'offline' : 'error' });

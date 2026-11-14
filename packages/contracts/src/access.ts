@@ -30,8 +30,9 @@ const NOTHING: EntityAccess = { read: 'none', push: [] };
  * refuses the table without it, so nothing is exposed to the cashier by omission (RL2).
  */
 export const CASHIER_ACCESS = {
-  // The catalog and the stock: what is sold, at what price, how much is left. Costs are cut out.
-  product: SEES,
+  // The catalog and the stock: what is sold, at what price, how much is left. Costs are cut out,
+  // and so is the list of suppliers the product is bought from.
+  product: { read: 'redacted', push: [] },
   // The picture of a product, for its tile: the till shows it, only the owner sets it.
   photo: SEES,
   // The stock the till sells from: quantities yes, cost no.
@@ -105,7 +106,8 @@ export function mayPush(role: Role, entity: SyncEntity, kind: SyncOp['kind']): b
 
 /**
  * A record as `role` may receive it, or null when it must not be sent at all. A cashier gets no
- * batch cost (the length and the rest are all the till needs) and only its settings (RL1).
+ * batch cost and no list of a product's suppliers (the length, the price and the rest are all the
+ * till needs) and only its settings (RL1).
  */
 export function redactForRole<R extends object>(
   role: Role,
@@ -117,6 +119,7 @@ export function redactForRole<R extends object>(
   if (access.read === 'none') return null;
   if (access.read === 'all') return record;
   if (entity === 'product_batch') return { ...record, costTotalCents: 0 };
+  if (entity === 'product') return { ...record, supplierIds: [] };
   if (entity === 'setting') {
     const key = (record as { key?: unknown }).key;
     return typeof key === 'string' && CASHIER_SETTING_KEYS.includes(key) ? record : null;

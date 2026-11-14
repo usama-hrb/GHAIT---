@@ -158,6 +158,7 @@ function productOf(row: ProductRow): SyncedRow<Product> {
       pricePerPieceCents: row.pricePerPieceCents,
       minPricePerPieceCents: row.minPricePerPieceCents,
       lowStockThreshold: row.lowStockThreshold,
+      supplierIds: row.supplierIds,
       active: row.active,
     },
   };
@@ -191,6 +192,7 @@ export class ProductRepository implements SyncHandler<'product'> {
       pricePerPieceCents: record.pricePerPieceCents,
       minPricePerPieceCents: record.minPricePerPieceCents,
       lowStockThreshold: record.lowStockThreshold,
+      supplierIds: record.supplierIds,
       active: record.active,
       ...writeColumns(record),
     };

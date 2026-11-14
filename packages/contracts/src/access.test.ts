@@ -85,6 +85,18 @@ describe('what each role may see and change (SPEC §11, RL1–RL5)', () => {
     expect(redactForRole('cashier', 'sale', batch)).toBe(batch);
   });
 
+  it('leaves the product’s suppliers off what a cashier receives', () => {
+    const product = {
+      ...base('2026-10-01'),
+      id: crypto.randomUUID(),
+      name: 'Rosa',
+      supplierIds: [crypto.randomUUID()],
+    };
+    expect(redactForRole('cashier', 'product', product)).toEqual({ ...product, supplierIds: [] });
+    expect(redactForRole('owner', 'product', product)).toBe(product);
+    expect(redactForRole('partner', 'product', product)).toBe(product);
+  });
+
   it('gives a cashier only the settings the till needs', () => {
     const setting = (key: string) => ({
       ...base('2026-10-01'),

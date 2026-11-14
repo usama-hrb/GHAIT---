@@ -32,14 +32,25 @@ services:
       context: ../..
       dockerfile: infra/docker/Dockerfile.api
     image: fabric-shop-api:${IMAGE_TAG:-latest}
+    # No `ports:` here, on purpose, and never add one. The API trusts the X-Forwarded-* headers of
+    # a request that comes from the Docker network (`trust proxy`), and it refuses Caddy's `ask`
+    # request for a certificate when that request has an X-Forwarded-For: both rules hold only
+    # while nothing but Caddy can reach this port (docs/runbooks/deploy.md, ADR 0029).
     environment:
       NODE_ENV: production
       PORT: 4000
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      # Single API instance: it applies pending migrations before listening.
+      # Single API instance for every shop: it applies pending migrations before listening (the
+      # control database first, in multi-shop mode, then the shops' databases).
       MIGRATE_ON_START: 'true'
       LOG_LEVEL: ${LOG_LEVEL:-info}
       JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:?set in .env}
+      # Off unless .env turns it on (ADR 0029).
+      MULTI_SHOP: ${MULTI_SHOP:-false}
+      CONTROL_DATABASE_NAME: ${CONTROL_DATABASE_NAME:-fabric_control}
+      SHOP_POOL_MAX: ${SHOP_POOL_MAX:-5}
+      # Hashes setup codes: `make shop-new` and `make shop-code` need it (empty is allowed).
+      SETUP_CODE_SECRET: ${SETUP_CODE_SECRET:-}
       # Whether the sign-up page may create the first owner while the server has none (ADR 0023).
       OWNER_SIGNUP_ENABLED: ${OWNER_SIGNUP_ENABLED:-true}
     depends_on:
@@ -70,6 +81,10 @@ services:
       PGDATABASE: ${POSTGRES_DB}
       BACKUP_AT: ${BACKUP_AT:-02:30}
       BACKUP_KEEP: ${BACKUP_KEEP:-14}
+      # With MULTI_SHOP=true it dumps each shop to backups/<slug>/ and the control database to
+      # backups/control/ (ADR 0029, docs/runbooks/backup.md).
+      MULTI_SHOP: ${MULTI_SHOP:-false}
+      CONTROL_DATABASE_NAME: ${CONTROL_DATABASE_NAME:-fabric_control}
     volumes:
       - ./backup/nightly.sh:/nightly.sh:ro
       - ../../backups:/backups
@@ -83,6 +98,10 @@ services:
     environment:
       DOMAIN: ${DOMAIN:?set in .env}
       ACME_EMAIL: ${ACME_EMAIL:?set in .env}
+      # The domain whose names directly under it are the shops' addresses (`*.<this>`), each with
+      # an HTTPS certificate made on demand (ADR 0029). Unset: a name that never resolves, so no
+      # address gets one and the server is the one-shop server it was.
+      PLATFORM_DOMAIN: ${PLATFORM_DOMAIN:-platform.invalid}
     ports:
       - ${HTTP_PORT:-80}:80
       - ${HTTPS_PORT:-443}:443

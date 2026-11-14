@@ -7,6 +7,7 @@ import { useLiveQuery, useRepositories, useSession, useSyncStatus } from '@/loca
 import { OfflineNotice, useOnlineStatus } from '@/shared/brand';
 import { DateText } from '@/shared/format';
 import { cn } from '@/shared/lib/utils';
+import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card';
@@ -31,13 +32,15 @@ export function SyncSettingsScreen() {
 
   const state = !online
     ? 'offline'
-    : session.needsSignIn || sync.state === 'signed_out'
-      ? 'signed_out'
-      : sync.state === 'error'
-        ? 'error'
-        : syncing
-          ? 'syncing'
-          : 'idle';
+    : sync.state === 'wrong_shop'
+      ? 'wrong_shop'
+      : session.needsSignIn || sync.state === 'signed_out'
+        ? 'signed_out'
+        : sync.state === 'error'
+          ? 'error'
+          : syncing
+            ? 'syncing'
+            : 'idle';
 
   return (
     <div className="grid gap-4">
@@ -49,6 +52,13 @@ export function SyncSettingsScreen() {
       </header>
 
       <OfflineNotice />
+
+      {sync.state === 'wrong_shop' && (
+        <Alert variant="destructive">
+          <TriangleAlertIcon aria-hidden />
+          <AlertDescription>{messages.sync.wrongShopDescription}</AlertDescription>
+        </Alert>
+      )}
 
       <Card>
         <CardHeader>
@@ -64,7 +74,8 @@ export function SyncSettingsScreen() {
               <span
                 className={cn(
                   'inline-flex items-center gap-1.5',
-                  (state === 'offline' || state === 'error') && 'text-debt',
+                  (state === 'offline' || state === 'error' || state === 'wrong_shop') &&
+                    'text-debt',
                 )}
               >
                 {t.status.states[state]}

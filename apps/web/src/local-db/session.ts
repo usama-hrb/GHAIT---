@@ -19,6 +19,14 @@ export class SignedOutError extends Error {
   override readonly name = 'SignedOutError';
 }
 
+/**
+ * The server answered for a different shop than the one this device holds (ADR 0029): the address
+ * was pointed at another shop. Nothing from that answer is kept, and nothing is synced.
+ */
+export class WrongShopError extends Error {
+  override readonly name = 'WrongShopError';
+}
+
 export interface SessionState {
   /** loading: reading the device; signed_out: nobody signed in on this device. */
   status: 'loading' | 'signed_out' | 'signed_in';
@@ -29,6 +37,11 @@ export interface SessionState {
 }
 
 const USER = 'user';
+/**
+ * The shop this device belongs to, kept at the first sign-in that names one (ADR 0029). A server
+ * that names none (one shop) is never checked.
+ */
+const SHOP_ID = 'shopId';
 /** This device's code (A, B…), the prefix of the roll codes it makes. */
 export const DEVICE_CODE = 'deviceCode';
 /** Refresh a little before expiry rather than fail a request. */
@@ -82,9 +95,20 @@ export class Session {
    * Needs the network; throws ApiError or NetworkError.
    */
   async registrationOpen(): Promise<boolean> {
+    return (await this.registrationStatus()).open;
+  }
+
+  /**
+   * `registrationOpen`, and whether the shop of this address asks for a setup code (ADR 0029): it
+   * does while it waits for its first owner on a server with many shops. Needs the network;
+   * throws ApiError or NetworkError.
+   */
+  async registrationStatus(): Promise<{ open: boolean; setupCodeRequired: boolean }> {
     const response = await this.api.send('/auth/registration');
     if (!response.ok) throw await apiErrorOf(response);
-    return registrationStatusSchema.parse(await response.json()).open;
+    const status = registrationStatusSchema.parse(await response.json());
+    await this.checkShop(status.shopId);
+    return { open: status.open, setupCodeRequired: status.setupCodeRequired === true };
   }
 
   /**
@@ -92,6 +116,8 @@ export class Session {
    * the server and signs in on this device, as a login does. Needs the network.
    */
   async register(input: OwnerRegistrationInput): Promise<AuthUser> {
+    // Before the server makes an account for a shop this device does not belong to.
+    await this.registrationOpen();
     const response = await this.api.send('/auth/register', { method: 'POST', body: input });
     if (!response.ok) throw await apiErrorOf(response);
     const body = accessTokenResponseSchema.parse(await response.json());
@@ -183,7 +209,21 @@ export class Session {
     return schema.parse(await response.json());
   }
 
+  /** Throws WrongShopError when `shopId` is not the shop this device holds. Reads only. */
+  private async checkShop(shopId: string | undefined): Promise<void> {
+    if (shopId === undefined) return;
+    const kept = await this.store.getMeta(SHOP_ID);
+    if (typeof kept === 'string' && kept !== shopId) {
+      throw new WrongShopError('This address answers for a different shop');
+    }
+  }
+
   private async accept(body: AccessTokenResponse): Promise<void> {
+    // Before anything of the answer is kept: a refused answer leaves the session as it was.
+    await this.checkShop(body.shopId);
+    if (body.shopId !== undefined && (await this.store.getMeta(SHOP_ID)) === undefined) {
+      await this.store.setMeta(SHOP_ID, body.shopId);
+    }
     this.token = {
       value: body.accessToken,
       expiresAt: this.store.now().getTime() + body.expiresIn * 1000,

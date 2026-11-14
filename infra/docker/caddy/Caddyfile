@@ -5,10 +5,22 @@
 	# the container's address, not the server's, so it could not pick the certificate. This names
 	# it. With a domain every browser sends the name and this changes nothing.
 	default_sni {$DOMAIN}
+
+	# Certificates on demand (ADR 0029): a shop made with `make shop-new` is served at its address
+	# at once, with no change to this file and no restart. Before Caddy asks Let's Encrypt for a
+	# certificate for a name it has not seen, it asks the API whether the name is the address of a
+	# shop that is not closed. Only a 2xx answer goes on; anything else ends the TLS handshake. The
+	# call goes straight to the API on the Docker network, not through a site block, so it carries
+	# no X-Forwarded-For: the API refuses every request that has one (docs/runbooks/deploy.md).
+	# Only the last site below uses it.
+	on_demand_tls {
+		ask http://api:4000/internal/known-host
+	}
 }
 
-# HTTPS certificates are issued automatically for {$DOMAIN} (Let's Encrypt; local CA for localhost).
-{$DOMAIN} {
+# What every address serves. The API's routes at the root of the API are public as /api/<route>
+# (the prefix is removed below), so the internal ones are closed here and again in the API.
+(shop) {
 	encode zstd gzip
 
 	header {
@@ -16,6 +28,11 @@
 		X-Content-Type-Options nosniff
 		Referrer-Policy strict-origin-when-cross-origin
 		-Server
+	}
+
+	# Caddy's own ask request is the only caller of this route, and it does not come through here.
+	handle /api/internal/* {
+		respond 404
 	}
 
 	# /api/health → api:4000/health
@@ -28,4 +45,24 @@
 	}
 
 	log
+}
+
+# HTTPS certificates are issued automatically for {$DOMAIN} (Let's Encrypt; local CA for localhost
+# and for a bare IP address).
+{$DOMAIN} {
+	import shop
+}
+
+# The shops' own addresses: every name directly under {$PLATFORM_DOMAIN}, with a certificate made
+# on demand for each, if the API knows the name (an IP address is never known). The site must name
+# a domain: a site with no name (`https://`) also takes the visits that send no server name, which
+# is every visit to a bare IP address, and Caddy then asks the API about the default name and
+# fails the handshake on the "no" - the bare-IP site above would stop working. A wildcard site
+# takes only the names under it. Caddy does not ask for a wildcard certificate here: that needs
+# a DNS challenge, and each name gets its own instead.
+*.{$PLATFORM_DOMAIN} {
+	tls {
+		on_demand
+	}
+	import shop
 }

@@ -14,9 +14,8 @@ test('English is the default; the language icon switches to Arabic and back, and
   await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
   expect(await storedLanguage(page)).toBeNull();
 
-  // The icon opens the list of languages; Arabic turns the page around.
-  await page.getByRole('button', { name: 'Language', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: 'العربية' }).click();
+  // The language button names the language it switches to; Arabic turns the page around.
+  await page.getByRole('button', { name: 'Switch to Arabic', exact: true }).click();
   await expect(html).toHaveAttribute('lang', 'ar');
   await expect(html).toHaveAttribute('dir', 'rtl');
   await expect(page.getByRole('heading', { name: 'تسجيل الدخول' })).toBeVisible();
@@ -30,7 +29,7 @@ test('English is the default; the language icon switches to Arabic and back, and
 
   // Signed in, the shop reads Arabic and the menu sits on the right.
   await page.getByLabel('اسم المستخدم').fill(E2E.owner.username);
-  await page.getByLabel('كلمة المرور').fill(E2E.owner.password);
+  await page.getByLabel('كلمة المرور', { exact: true }).fill(E2E.owner.password);
   await page.getByRole('button', { name: 'دخول' }).click();
   await expect(page).toHaveURL(/\/home$/);
   const sidebar = page.locator('[data-slot="sidebar"]').first();
@@ -38,8 +37,7 @@ test('English is the default; the language icon switches to Arabic and back, and
   await expect(sidebar.getByRole('link', { name: 'المخزون', exact: true })).toBeVisible();
 
   // Back to English from the header: the text, the direction and the side of the menu follow.
-  await page.getByRole('button', { name: 'اللغة', exact: true }).click();
-  await page.getByRole('menuitemradio', { name: 'English' }).click();
+  await page.getByRole('button', { name: 'Switch to English', exact: true }).click();
   await expect(html).toHaveAttribute('lang', 'en');
   await expect(html).toHaveAttribute('dir', 'ltr');
   await expect(sidebar).toHaveAttribute('data-side', 'left');

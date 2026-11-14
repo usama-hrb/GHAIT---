@@ -278,6 +278,7 @@ export const PURCHASE_ISSUES = {
   notCore: 'purchase_does_not_match_core',
   paidAboveTotal: 'purchase_paid_above_total',
   debtNeedsSupplier: 'purchase_debt_needs_supplier',
+  fieldsFixed: 'purchase_fields_fixed',
 } as const;
 
 /**
@@ -296,6 +297,40 @@ export function purchasePaymentIssues(purchase: {
     return [{ path: ['supplierId'], message: PURCHASE_ISSUES.debtNeedsSupplier, code: 'custom' }];
   }
   return [];
+}
+
+/** What a purchase carries that its payment correction never changes. */
+const PURCHASE_FIXED_FIELDS = [
+  'date',
+  'method',
+  'pricePerMeterCents',
+  'weightG',
+  'estCmPerKg',
+  'totalCostCents',
+  'notes',
+  'createdAt',
+  'voidedAt',
+] as const;
+
+/**
+ * The one change a purchase takes after it was made: what was paid when it was made (SP9). A slip
+ * at the till ("paid in full" when only part was paid) is corrected on the purchase itself, so
+ * the supplier's debt, the cash and the zakat base all read the corrected figure. The rest of the
+ * purchase (its date, what it cost, how it was bought) never changes: its stock is already on the
+ * shelves and may be sold. The supplier is added only where there was none (a debt needs one),
+ * never swapped: payments may already name the purchase. The same rules as when it was made
+ * (`purchasePaymentIssues`) apply to the new figure.
+ */
+export function checkPurchaseAmend(current: Purchase, next: Purchase): ValidationIssue[] {
+  for (const key of PURCHASE_FIXED_FIELDS) {
+    if (current[key] !== next[key]) {
+      return [{ path: [key], message: PURCHASE_ISSUES.fieldsFixed, code: 'custom' }];
+    }
+  }
+  if (current.supplierId !== null && next.supplierId !== current.supplierId) {
+    return [{ path: ['supplierId'], message: PURCHASE_ISSUES.fieldsFixed, code: 'custom' }];
+  }
+  return purchasePaymentIssues(next);
 }
 
 /**

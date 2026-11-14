@@ -35,6 +35,7 @@ function withNames(shop: Shop): ReportRecords {
     pricePerPieceCents: null,
     minPricePerPieceCents: null,
     lowStockThreshold: null,
+    supplierIds: [],
     active: true,
   }));
   const customers = shop.records.sales.flatMap((sale) =>

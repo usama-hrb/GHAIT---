@@ -55,4 +55,17 @@ Prices are typed in rial (the default display unit). The test's expected figures
 - [ ] Settings → "مشاكل المزامنة" is empty, or every item has been looked at.
 - [ ] The day's totals (sales, credit, payments, losses) match the paper book.
 
+## A server with many shops (only when `MULTI_SHOP=true`)
+
+Skip this part on a one-shop server. On a server with many shops ([adr/0029](adr/0029-multi-shop-database-isolation.md), [runbooks/shops.md](runbooks/shops.md); turning it on is [runbooks/multi-shop-rollout.md](runbooks/multi-shop-rollout.md)), do it once before the first shop that is not the owner's own goes live, and again after every change to the proxy, the hosts or the keys. It needs a second shop made with `make shop-new SLUG=… HOST=…` and the setup code it printed.
+
+- [ ] The shop in use signs in at its own address and its figures are the ones from the day above. `make shop-list` shows it as the adopted shop, with its owner.
+- [ ] The second shop's address opens the sign-up page, not the sign-in page, and refuses a wrong setup code. With the right code the wizard makes its owner, and the shop's name appears in the header.
+- [ ] In the second shop, add a product and make a sale with the Wi-Fi off. The header shows it waiting; turn the Wi-Fi on and it syncs by itself. A second device of that shop, signed in with the same account, sees the product and the sale.
+- [ ] Back in the first shop, nothing of the second shop is there: no product, no customer, no sale, in Inventory, Customers, Sales or the audit log. A phone that pulls from the start gets the same.
+- [ ] The owner of each shop signs in only at its own address: the other address says the username or password is wrong, and a token copied from one address is refused at the other.
+- [ ] `make backup` writes one folder for each shop and one for `control/`, and `make backup-verify` passes for all of them.
+
+The same checks run on every push without the till and the people: `apps/api/test/cross-shop.e2e-spec.ts` (two shops, the same records, every read route) and `apps/web/e2e/second-shop.spec.ts` (the browser, `make e2e-shops`). They do not replace the first four lines: a shop adopted from real data is the only proof that its own figures are untouched.
+
 **Accepted** when every line is ticked and the totals match. If not, note what differed (with the numbers) and keep the paper book until it is fixed.

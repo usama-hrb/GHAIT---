@@ -1,0 +1,1 @@
+ALTER TABLE "product" ADD COLUMN "supplier_ids" uuid[] DEFAULT '{}'::uuid[] NOT NULL;

@@ -165,7 +165,10 @@ export async function fillStock(dialog: Locator, stock: StockEntry): Promise<voi
     }
   }
   if (stock.supplier) await choose(dialog.page(), 'المورد (اختياري)', stock.supplier);
-  if (stock.paid) await dialog.getByLabel('المدفوع الآن (اختياري)').fill(stock.paid);
+  if (stock.paid) {
+    await dialog.getByRole('radio', { name: 'دُفع جزء، والباقي دَين', exact: true }).click();
+    await dialog.getByLabel('المبلغ المدفوع للمورد', { exact: true }).fill(stock.paid);
+  }
 }
 
 export interface ProductEntry {

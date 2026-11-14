@@ -7,6 +7,7 @@ import {
   parseLengthInput,
   parseMoneyInput,
   parseScaledDecimal,
+  unitPriceForLineTotal,
 } from '@fabric/core';
 import { TriangleAlertIcon } from 'lucide-react';
 import { type KeyboardEvent, type PointerEvent, useId, useMemo, useState } from 'react';
@@ -39,6 +40,7 @@ import { shopToday } from '@/shared/lib/dates';
 import { cn } from '@/shared/lib/utils';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
+import { Checkbox } from '@/shared/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -149,8 +151,9 @@ export function LineDialog({
     qty: saleUnit === 'meter' ? LENGTH_PAD : COUNT_PAD,
     price: moneyPad(moneyUnit),
     whole: moneyPad(moneyUnit),
+    total: moneyPad(moneyUnit),
   };
-  const pad = usePadFields<'qty' | 'price' | 'whole'>(
+  const pad = usePadFields<'qty' | 'price' | 'whole' | 'total'>(
     {
       qty: editing
         ? editing.unit === 'meter'
@@ -167,6 +170,7 @@ export function LineDialog({
           ? editedPrice.wholePieceCents
           : (product.pricePerPieceCents ?? 0),
       ),
+      total: '',
     },
     rules,
     editedPrice && 'wholePieceCents' in editedPrice ? 'whole' : 'qty',
@@ -179,12 +183,17 @@ export function LineDialog({
     editing?.lines.some((line) => line.minOverrideBy !== null) ?? false,
   );
   const [costConfirmed, setCostConfirmed] = useState(editing?.belowCostConfirmed ?? false);
+  // The price may be given as what the customer pays for the whole quantity (3 m for 145.20), when
+  // the price of one unit is not known: the price per unit is then worked out from it (core).
+  const [byTotal, setByTotal] = useState(false);
 
   const quantity = quantityOf(saleUnit, pad.texts.qty);
   const priceParsed = parseMoneyInput(pad.texts.price, moneyUnit);
   const unitPrice = priceParsed.ok ? priceParsed.value : null;
   const wholeParsed = parseMoneyInput(pad.texts.whole, moneyUnit);
   const wholePrice = wholeParsed.ok ? wholeParsed.value : null;
+  const totalParsed = parseMoneyInput(pad.texts.total, moneyUnit);
+  const totalCents = totalParsed.ok ? totalParsed.value : null;
 
   /** What the rest of the bill already holds of each batch, so this line is proposed what is left. */
   const taken = useMemo(() => heldByBill(others, saleUnit), [others, saleUnit]);
@@ -207,6 +216,12 @@ export function LineDialog({
     !taken.has(chosen.batch.id);
   const piece = wholePiece && canSellWhole;
   const selling = piece ? chosen.remainingCm : quantity;
+  // A whole piece is already priced as a total, so the switch is for the other lines only.
+  const totalMode = byTotal && !piece;
+  const priceFromTotal =
+    totalMode && totalCents !== null && quantity !== null
+      ? unitPriceForLineTotal({ unit: saleUnit, quantity, totalCents })
+      : null;
 
   const proposal = useLiveQuery(async () => {
     if (selling === null || selling <= 0) return null;
@@ -231,7 +246,7 @@ export function LineDialog({
     };
   }, [repositories, product.id, saleUnit, selling, chosen, taken]);
 
-  const priceCents = piece ? wholePrice : unitPrice;
+  const priceCents = piece ? wholePrice : totalMode ? priceFromTotal : unitPrice;
   const price: SaleLineInput['price'] | null =
     priceCents === null
       ? null
@@ -336,7 +351,7 @@ export function LineDialog({
     onSubmit(item);
   };
 
-  const field = (name: 'qty' | 'price' | 'whole') => ({
+  const field = (name: 'qty' | 'price' | 'whole' | 'total') => ({
     keypad,
     large: true,
     className: phone ? 'h-12 pointer-coarse:h-12' : 'h-14 pointer-coarse:h-14',
@@ -358,8 +373,33 @@ export function LineDialog({
     setBatchChoice(AUTO);
     setWholePiece(false);
     pad.fill('qty', '');
-    pad.fill('price', format(normalOf(next)));
+    // The typing ends in the field that is shown: the total in a line priced by its total.
+    if (byTotal) {
+      pad.fill('price', format(normalOf(next)));
+      pad.fill('total', '');
+    } else {
+      pad.fill('total', '');
+      pad.fill('price', format(normalOf(next)));
+    }
   };
+  const changeByTotal = (on: boolean) => {
+    setByTotal(on);
+    if (on) {
+      pad.fill('total', '');
+      // The field is not there until this render is done.
+      requestAnimationFrame(() => {
+        document.getElementById(`${id}-total`)?.focus();
+      });
+    } else if (priceFromTotal !== null) {
+      // What was worked out stays as the price, to be changed or kept.
+      pad.fill('price', format(priceFromTotal));
+    }
+  };
+  // The unit price is rounded to the cent, so the line can come a few cents off the typed total.
+  const roundedTo =
+    totalMode && totalCents !== null && !pricing && priced && priced.totalCents !== totalCents
+      ? priced.totalCents
+      : null;
 
   const onEnter = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key !== 'Enter' || event.nativeEvent.isComposing || event.repeat) return;
@@ -514,36 +554,79 @@ export function LineDialog({
                     )}
                   </Field>
                   <Field className="gap-1.5">
-                    <FieldLabel htmlFor={`${id}-price`}>
-                      {saleUnit === 'meter' ? t.fields.pricePerMeter : t.fields.pricePerPiece}
+                    <FieldLabel htmlFor={`${id}-${totalMode ? 'total' : 'price'}`}>
+                      {totalMode
+                        ? t.fields.totalPrice
+                        : saleUnit === 'meter'
+                          ? t.fields.pricePerMeter
+                          : t.fields.pricePerPiece}
                     </FieldLabel>
-                    <MoneyInput id={`${id}-price`} value={unitPrice} {...field('price')} />
-                    <div
-                      role="group"
-                      aria-label={t.line.quickPrice}
-                      className="flex flex-wrap gap-2"
-                      onPointerDown={keepFocus}
-                    >
-                      {(
-                        [
-                          [t.line.referencePrice, normalCents],
-                          [t.line.lowestPrice, minCents],
-                        ] as const
-                      ).map(([label, cents]) => (
-                        <Button
-                          key={label}
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="touch-manipulation pointer-coarse:px-4"
-                          onClick={() => {
-                            fill('price', format(cents));
-                          }}
-                        >
-                          {label} · <Money cents={cents} />
-                        </Button>
-                      ))}
-                    </div>
+                    {totalMode ? (
+                      <MoneyInput id={`${id}-total`} value={totalCents} {...field('total')} />
+                    ) : (
+                      <MoneyInput id={`${id}-price`} value={unitPrice} {...field('price')} />
+                    )}
+                    {totalMode ? (
+                      <div role="status" className="grid gap-0.5 text-sm text-muted-foreground">
+                        {quantity === null ? (
+                          <p>{t.line.enterQuantityFirst}</p>
+                        ) : (
+                          priceFromTotal !== null && (
+                            <p>
+                              {t.line.worksOutTo}{' '}
+                              <span className="font-medium text-foreground">
+                                <Money cents={priceFromTotal} /> / {unitLabel}
+                              </span>
+                            </p>
+                          )
+                        )}
+                        {roundedTo !== null && (
+                          <p>
+                            {t.line.totalComesTo}{' '}
+                            <span className="font-medium text-foreground">
+                              <Money cents={roundedTo} />
+                            </span>
+                          </p>
+                        )}
+                      </div>
+                    ) : (
+                      <div
+                        role="group"
+                        aria-label={t.line.quickPrice}
+                        className="flex flex-wrap gap-2"
+                        onPointerDown={keepFocus}
+                      >
+                        {(
+                          [
+                            [t.line.referencePrice, normalCents],
+                            [t.line.lowestPrice, minCents],
+                          ] as const
+                        ).map(([label, cents]) => (
+                          <Button
+                            key={label}
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="touch-manipulation pointer-coarse:px-4"
+                            onClick={() => {
+                              fill('price', format(cents));
+                            }}
+                          >
+                            {label} · <Money cents={cents} />
+                          </Button>
+                        ))}
+                      </div>
+                    )}
+                  </Field>
+                  <Field orientation="horizontal">
+                    <Checkbox
+                      id={`${id}-by-total`}
+                      checked={byTotal}
+                      onCheckedChange={(checked) => {
+                        changeByTotal(checked === true);
+                      }}
+                    />
+                    <FieldLabel htmlFor={`${id}-by-total`}>{t.fields.byTotal(saleUnit)}</FieldLabel>
                   </Field>
                 </>
               )}

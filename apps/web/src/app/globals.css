@@ -6,7 +6,10 @@
 @custom-variant dark (&:is(.dark *));
 
 /* >>> brand-tokens.css (brand-assets.zip, 2026-10-29), merged verbatim. Edit tokens here only
-   with the owner's approval; src/app/tokens.contrast.test.ts guards contrast. >>> */
+   with the owner's approval; src/app/tokens.contrast.test.ts guards contrast.
+   Approved changes since the merge (2026-11-13, so that every pair passes WCAG AA): light
+   --muted-foreground, --warning (so --debt) and --input, dark --input, and a dark --estimated.
+   Each is darker (light) or lighter (dark) than the brand file's value; hue is unchanged. >>> */
 /* ==========================================================================
    GHAIT / غيث — Design tokens
    Source: logo colors sampled from the logo file. Compatible with
@@ -75,7 +78,7 @@
   --secondary-foreground: #491017;
 
   --muted: #f3f1ed;
-  --muted-foreground: #78716c;
+  --muted-foreground: #6f6864;
 
   --accent: #f5ead0;
   --accent-foreground: #684b0c;
@@ -84,13 +87,13 @@
   --destructive-foreground: #ffffff;
 
   --border: #e9e5de;
-  --input: #d6d0c7;
+  --input: #8e8a84;
   --ring: #9a6f10;
 
   --success: #347653;
   --success-foreground: #ffffff;
 
-  --warning: #a66b19;
+  --warning: #976217;
   --warning-foreground: #ffffff;
 
   --info: #52718c;
@@ -148,7 +151,7 @@
   --accent-foreground: #f0d89e;
 
   --border: #393233;
-  --input: #504748;
+  --input: #756e6e;
   --ring: #d8a123;
 
   --success: #72ad83;
@@ -156,6 +159,9 @@
 
   --warning: #e0ad61;
   --warning-foreground: #291b09;
+
+  /* In the light theme this is gold-800, too dark on the dark surfaces (2.8:1). */
+  --estimated: var(--gold-500);
 
   --destructive: #e27676;
   --destructive-foreground: #2a1111;

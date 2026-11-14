@@ -127,6 +127,28 @@ export interface BatchSaleLine {
 }
 
 /**
+ * The price per unit that gives a line the total the customer was quoted ("3 m for 145.20 dh"
+ * when the price per metre is not known): total ÷ quantity, rounded half up to the cent. A line is
+ * always priced per unit (`computeBatchSaleLine`), and a price is a whole number of cents, so a
+ * total that does not divide evenly comes back a few cents off once the line is priced: by at most
+ * `round(cm ÷ 200)` cents for a length, and by at most half the count for pieces. A length of
+ * under a metre is never off, and neither is a total that divides evenly.
+ * `quantity` is cm for a meter line, pieces for a piece line.
+ */
+export function unitPriceForLineTotal(input: {
+  unit: SaleUnit;
+  quantity: number;
+  totalCents: number;
+}): number {
+  const { unit, quantity, totalCents } = input;
+  assertInteger(quantity, 'quantity', 1);
+  assertInteger(totalCents, 'totalCents', 0);
+  return unit === 'meter'
+    ? mulDivRoundHalfUp(totalCents, CM_PER_METER, quantity)
+    : mulDivRoundHalfUp(totalCents, 1, quantity);
+}
+
+/**
  * Whether a price is under the product's minimum (SPEC §3), judged exactly: per unit against the
  * minimum per unit; a whole piece (sold in meters) against the minimum for its length. 0 = no
  * minimum. A cashier may never sell below it; the owner may after an explicit confirmation.

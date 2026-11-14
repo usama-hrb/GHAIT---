@@ -1,7 +1,8 @@
 import 'fake-indexeddb/auto';
+import { PURCHASE_ISSUES } from '@fabric/contracts';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ShopDatabase } from './db';
-import { ValidationError } from './errors';
+import { isPeriodLocked, NotAllowedError, ValidationError } from './errors';
 import { DeviceNotRegisteredError } from './purchases';
 import { createRepositories, type Repositories } from './repositories';
 import { DEVICE_CODE } from './session';
@@ -188,5 +189,196 @@ describe('purchases on the device (BUILD_PROMPTS 3.2, ADR 0012)', () => {
     expect(await repos.purchases.lastBatchOf(rosa)).toEqual([
       { costTotalCents: 40_000, lengthCm: 7600 },
     ]);
+  });
+});
+
+describe('correcting what was paid on a purchase (SP9)', () => {
+  let supplier: string;
+
+  beforeEach(async () => {
+    supplier = await repos.suppliers.save({ name: 'مورد التصحيح' });
+  });
+
+  const owed = async () => (await repos.supplierAccounts.account(supplier))?.account.owedCents;
+  const upserts = async () =>
+    (await db.outbox.toArray()).filter((op) => op.entity === 'purchase' && op.kind === 'upsert');
+
+  it('5000 dh bought and paid in full by mistake, 1000 dh really paid: 4000 dh is owed, offline', async () => {
+    const id = await repos.purchases.create(
+      meter({ supplierId: supplier, quantity: 5000, totalCostCents: 500_000 }),
+    );
+    expect(await owed()).toBe(0);
+
+    await repos.purchases.setPayment(id, { paidCents: 100_000, supplierId: supplier });
+
+    expect(await owed()).toBe(400_000);
+    expect(await repos.purchases.get(id)).toMatchObject({
+      paidCents: 100_000,
+      totalCostCents: 500_000,
+      supplierId: supplier,
+    });
+    // One op, a change of the record that was made; the stock it brought in is untouched.
+    const [op] = await upserts();
+    expect(await upserts()).toHaveLength(1);
+    expect(op).toMatchObject({ entityId: id, state: 'pending' });
+    expect(op?.payload).toMatchObject({ id, paidCents: 100_000, totalCostCents: 500_000 });
+    const [batch] = await repos.purchases.batchesOf(id);
+    expect(batch).toMatchObject({ receivedQuantity: 5000, costTotalCents: 500_000 });
+  });
+
+  it('puts the figure back to the total, and does nothing when nothing changed', async () => {
+    const id = await repos.purchases.create(
+      meter({ supplierId: supplier, paidCents: 20_000, totalCostCents: 80_000 }),
+    );
+    expect(await owed()).toBe(60_000);
+    await repos.purchases.setPayment(id, { paidCents: 20_000, supplierId: supplier });
+    expect(await upserts()).toHaveLength(0);
+
+    await repos.purchases.setPayment(id, { paidCents: 80_000, supplierId: supplier });
+    expect(await owed()).toBe(0);
+    expect(await upserts()).toHaveLength(1);
+  });
+
+  it('refuses more than the purchase cost, a debt with no supplier, and another supplier', async () => {
+    const other = await repos.suppliers.save({ name: 'مورد آخر' });
+    const withSupplier = await repos.purchases.create(meter({ supplierId: supplier }));
+    const without = await repos.purchases.create(meter());
+
+    const issuesOf = async (work: Promise<void>) => {
+      const error = await work.then(
+        () => null,
+        (caught: unknown) => caught,
+      );
+      expect(error).toBeInstanceOf(ValidationError);
+      return (error as ValidationError).issues.map((issue) => issue.message);
+    };
+    expect(
+      await issuesOf(
+        repos.purchases.setPayment(withSupplier, { paidCents: 80_001, supplierId: supplier }),
+      ),
+    ).toEqual([PURCHASE_ISSUES.paidAboveTotal]);
+    expect(
+      await issuesOf(repos.purchases.setPayment(without, { paidCents: 10_000, supplierId: null })),
+    ).toEqual([PURCHASE_ISSUES.debtNeedsSupplier]);
+    expect(
+      await issuesOf(
+        repos.purchases.setPayment(withSupplier, { paidCents: 10_000, supplierId: other }),
+      ),
+    ).toEqual([PURCHASE_ISSUES.fieldsFixed]);
+    expect(await upserts()).toHaveLength(0);
+    expect(await repos.purchases.get(withSupplier)).toMatchObject({ paidCents: 80_000 });
+  });
+
+  it('previews what a correction would leave, with the save’s own check, and saves nothing', async () => {
+    const id = await repos.purchases.create(
+      meter({ supplierId: supplier, quantity: 5000, totalCostCents: 500_000 }),
+    );
+    expect(
+      await repos.purchases.previewPayment(crypto.randomUUID(), {
+        paidCents: 0,
+        supplierId: supplier,
+      }),
+    ).toBeNull();
+    expect(
+      await repos.purchases.previewPayment(id, { paidCents: 100_000, supplierId: supplier }),
+    ).toEqual({
+      issues: [],
+      purchaseDueCents: 400_000,
+      owedCents: 400_000,
+      advanceCents: 0,
+    });
+    const refused = await repos.purchases.previewPayment(id, {
+      paidCents: 500_001,
+      supplierId: supplier,
+    });
+    expect(refused?.issues.map((issue) => issue.message)).toEqual([PURCHASE_ISSUES.paidAboveTotal]);
+    expect(await owed()).toBe(0);
+    expect(await upserts()).toHaveLength(0);
+
+    // Another purchase from the same supplier is part of what is owed in all, not of this one.
+    await repos.purchases.create(
+      meter({ supplierId: supplier, paidCents: 0, totalCostCents: 80_000 }),
+    );
+    expect(
+      await repos.purchases.previewPayment(id, { paidCents: 100_000, supplierId: supplier }),
+    ).toMatchObject({
+      purchaseDueCents: 400_000,
+      owedCents: 480_000,
+    });
+  });
+
+  it('shows the advance a correction would make when payments since already cover the debt', async () => {
+    const id = await repos.purchases.create(
+      meter({ supplierId: supplier, paidCents: 0, totalCostCents: 80_000 }),
+    );
+    await repos.supplierAccounts.pay({
+      supplierId: supplier,
+      amountCents: 80_000,
+      date: '2026-10-30',
+    });
+    expect(await owed()).toBe(0);
+    expect(
+      await repos.purchases.previewPayment(id, { paidCents: 80_000, supplierId: supplier }),
+    ).toMatchObject({
+      purchaseDueCents: 0,
+      owedCents: 0,
+      advanceCents: 80_000,
+    });
+  });
+
+  it('a purchase with no supplier takes one with the correction, and then it is owed', async () => {
+    const id = await repos.purchases.create(meter());
+    await repos.purchases.setPayment(id, { paidCents: 30_000, supplierId: supplier });
+    expect(await owed()).toBe(50_000);
+  });
+
+  it('is refused for a purchase in a settled month until it is unlocked', async () => {
+    const id = await repos.purchases.create(meter({ supplierId: supplier }));
+    await db.settlements.put({
+      id: crypto.randomUUID(),
+      createdAt: '2026-11-02T09:00:00.000Z',
+      updatedAt: '2026-11-02T09:00:00.000Z',
+      deviceId: 'server',
+      voidedAt: null,
+      serverSeq: 1,
+      periodStart: '2026-10-01',
+      periodEnd: '2026-10-31',
+      recognizedProfitCents: 0,
+      returnsEffectCents: 0,
+      recoveredBadDebtCents: 0,
+      damageCents: 0,
+      badDebtCents: 0,
+      belowCostCents: 0,
+      expensesCents: 0,
+      cashOverShortCents: 0,
+      carriedDeficitInCents: 0,
+      netProfitCents: 0,
+      ownerShareCents: 0,
+      partnerShareCents: 0,
+      shopShareCents: 0,
+      carryDeficitOutCents: 0,
+      ownerWeight: 1,
+      partnerWeight: 1,
+      shopWeight: 1,
+      partnerWeights: null,
+      lockedAt: '2026-11-02T09:00:00.000Z',
+    });
+    await expect(
+      repos.purchases.setPayment(id, { paidCents: 10_000, supplierId: supplier }),
+    ).rejects.toSatisfy(isPeriodLocked);
+    expect(await owed()).toBe(0);
+  });
+
+  it('is not a cashier’s to make, and a partner’s device changes nothing', async () => {
+    const id = await repos.purchases.create(meter({ supplierId: supplier }));
+    store.setRole('cashier');
+    await expect(
+      repos.purchases.setPayment(id, { paidCents: 10_000, supplierId: supplier }),
+    ).rejects.toBeInstanceOf(NotAllowedError);
+    store.setRole('partner');
+    await expect(
+      repos.purchases.setPayment(id, { paidCents: 10_000, supplierId: supplier }),
+    ).rejects.toThrow(/read/);
+    expect(await repos.purchases.get(id)).toMatchObject({ paidCents: 80_000 });
   });
 });

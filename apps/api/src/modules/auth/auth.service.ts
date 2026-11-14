@@ -13,7 +13,7 @@ import {
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { AppHttpException, requestContext, sqlState } from '../../common/index.js';
 import { APP_CONFIG, type AppConfig } from '../../config/index.js';
-import { TransactionHost } from '../../database/index.js';
+import { currentShop, TransactionHost } from '../../database/index.js';
 import { AuditService } from '../audit/index.js';
 import { actAs, type AuthenticatedUser } from './auth.decorators.js';
 import { PasswordHasher } from './password-hasher.js';
@@ -63,7 +63,12 @@ export function auditView(user: UserRow) {
   };
 }
 
-const signUpClosed = () =>
+/**
+ * The answer of every refusal to sign up: an owner exists, the operator turned it off, or (many
+ * shops, ADR 0029) the setup code is wrong, old or used. One answer for all, so it tells a
+ * stranger nothing about which.
+ */
+export const signUpClosed = () =>
   new AppHttpException('forbidden', 'Sign-up is closed', HttpStatus.FORBIDDEN, [
     { path: [], message: 'Sign-up is closed', code: REGISTRATION_ISSUES.registrationClosed },
   ]);
@@ -459,7 +464,17 @@ export class AuthService {
         tokenType: 'Bearer',
         expiresIn: this.config.auth.accessTtlSeconds,
         user: toAuthUser(user),
+        ...this.shopAnswer(),
       },
     };
+  }
+
+  /**
+   * The shop this request is bound to, as the answers carry it (ADR 0029): the device keeps the
+   * first one it signs in to and stops syncing when another shop answers. Empty on a one-shop server.
+   */
+  shopAnswer(): { shopId?: string } {
+    const shop = this.config.multiShop ? currentShop() : undefined;
+    return shop ? { shopId: shop.id } : {};
   }
 }

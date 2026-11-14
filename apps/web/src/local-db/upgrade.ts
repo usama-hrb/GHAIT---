@@ -160,3 +160,12 @@ export async function upgradeToPeople(tx: Transaction): Promise<void> {
     partnerWeights: null,
   });
 }
+
+/**
+ * Dexie v17: a product can name the suppliers it is bought from (`supplierIds`). The products this
+ * device already holds lack the list, and the server will not send them again (their sequence did
+ * not change), so they get the empty list the server gives them, in place and offline.
+ */
+export async function upgradeToProductSuppliers(tx: Transaction): Promise<void> {
+  await fillMissing(tx.table<Record<string, unknown>, string>('products'), { supplierIds: [] });
+}

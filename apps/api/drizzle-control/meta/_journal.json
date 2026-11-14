@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1794527966130,
+      "tag": "0000_control_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1794527967247,
+      "tag": "0001_control_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794558319622,
+      "tag": "0002_setup_code_revoked",
+      "breakpoints": true
+    }
+  ]
+}

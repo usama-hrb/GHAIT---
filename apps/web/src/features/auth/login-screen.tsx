@@ -4,7 +4,13 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useId, useRef, useState } from 'react';
 import { messages } from '@/i18n';
-import { ApiError, NetworkError, useRegistrationOpen, useSession } from '@/local-db';
+import {
+  ApiError,
+  NetworkError,
+  useRegistrationOpen,
+  useSession,
+  WrongShopError,
+} from '@/local-db';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
 import { Field, FieldError, FieldGroup, FieldLabel } from '@/shared/ui/field';
@@ -22,6 +28,7 @@ function safeNext(next: string | null): string {
 
 function errorText(error: unknown): string {
   if (error instanceof NetworkError) return t.errors.network;
+  if (error instanceof WrongShopError) return t.wrongShop;
   // Said only to someone who knew the password (ADR 0024).
   if (
     error instanceof ApiError &&

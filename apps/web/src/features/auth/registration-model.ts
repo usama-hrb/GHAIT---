@@ -5,6 +5,7 @@ import {
   type SellingUnits,
   emailSchema,
   newPasswordSchema,
+  normalizeSetupCode,
   sellingUnitsSchema,
 } from '@fabric/contracts';
 
@@ -16,6 +17,8 @@ export type MoneyUnitChoice = 'rial' | 'dirham';
 
 /** Everything the owner has typed or picked so far; nothing is sent before the last step. */
 export interface SignupDraft {
+  /** As typed. Used only when the shop asks for a setup code (ADR 0029). */
+  setupCode: string;
   fullName: string;
   email: string;
   password: string;
@@ -34,6 +37,7 @@ export interface SignupDraft {
  */
 export function emptyDraft(): SignupDraft {
   return {
+    setupCode: '',
     fullName: '',
     email: '',
     password: '',
@@ -45,13 +49,21 @@ export function emptyDraft(): SignupDraft {
   };
 }
 
-export type AccountField = 'fullName' | 'email' | 'password' | 'confirmPassword';
+export type AccountField = 'setupCode' | 'fullName' | 'email' | 'password' | 'confirmPassword';
 export type AccountProblem = 'required' | 'invalid' | 'characters' | 'tooShort' | 'mismatch';
 export type AccountProblems = Partial<Record<AccountField, AccountProblem>>;
 
-/** What is wrong with the account step; empty when it may continue. */
-export function accountProblems(draft: SignupDraft): AccountProblems {
+/**
+ * What is wrong with the account step; empty when it may continue. `setupCodeRequired`: the shop
+ * of this address waits for its owner and asks for the code its operator made (ADR 0029); the
+ * code is then judged by shape only, the server decides whether it is the right one.
+ */
+export function accountProblems(draft: SignupDraft, setupCodeRequired = false): AccountProblems {
   const problems: AccountProblems = {};
+  if (setupCodeRequired) {
+    if (draft.setupCode.trim() === '') problems.setupCode = 'required';
+    else if (normalizeSetupCode(draft.setupCode) === null) problems.setupCode = 'invalid';
+  }
   if (draft.fullName.trim().length < 2) problems.fullName = 'required';
 
   if (draft.email.trim() === '') {
@@ -87,10 +99,14 @@ export function unitsProblem(draft: SignupDraft): 'none' | null {
 }
 
 /** Whether a step's own fields are all fine. The review step has none of its own. */
-export function stepIsValid(step: SignupStep, draft: SignupDraft): boolean {
+export function stepIsValid(
+  step: SignupStep,
+  draft: SignupDraft,
+  setupCodeRequired = false,
+): boolean {
   switch (step) {
     case 'account':
-      return Object.keys(accountProblems(draft)).length === 0;
+      return Object.keys(accountProblems(draft, setupCodeRequired)).length === 0;
     case 'shop':
       return shopProblem(draft) === null;
     case 'selling':
@@ -101,8 +117,8 @@ export function stepIsValid(step: SignupStep, draft: SignupDraft): boolean {
 }
 
 /** The first step that cannot be sent as it is, or null: the draft is ready to create the shop. */
-export function firstInvalidStep(draft: SignupDraft): SignupStep | null {
-  return SIGNUP_STEPS.find((step) => !stepIsValid(step, draft)) ?? null;
+export function firstInvalidStep(draft: SignupDraft, setupCodeRequired = false): SignupStep | null {
+  return SIGNUP_STEPS.find((step) => !stepIsValid(step, draft, setupCodeRequired)) ?? null;
 }
 
 export type PasswordStrength = 'weak' | 'fair' | 'good' | 'strong';
@@ -125,9 +141,16 @@ export function passwordStrength(password: string): PasswordStrength {
   return score <= 1 ? 'fair' : score === 2 ? 'good' : 'strong';
 }
 
-/** The request body: the draft as the API takes it (it checks every rule again). */
-export function registrationRequestOf(draft: SignupDraft): OwnerRegistrationInput {
+/**
+ * The request body: the draft as the API takes it (it checks every rule again). The setup code
+ * goes only when the shop asked for one.
+ */
+export function registrationRequestOf(
+  draft: SignupDraft,
+  setupCodeRequired = false,
+): OwnerRegistrationInput {
   return {
+    ...(setupCodeRequired ? { setupCode: draft.setupCode.trim() } : {}),
     fullName: draft.fullName.trim(),
     email: draft.email.trim().toLowerCase(),
     password: draft.password,

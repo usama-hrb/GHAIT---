@@ -31,6 +31,14 @@ export function SyncStatus() {
           </Link>
         </Badge>
       )}
+      {sync.state === 'wrong_shop' && (
+        <Badge asChild variant="warning">
+          <Link href="/settings/sync">
+            <TriangleAlertIcon aria-hidden />
+            <span className="max-sm:sr-only">{messages.sync.wrongShop}</span>
+          </Link>
+        </Badge>
+      )}
       {session.needsSignIn && (
         <Button asChild size="sm" variant="outline">
           <Link href="/login">{messages.sync.signInAgain}</Link>

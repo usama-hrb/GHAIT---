@@ -30,6 +30,7 @@ function product(overrides: Partial<Product> = {}): Product {
     pricePerPieceCents: null,
     minPricePerPieceCents: null,
     lowStockThreshold: null,
+    supplierIds: [],
     active: true,
     ...overrides,
   };

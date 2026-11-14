@@ -9,6 +9,12 @@ that says cashier and partner accounts are created only with `make cashier-user`
 It adds the rows AM1–AM12 and PS1–PS4 to `accounting-assumptions.md`. No accounting rule and no stored
 amount changes.
 
+Superseded in part by [ADR 0029](0029-multi-shop-database-isolation.md) (2026-11-13): the sentences
+that say the app is a single-shop system (here and in "One shop" below). One server can now serve many
+shops, each with its own database. Accounts stay server-owned and online-only, and a partner account
+still belongs to one partner in one shop's database. A person who works in two shops has two accounts.
+The text below stays as it was written.
+
 ## Context
 
 Until now the owner could not see who could sign in. Cashier accounts were made on the server with
@@ -27,7 +33,8 @@ The owner asked for an Accounts section in the owner's screens that:
 5. never lets a partner or cashier reach what is the owner's, and never lets a client choose a role.
 
 The app is a single-shop system (one owner, one database per shop). This ADR does not make it
-multi-tenant, but it keeps the structure that would let it become one.
+multi-tenant, but it keeps the structure that would let it become one. (ADR 0029 later did it, with a
+database for each shop.)
 
 ## Decision
 
@@ -209,7 +216,8 @@ syncs when an account signs in on that device again.
 There is one shop per database, so "the same shop" is the database. The checks that a partner account
 belongs to a live, non-owner, non-exited partner record in that database are the checks that apply.
 If the system ever becomes multi-tenant, the shop id joins the partial unique index and the lookups;
-nothing in the current structure assumes there is only one.
+nothing in the current structure assumes there is only one. (Superseded by ADR 0029: with a database
+for each shop, the database is the shop, so no index and no lookup needs a shop id.)
 
 ## Consequences
 

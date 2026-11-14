@@ -11,7 +11,8 @@
     "lint": "eslint .",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run --passWithNoTests",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:adopted": "E2E_SHOPS=adopted playwright test"
   },
   "dependencies": {
     "@fabric/contracts": "workspace:*",

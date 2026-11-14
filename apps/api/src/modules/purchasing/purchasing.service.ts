@@ -50,6 +50,8 @@ export class PurchasingService implements OnModuleInit {
       find: (id) => this.purchases.find(id),
       pull: (since, limit) => this.purchases.pull(since, limit),
       append: (aggregate, context) => this.receive(aggregate, context),
+      // The correction of what was paid (`amend`); the repository refuses any other change.
+      write: (record) => this.purchases.amend(record),
     };
     this.registry.register(handler);
     this.registry.register(this.supplierPayments);

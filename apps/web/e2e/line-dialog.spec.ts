@@ -70,6 +70,8 @@ interface Fit {
   emptyBelowFields: number;
   bodyScrolls: boolean;
   footerInView: boolean;
+  /** The footer band ends where the dialog ends: no strip of dialog colour under it. */
+  footerFlush: boolean;
 }
 
 async function fitOf(page: Page): Promise<Fit> {
@@ -94,6 +96,7 @@ async function fitOf(page: Page): Promise<Fit> {
         footerBox !== undefined &&
         footerBox.top >= -1 &&
         footerBox.bottom <= window.innerHeight + 1,
+      footerFlush: footerBox !== undefined && Math.abs(footerBox.bottom - box.bottom) <= 1,
     };
   });
 }
@@ -153,6 +156,7 @@ for (const setup of SETUPS) {
     const fit = await fitOf(page);
     expect(fit.inside, JSON.stringify(fit)).toBe(true);
     expect(fit.footerInView, JSON.stringify(fit)).toBe(true);
+    expect(fit.footerFlush, 'a strip under the footer').toBe(true);
     expect(fit.emptyBelowFields, 'a gap under the fields').toBeLessThanOrEqual(2);
     if (!setup.phone) expect(fit.bodyScrolls, 'the body scrolls on a roomy screen').toBe(false);
     const measured = await page.evaluate(measure, setup.name !== 'desktop');
@@ -317,3 +321,90 @@ test('quick lengths are offered only when the stock covers them', async ({ page 
   await expect(dialog.getByRole('alert')).toBeVisible();
   await expect(dialog.getByRole('button', { name: 'أضف إلى الفاتورة' })).toBeDisabled();
 });
+
+// A customer asks for 3 m for a total and the price of one metre is not known: the owner types the
+// total, the dialog works the price per metre out (no calculator), on the keypad and on a phone.
+for (const setup of SETUPS.filter((one) => ['tablet-landscape', 'phone-390'].includes(one.name))) {
+  test(`a line is priced by its total on ${setup.name} (${setup.language})`, async ({
+    browser,
+  }) => {
+    test.setTimeout(120_000);
+    const m = setup.language === 'ar' ? ar : en;
+    const context = await browser.newContext({
+      viewport: { width: setup.width, height: setup.height },
+      isMobile: true,
+      hasTouch: true,
+      colorScheme: setup.scheme,
+    });
+    const page = await context.newPage();
+    page.setDefaultTimeout(15_000);
+    await login(page, setup.language);
+    await page.goto('/pos');
+    await settle(page);
+    await page
+      .getByRole('button', { name: new RegExp(LONG) })
+      .first()
+      .click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    await page.waitForTimeout(400);
+
+    const length = dialog.getByLabel(m.pos.fields.length, { exact: true });
+    const price = dialog.getByLabel(m.pos.fields.pricePerMeter, { exact: true });
+    const total = dialog.getByLabel(m.pos.fields.totalPrice, { exact: true });
+    const lineTotal = dialog.getByRole('status').filter({ hasText: m.pos.line.lineTotal });
+    const worksOut = dialog.getByRole('status').filter({ hasText: m.pos.line.worksOutTo });
+    const add = dialog.getByRole('button', { name: m.pos.addLine });
+    const byTotal = dialog.getByRole('checkbox', { name: m.pos.fields.byTotal('meter') });
+
+    // Off by default: the price per metre is what is asked.
+    await expect(byTotal).not.toBeChecked();
+    await expect(total).toHaveCount(0);
+    await length.fill('3');
+    await byTotal.click();
+    await expect(byTotal).toBeChecked();
+    await expect(price).toHaveCount(0);
+    await expect(total).toBeFocused();
+    await expect(dialog.getByRole('group', { name: m.pos.line.quickPrice })).toHaveCount(0);
+    await expect(add).toBeDisabled();
+
+    // 3 m for 1,110 rial: 370 a metre, the line comes to exactly what was typed.
+    if (setup.phone) {
+      await total.fill('1110');
+    } else {
+      await tap(dialog, m, '1110');
+    }
+    await expect(total).toHaveValue('1110');
+    await expect(worksOut).toContainText('370');
+    await expect(lineTotal).toContainText('1,110');
+    await expect(dialog.getByText(m.pos.line.totalComesTo)).toHaveCount(0);
+    await expect(add).toBeEnabled();
+
+    // A total that does not divide into whole cents: the line says what it really comes to.
+    await total.fill('1111');
+    await expect(worksOut).toContainText('370.4');
+    await expect(dialog.getByText(m.pos.line.totalComesTo)).toBeVisible();
+    await expect(lineTotal).toContainText('1,111.2');
+
+    // The rules of the price still hold: 350 a metre is under the minimum (360).
+    await total.fill('1050');
+    await expect(worksOut).toContainText('350');
+    await expect(dialog.getByRole('alert').filter({ hasText: m.pos.minimum.title })).toBeVisible();
+    await expect(add).toBeDisabled();
+
+    // Switching it off keeps what was worked out as the price per metre.
+    await byTotal.click();
+    await expect(byTotal).not.toBeChecked();
+    await expect(total).toHaveCount(0);
+    await expect(price).toHaveValue('350');
+    await expect(dialog.getByRole('group', { name: m.pos.line.quickPrice })).toBeVisible();
+
+    // Back on, a fresh total is added to the bill.
+    await byTotal.click();
+    await total.fill('1110');
+    await expect(add).toBeEnabled();
+    await add.click();
+    await expect(dialog).toBeHidden();
+    await context.close();
+  });
+}

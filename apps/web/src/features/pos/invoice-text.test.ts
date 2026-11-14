@@ -54,6 +54,7 @@ function view(
           pricePerPieceCents: null,
           minPricePerPieceCents: null,
           lowStockThreshold: null,
+          supplierIds: [],
           active: true,
         },
         figures: undefined,

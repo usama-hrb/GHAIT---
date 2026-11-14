@@ -287,6 +287,12 @@ describe('settlement from the records (BUILD_PROMPTS 4.3)', () => {
     const [move] = shop.records.stockMoves;
     if (!move) throw new Error('a move');
     expect(periodDatesOf('product_stock_move', move)).toEqual(['2026-09-01']);
+    // A purchase is dated by its own date, whether the op carries the purchase with its stock or
+    // is the correction of what was paid (its record).
+    const [purchase] = shop.records.purchases;
+    if (!purchase) throw new Error('a purchase');
+    expect(periodDatesOf('purchase', purchase as never)).toEqual(['2026-09-01']);
+    expect(periodDatesOf('purchase', { purchase } as never)).toEqual(['2026-09-01']);
     expect(
       periodDatesOf('write_off', {
         ...base('2026-10-25'),

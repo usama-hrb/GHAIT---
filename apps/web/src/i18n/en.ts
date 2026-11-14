@@ -79,6 +79,8 @@ export const en: Messages = {
     light: 'Light',
     dark: 'Dark',
     system: 'Follow the device',
+    switchToLight: 'Switch to light theme',
+    switchToDark: 'Switch to dark theme',
   },
   states: {
     loading: 'Loading…',
@@ -180,6 +182,9 @@ export const en: Messages = {
     signInAgain: 'Sign in to sync',
     signInAgainDescription:
       'The session ended. Your work is saved on this device and will be sent after you sign in.',
+    wrongShop: 'Different shop',
+    wrongShopDescription:
+      'This address now answers for a different shop than the one this device holds. Syncing is stopped so the two shops stay apart. Your work on this device is safe.',
     issuesLink: 'Sync issues',
   },
   syncIssues: {
@@ -227,6 +232,7 @@ export const en: Messages = {
         syncing: 'Syncing…',
         offline: 'Offline',
         signed_out: 'Sign-in needed',
+        wrong_shop: 'Different shop',
         error: 'Last sync failed',
       },
       pending: 'Waiting to send',
@@ -2439,6 +2445,8 @@ export const en: Messages = {
       },
     },
     deactivated: 'This account has been switched off. Ask the shop owner.',
+    wrongShop:
+      'This address now belongs to a different shop than the one this device holds. Nothing was signed in and nothing was sent. Ask the person who runs your server.',
   },
   sellingUnits: {
     groupLabel: 'Selling units',
@@ -2483,6 +2491,14 @@ export const en: Messages = {
     account: {
       title: 'Your account',
       description: 'You will be the owner of this shop. This is what you sign in with.',
+      setupCode: {
+        label: 'Setup code',
+        placeholder: 'XXXX-XXXX-XXXX',
+        hint: 'The 12-character code you were given for this shop. Dashes, spaces and capital letters do not matter.',
+        required: 'Enter the setup code',
+        invalid: 'A setup code has 12 letters and digits',
+        refused: 'This code did not work. Check it, or ask for a new one',
+      },
       fullName: {
         label: 'Full name',
         placeholder: 'e.g. Amina Alaoui',
@@ -2561,7 +2577,7 @@ export const en: Messages = {
     nav: { next: 'Continue', back: 'Back' },
     errors: {
       registration_closed: 'Sign-up is closed: this shop already has an owner',
-      too_many_requests: 'Too many attempts. Wait a minute and try again',
+      too_many_requests: 'Too many attempts. Wait a while and try again',
       validation_failed: 'The server did not accept some details. Check the steps and try again',
       network: 'No connection to the server. Creating the shop needs the internet',
       unknown: 'Could not create the shop. Nothing was saved. Try again',
@@ -2602,6 +2618,31 @@ export const en: Messages = {
     detailTitle: 'Purchase details',
     paid: 'Paid',
     owed: 'Owed to the supplier',
+    payment: {
+      edit: 'Edit payment',
+      title: 'Payment on this purchase',
+      description:
+        'Fix what you paid the supplier when you made this purchase. The stock, the cost and the date stay as they are. Whatever is not paid becomes a debt to the supplier.',
+      total: 'Purchase total',
+      howPaid: 'How it was paid',
+      paidFull: 'Paid in full',
+      paidPart: 'Paid part, the rest is owed',
+      paidAmount: 'Amount paid to the supplier',
+      supplier: 'Supplier the rest is owed to',
+      supplierHint: 'A debt needs a supplier. Once chosen, a purchase keeps its supplier.',
+      chooseSupplier: 'Choose a supplier',
+      dueOnPurchase: 'Still owed on this purchase',
+      owedInAll: 'Owed to the supplier in all',
+      advanceNote:
+        'Payments made since cover more than is owed: the supplier would hold an advance for the shop.',
+      saved: 'Payment corrected',
+      issues: {
+        purchase_paid_above_total: 'Paid more than the purchase total.',
+        purchase_debt_needs_supplier: 'A purchase left unpaid needs a supplier to owe it to.',
+        purchase_fields_fixed: 'Only what was paid can change on a purchase.',
+        period_locked: 'The purchase is in a settled period: open the period first.',
+      },
+    },
   },
   inventory: {
     states: { active: 'Active', remnant: 'Remnant', empty: 'Empty' },
@@ -2706,11 +2747,25 @@ export const en: Messages = {
       batchActions: 'Batch actions',
       markRemnant: 'Mark as remnant',
       unmarkRemnant: 'Not a remnant',
+      editPayment: 'Edit payment of the purchase',
     },
     detail: {
       back: 'Back to inventory',
       notFound: 'This product is not on this device',
       edit: 'Edit product',
+      editStock: 'Edit stock',
+      suppliers: {
+        title: 'Suppliers',
+        hint: 'Who you buy this product from. Adding stock starts with the supplier when there is only one.',
+        none: 'No supplier added yet.',
+        add: 'Add supplier',
+        newSupplier: 'New supplier',
+        allAdded: 'Every supplier is already added.',
+        remove: (name: string) => `Remove ${name} from this product`,
+        added: (name: string) => `${name} added`,
+        removed: (name: string) => `${name} removed`,
+        failed: 'The suppliers could not be saved.',
+      },
       code: 'Code',
       description: 'Description',
       soldIn: 'Sold by',
@@ -2760,6 +2815,7 @@ export const en: Messages = {
       received: 'Received',
       unitCost: 'Cost per unit',
       purchaseCost: 'Purchase cost',
+      owedBadge: 'Owed to the supplier',
       remainingValue: 'Remaining value',
       supplier: 'Supplier',
       details: 'Product details',
@@ -2851,8 +2907,11 @@ export const en: Messages = {
         'Without it, the weight is recorded as awaiting measurement: no meters are made up. Measure it later to make it sellable.',
       supplier: 'Supplier (optional)',
       noSupplier: 'No supplier',
-      paid: 'Paid now (optional)',
-      paidHint: 'Leave empty if all of it is paid. The rest becomes a debt to the supplier.',
+      payment: 'Payment to the supplier',
+      paidFull: 'Paid in full',
+      paidPart: 'Paid part, the rest is owed',
+      paidAmount: 'Amount paid to the supplier',
+      owedRest: 'Stays owed to the supplier',
       preview: {
         title: 'This purchase makes',
         meters: 'of cloth',
@@ -2924,6 +2983,11 @@ export const en: Messages = {
       batchAuto: 'Oldest first (automatic)',
       wholePiece: 'Sell the whole piece at its price',
       piecePrice: 'Piece price',
+      totalPrice: 'Total price',
+      byTotal: (unit: 'meter' | 'piece') =>
+        unit === 'meter'
+          ? 'Enter the total price instead of the price per meter'
+          : 'Enter the total price instead of the price per piece',
       discount: 'Invoice discount',
       customer: 'Customer',
       customerPlaceholder: 'Walk-in customer',
@@ -2940,6 +3004,9 @@ export const en: Messages = {
       referencePrice: 'Normal',
       lowestPrice: 'Minimum',
       lineTotal: 'Line total',
+      worksOutTo: 'Works out to',
+      totalComesTo: 'After rounding, the total is',
+      enterQuantityFirst: 'Enter the quantity first',
       update: 'Update the line',
     },
     cart: 'Invoice',

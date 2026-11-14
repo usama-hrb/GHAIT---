@@ -91,6 +91,18 @@ class DatabaseV15 extends DatabaseV13 {
   }
 }
 
+/** The device database at version 16 (employees), just before products named their suppliers. */
+class DatabaseV16 extends DatabaseV15 {
+  constructor(name: string) {
+    super(name);
+    this.version(16).stores({
+      employees: 'id, name',
+      employeeSalaries: 'id, employeeId, effectiveFrom',
+      expenses: 'id, date, paidDate, recurringExpenseId, createdAt, employeeId',
+    });
+  }
+}
+
 const base = (n: number) => ({
   createdAt: `2026-10-0${String(n)}T09:00:00.000Z`,
   updatedAt: `2026-10-0${String(n)}T09:00:00.000Z`,
@@ -566,7 +578,7 @@ describe('the device upgrade to people and salaries (ADR 0022, Dexie v16)', () =
     const again = new ShopDatabase(name);
     await again.open();
     expect((await again.partners.get(seeded.partner.id))?.phone).toBe('0600000000');
-    expect(again.verno).toBe(16);
+    expect(again.verno).toBe(17);
     again.close();
   });
 
@@ -579,5 +591,59 @@ describe('the device upgrade to people and salaries (ADR 0022, Dexie v16)', () =
     expect(await db.partners.count()).toBe(0);
     expect(await db.employees.count()).toBe(0);
     db.close();
+  });
+});
+
+describe('the device upgrade to products with suppliers (Dexie v17)', () => {
+  const oldProduct = (serverSeq: number | null) => ({
+    ...base(1),
+    id: id(),
+    name: 'Rosa',
+    sku: null,
+    description: null,
+    tags: [],
+    purchaseUnits: ['meter'],
+    sellingUnits: ['meter'],
+    kgToMeterConversion: null,
+    pricePerMeterCents: 2000,
+    minPricePerMeterCents: 1800,
+    pricePerPieceCents: null,
+    minPricePerPieceCents: null,
+    lowStockThreshold: null,
+    active: true,
+    serverSeq,
+  });
+
+  it('gives the products already here an empty list of suppliers, and keeps the rest', async () => {
+    const old = new DatabaseV16(name);
+    const [synced, local] = [oldProduct(7), oldProduct(null)];
+    await old.table('products').bulkAdd([synced, local]);
+    old.close();
+    const db = new ShopDatabase(name);
+    await db.open();
+    expect(await db.products.get(synced.id)).toEqual({ ...synced, supplierIds: [] });
+    expect(await db.products.get(local.id)).toEqual({ ...local, supplierIds: [] });
+    db.close();
+  });
+
+  it('leaves a list that is already there, and a device with no products, alone', async () => {
+    const first = new DatabaseV16(name);
+    const kept = { ...oldProduct(3), supplierIds: [id()] };
+    await first.table('products').add(kept);
+    first.close();
+    const db = new ShopDatabase(name);
+    await db.open();
+    expect(await db.products.get(kept.id)).toEqual(kept);
+    db.close();
+
+    const empty = `${name}-empty`;
+    const none = new DatabaseV16(empty);
+    await none.open();
+    none.close();
+    const upgraded = new ShopDatabase(empty);
+    await upgraded.open();
+    expect(await upgraded.products.count()).toBe(0);
+    upgraded.close();
+    await Dexie.delete(empty);
   });
 });

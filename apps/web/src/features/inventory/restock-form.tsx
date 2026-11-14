@@ -18,6 +18,7 @@ import {
   COST_FIELD,
   emptyStockDraft,
   isCostMissing,
+  isPaidMissing,
   previewOfDraft,
   StockFields,
   type StockDraft,
@@ -72,6 +73,21 @@ export function useRestockForm(product: Local<Product>, onSaved?: () => void) {
   const [saving, setSaving] = useState(false);
   // A second Enter or tap before the first save has come back must not buy the stock twice.
   const submittingRef = useRef(false);
+
+  // A product bought from one supplier starts every purchase with that supplier. The pick moves
+  // with it only while the draft still sits on the old one: a supplier the user chose, or "none",
+  // stays.
+  const suppliers = useLiveQuery(() => repositories.suppliers.list(), [repositories]);
+  const usual = suppliers?.filter((supplier) => product.supplierIds.includes(supplier.id));
+  const usualId = usual?.length === 1 ? (usual[0]?.id ?? null) : null;
+  const [startedWith, setStartedWith] = useState<string | null>(null);
+  if (usualId !== startedWith) {
+    setStartedWith(usualId);
+    setDraft((current) =>
+      current.supplierId === startedWith ? { ...current, supplierId: usualId } : current,
+    );
+  }
+
   const stock = stockPurchaseOf(draft);
   const totalCents = totalCostOf(draft);
 
@@ -83,12 +99,10 @@ export function useRestockForm(product: Local<Product>, onSaved?: () => void) {
   const meters = useMemo(() => previewOfDraft(draft)?.available.meter, [draft]);
   const renewalHigher =
     previous != null &&
-    stock !== null &&
+    totalCents !== null &&
     meters?.unit === 'meter' &&
     meters.centimeters > 0 &&
-    isRenewalCostHigher(previous, [
-      { costTotalCents: stock.totalCostCents, lengthCm: meters.centimeters },
-    ]);
+    isRenewalCostHigher(previous, [{ costTotalCents: totalCents, lengthCm: meters.centimeters }]);
 
   const submit = async () => {
     if (submittingRef.current) return;
@@ -96,6 +110,7 @@ export function useRestockForm(product: Local<Product>, onSaved?: () => void) {
       setErrors({
         ...(draft.quantity === null ? { quantity: messages.forms.required } : {}),
         ...(isCostMissing(draft) ? { [COST_FIELD]: messages.forms.required } : {}),
+        ...(isPaidMissing(draft) ? { paidCents: messages.forms.required } : {}),
         ...(draft.conversionKnown && (draft.weightG === null || draft.lengthCm === null)
           ? { conversion: t.form.issues.conversionIncomplete }
           : {}),

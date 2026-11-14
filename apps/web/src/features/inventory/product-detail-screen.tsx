@@ -25,12 +25,14 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from '@/shared/ui/drawer';
+import { PurchasePaymentDialog } from '@/features/purchasing';
 import { type BatchAction, BatchList } from './batch-list';
 import { MeasureDialog } from './measure-dialog';
 import { MovementHistory } from './movement-history';
 import { ProductFacts } from './product-facts';
 import { ProductFormDialog } from './product-form-dialog';
 import { ProductHeader } from './product-header';
+import { ProductSuppliers } from './product-suppliers';
 import { QuickAddStockPanel } from './quick-add-stock-panel';
 import { RemoveProductDialog } from './remove-product-dialog';
 import { useRestockForm } from './restock-form';
@@ -78,7 +80,7 @@ function ProductWorkspace({
   detail: ProductDetailView;
   photo: string | undefined;
 }) {
-  const { stock, record, movements, supplierOfPurchase } = detail;
+  const { stock, record, movements, supplierOfPurchase, dueOfPurchase, suppliers } = detail;
   const repositories = useRepositories();
   const navigation = useAppNavigation();
   const seesCosts = useCanSeeCosts();
@@ -87,11 +89,13 @@ function ProductWorkspace({
   const canBuy = user !== null && mayPush(user.role, 'purchase', 'append');
   const canAct = user !== null && mayPush(user.role, 'product_stock_move', 'append');
   const canRemove = user !== null && mayPush(user.role, 'product', 'void');
+  const canEditPayment = user !== null && mayPush(user.role, 'purchase', 'upsert');
   const wide = useMediaQuery(WIDE);
   const [editing, setEditing] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [acting, setActing] = useState<{ action: BatchAction; batchId: string } | null>(null);
+  const [payingPurchase, setPayingPurchase] = useState<string | null>(null);
   // The purchase form lives here: what is typed survives the sheet closing and the window resizing.
   const form = useRestockForm(record, () => {
     setSheetOpen(false);
@@ -106,9 +110,19 @@ function ProductWorkspace({
             stock={stock}
             photo={photo}
             canEdit={canEdit}
+            canEditStock={canAct && stock.batches.length > 0}
             canRemove={canRemove}
             onEdit={() => {
               setEditing(true);
+            }}
+            onEditStock={() => {
+              // The batch a sale takes from now: the first that still holds anything.
+              const current =
+                stock.batches.find(
+                  (batch) =>
+                    batch.remainingCm > 0 || batch.remainingPieces > 0 || batch.awaitingG > 0,
+                ) ?? stock.batches[0];
+              if (current) setActing({ action: 'count', batchId: current.batchId });
             }}
             onRemove={() => {
               setRemoving(true);
@@ -139,6 +153,7 @@ function ProductWorkspace({
           <BatchList
             stock={stock}
             supplierOfPurchase={supplierOfPurchase}
+            dueOfPurchase={dueOfPurchase}
             seesCosts={seesCosts}
             canAct={canAct}
             onAction={(action, batchId) => {
@@ -147,7 +162,11 @@ function ProductWorkspace({
             onRemnant={(batchId, remnant) => {
               void repositories.stock.setRemnant(batchId, remnant);
             }}
+            onEditPayment={canEditPayment ? setPayingPurchase : null}
           />
+          {seesCosts && (
+            <ProductSuppliers productId={record.id} suppliers={suppliers} canEdit={canEdit} />
+          )}
           <MovementHistory
             movements={movements}
             supplierOfPurchase={supplierOfPurchase}
@@ -221,6 +240,15 @@ function ProductWorkspace({
           initialBatchId={acting.batchId}
           onClose={() => {
             setActing(null);
+          }}
+        />
+      )}
+      {payingPurchase !== null && (
+        <PurchasePaymentDialog
+          purchaseId={payingPurchase}
+          open
+          onOpenChange={(open) => {
+            if (!open) setPayingPurchase(null);
           }}
         />
       )}

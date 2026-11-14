@@ -3,6 +3,7 @@ import {
   coreBatchOf,
   coreMovesOf,
   nextFabricEstimate,
+  supplierAccountOf,
   type NewProductPurchaseInput,
   PRODUCT_REMOVAL_ISSUES,
   type Product,
@@ -152,13 +153,27 @@ export interface MovementReference {
   id: string;
 }
 
+/** A supplier the product is bought from, as the product's page lists it. */
+export interface ProductSupplierView {
+  id: string;
+  name: string;
+  phone: string | null;
+}
+
 export interface ProductDetailView {
   stock: ProductStockView;
   /** The Product record. */
   record: Local<Product>;
   movements: ProductMovementView[];
+  /** The suppliers named on the product, in the order they were added (none on a till's device). */
+  suppliers: ProductSupplierView[];
   /** The supplier's name of each purchase that has one, by purchase id (none on a till's device). */
   supplierOfPurchase: Record<string, string>;
+  /**
+   * What is still owed on each purchase that has something due, by purchase id: the supplier
+   * account's figure, payments made since counted (none on a till's device).
+   */
+  dueOfPurchase: Record<string, number>;
 }
 
 /** A batch with its movements, as the product ledger reads them. */
@@ -509,6 +524,27 @@ export interface ProductRemovalView {
   batches: number;
 }
 
+/** A product record as the input that saves it again (every field a save carries), `patch` aside. */
+function inputOf(product: Product, patch: Partial<ProductInput> = {}): ProductInput {
+  return {
+    name: product.name,
+    sku: product.sku,
+    description: product.description,
+    tags: product.tags,
+    purchaseUnits: product.purchaseUnits,
+    sellingUnits: product.sellingUnits,
+    kgToMeterConversion: product.kgToMeterConversion,
+    pricePerMeterCents: product.pricePerMeterCents,
+    minPricePerMeterCents: product.minPricePerMeterCents,
+    pricePerPieceCents: product.pricePerPieceCents,
+    minPricePerPieceCents: product.minPricePerPieceCents,
+    lowStockThreshold: product.lowStockThreshold,
+    supplierIds: product.supplierIds,
+    active: product.active,
+    ...patch,
+  };
+}
+
 export class ProductInventoryRepository {
   constructor(
     private readonly store: LocalStore,
@@ -588,23 +624,8 @@ export class ProductInventoryRepository {
       async () => {
         const product = await db.products.get(productId);
         if (product && product.voidedAt === null && !product.purchaseUnits.includes(stock.unit)) {
-          const fields: ProductInput = {
-            name: product.name,
-            sku: product.sku,
-            description: product.description,
-            tags: product.tags,
-            sellingUnits: product.sellingUnits,
-            kgToMeterConversion: product.kgToMeterConversion,
-            pricePerMeterCents: product.pricePerMeterCents,
-            minPricePerMeterCents: product.minPricePerMeterCents,
-            pricePerPieceCents: product.pricePerPieceCents,
-            minPricePerPieceCents: product.minPricePerPieceCents,
-            lowStockThreshold: product.lowStockThreshold,
-            active: product.active,
-            purchaseUnits: product.purchaseUnits,
-          };
           await this.products.save(
-            { ...fields, purchaseUnits: [...product.purchaseUnits, stock.unit] },
+            inputOf(product, { purchaseUnits: [...product.purchaseUnits, stock.unit] }),
             productId,
           );
         }
@@ -628,6 +649,17 @@ export class ProductInventoryRepository {
     });
     await this.followMeasurement(batchId, lengthCm);
     return id;
+  }
+
+  /**
+   * Names the suppliers a product is bought from (the whole list, in order). It is the product's
+   * own field, saved like any edit of the product: no purchase, cost or balance is touched.
+   */
+  async setSuppliers(productId: string, supplierIds: readonly string[]): Promise<void> {
+    this.store.assertWritable();
+    const product = await this.store.db.products.get(productId);
+    if (!product || product.voidedAt !== null) throw new Error(`no product ${productId}`);
+    await this.products.save(inputOf(product, { supplierIds: [...supplierIds] }), productId);
   }
 
   /**
@@ -666,21 +698,9 @@ export class ProductInventoryRepository {
     });
     if (next === current && usual?.source === 'measured') return;
     await this.products.save(
-      {
-        name: product.name,
-        sku: product.sku,
-        description: product.description,
-        tags: product.tags,
-        purchaseUnits: product.purchaseUnits,
-        sellingUnits: product.sellingUnits,
+      inputOf(product, {
         kgToMeterConversion: { weightG: 1000, lengthCm: next, source: 'measured' },
-        pricePerMeterCents: product.pricePerMeterCents,
-        minPricePerMeterCents: product.minPricePerMeterCents,
-        pricePerPieceCents: product.pricePerPieceCents,
-        minPricePerPieceCents: product.minPricePerPieceCents,
-        lowStockThreshold: product.lowStockThreshold,
-        active: product.active,
-      },
+      }),
       product.id,
     );
   }
@@ -778,28 +798,50 @@ export class ProductInventoryRepository {
 
   /** One product with its batches and every movement; null when it is not on this device. */
   async detail(id: string): Promise<ProductDetailView | null> {
-    const { entries, sourcesOf, recordOf } = await this.read();
+    const { db } = this.store;
+    // Every table the view depends on is read in this first step. A live query follows only the
+    // reads it makes before its first await on something that is not a Dexie read (the browser
+    // loses the trail after it), so a purchase corrected while this page is open would not refresh it.
+    const [{ entries, sourcesOf, recordOf }, allPurchases, payments, allSuppliers] =
+      await Promise.all([
+        this.read(),
+        db.purchases.toArray(),
+        db.supplierPayments.toArray(),
+        db.suppliers.toArray(),
+      ]);
     const entry = entries.find(({ identity }) => identity.id === id);
     const record = recordOf.get(id);
     if (!entry || !record) return null;
     const sources = sourcesOf(id);
-    const { db } = this.store;
-    const [lines, purchases] = await Promise.all([
-      db.saleLines.bulkGet(saleLineIdsOfMovements(sources)),
-      db.purchases.bulkGet([...new Set(sources.map((source) => source.purchaseId))]),
-    ]);
-    const supplierIds = new Set(purchases.flatMap((purchase) => purchase?.supplierId ?? []));
-    const suppliers = await db.suppliers.bulkGet([...supplierIds]);
-    const nameOf = new Map(
-      suppliers.flatMap((supplier): [string, string][] =>
-        supplier ? [[supplier.id, supplier.name]] : [],
-      ),
+    const lines = await db.saleLines.bulkGet(saleLineIdsOfMovements(sources));
+    const purchaseOf = new Map(allPurchases.map((purchase) => [purchase.id, purchase]));
+    const supplierOf = new Map(allSuppliers.map((supplier) => [supplier.id, supplier]));
+    const purchases = [...new Set(sources.map((source) => source.purchaseId))].map((purchaseId) =>
+      purchaseOf.get(purchaseId),
     );
+    const supplierIds = new Set(purchases.flatMap((purchase) => purchase?.supplierId ?? []));
     const supplierOfPurchase: Record<string, string> = {};
     for (const purchase of purchases) {
-      const name = purchase?.supplierId ? nameOf.get(purchase.supplierId) : undefined;
+      const name = purchase?.supplierId ? supplierOf.get(purchase.supplierId)?.name : undefined;
       if (purchase && name !== undefined) supplierOfPurchase[purchase.id] = name;
     }
+    // What is still due is the supplier account's (core): the account of each supplier these
+    // purchases are owed to, then only the purchases this product's batches came from.
+    const dueOfPurchase: Record<string, number> = {};
+    const wanted = new Set(sources.map((source) => source.purchaseId));
+    for (const supplierId of supplierIds) {
+      const account = supplierAccountOf(supplierId, { purchases: allPurchases, payments });
+      for (const due of account.purchases) {
+        if (due.dueCents > 0 && wanted.has(due.purchaseId))
+          dueOfPurchase[due.purchaseId] = due.dueCents;
+      }
+    }
+    const suppliersOfProduct = record.supplierIds.flatMap((supplierId): ProductSupplierView[] => {
+      const supplier = supplierOf.get(supplierId);
+      return supplier && supplier.voidedAt === null
+        ? [{ id: supplier.id, name: supplier.name, phone: supplier.phone }]
+        : [];
+    });
     return {
       stock: summarizeProductStock(entry.identity, sources),
       record,
@@ -810,6 +852,8 @@ export class ProductInventoryRepository {
         ),
       ),
       supplierOfPurchase,
+      dueOfPurchase,
+      suppliers: suppliersOfProduct,
     };
   }
 

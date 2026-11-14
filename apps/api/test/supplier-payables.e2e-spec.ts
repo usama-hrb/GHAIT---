@@ -203,4 +203,103 @@ describe('supplier payables (BUILD_PROMPTS 5.3, SP1–SP4)', () => {
     // entityId and payload.id differ: the op does not match its record.
     expect(own).toMatchObject({ status: 'rejected' });
   });
+
+  it('what was paid when a purchase was made can be corrected, and only that (SP9)', async () => {
+    // 800 dh bought on credit terms the till recorded as paid in full; only 300 dh was paid.
+    const slipSupplier = crypto.randomUUID();
+    await as(t.http().put(`/suppliers/${slipSupplier}`))
+      .send({ name: 'مورد الخطأ' })
+      .expect(200);
+    const { aggregate } = await buy(undefined, slipSupplier);
+    const purchaseId = aggregate.purchase.id;
+    const owedOf = async () =>
+      supplierStatementDetailSchema.parse(
+        (await as(t.http().get(`/suppliers/${slipSupplier}/statement`)).expect(200)).body,
+      ).account.owedCents;
+    expect(await owedOf()).toBe(0);
+
+    const correct = (patch: Record<string, unknown>) => {
+      const now = new Date().toISOString();
+      return push({
+        opId: crypto.randomUUID(),
+        entity: 'purchase',
+        entityId: purchaseId,
+        kind: 'upsert',
+        payload: { ...aggregate.purchase, ...patch, updatedAt: now, deviceId: 'desk' },
+        deviceId: 'desk',
+        clientTs: now,
+        baseServerSeq: null,
+      });
+    };
+
+    // The rest of the purchase is fixed, and so is the rule that it cannot cost less than was paid.
+    for (const patch of [{ totalCostCents: 70_000, paidCents: 70_000 }, { date: '2026-09-01' }]) {
+      const refused = await correct(patch);
+      expect(refused).toMatchObject({ status: 'rejected', error: { code: 'validation_failed' } });
+      expect(refused?.error?.issues?.[0]?.message).toBe(PURCHASE_ISSUES.fieldsFixed);
+    }
+    const above = await correct({ paidCents: 80_001 });
+    expect(above?.error?.issues?.[0]?.message).toBe(PURCHASE_ISSUES.paidAboveTotal);
+    // Nobody can swap the supplier a purchase is owed to.
+    const swapped = await correct({ paidCents: 30_000, supplierId: supplierId });
+    expect(swapped?.error?.issues?.[0]?.message).toBe(PURCHASE_ISSUES.fieldsFixed);
+    expect(await owedOf()).toBe(0);
+
+    // The correction itself: 300 dh paid, 500 dh owed. A replay of the same op changes nothing.
+    expect((await correct({ paidCents: 30_000 }))?.status).toBe('applied');
+    expect(await owedOf()).toBe(50_000);
+    const detail = supplierStatementDetailSchema.parse(
+      (await as(t.http().get(`/suppliers/${slipSupplier}/statement`)).expect(200)).body,
+    );
+    expect(detail.statement.map((entry) => [entry.kind, entry.balanceCents])).toEqual([
+      ['purchase', 80_000],
+      ['paid_at_purchase', 50_000],
+    ]);
+    // Other devices pull the corrected purchase; the stock it brought in did not move.
+    const seq = await t.sql.query<{ server_seq: string }>(
+      'SELECT server_seq FROM purchase WHERE id = $1',
+      [purchaseId],
+    );
+    const pulled = syncPullResponseSchema.parse(
+      (
+        await as(
+          t.http().get(`/sync/pull?since=${String(Number(seq.rows[0]?.server_seq) - 1)}&limit=50`),
+        ).expect(200)
+      ).body,
+    );
+    const change = pulled.changes.find(
+      (entry) =>
+        entry.entity === 'purchase' && (entry.record as { id?: string } | null)?.id === purchaseId,
+    );
+    expect(change?.record).toMatchObject({ paidCents: 30_000, totalCostCents: 80_000 });
+    // It is a change of a record that was made, so it is audited with what it was.
+    const audit = await t.sql.query(
+      `SELECT action, before->>'paidCents' AS before, after->>'paidCents' AS after
+         FROM audit_log WHERE entity = 'purchase' AND entity_id = $1 ORDER BY at, id`,
+      [purchaseId],
+    );
+    expect(audit.rows.map((row: { action: string }) => row.action)).toEqual(['create', 'update']);
+    expect(audit.rows[1]).toMatchObject({ before: '80000', after: '30000' });
+
+    // Paying the supplier then settles it, and putting the figure back to the total clears it.
+    expect((await correct({ paidCents: 80_000 }))?.status).toBe('applied');
+    expect(await owedOf()).toBe(0);
+  });
+
+  it('a purchase that was never made cannot be corrected into being', async () => {
+    const now = new Date().toISOString();
+    const { aggregate } = await buy(undefined);
+    const ghost = crypto.randomUUID();
+    const result = await push({
+      opId: crypto.randomUUID(),
+      entity: 'purchase',
+      entityId: ghost,
+      kind: 'upsert',
+      payload: { ...aggregate.purchase, id: ghost, updatedAt: now, deviceId: 'desk' },
+      deviceId: 'desk',
+      clientTs: now,
+      baseServerSeq: null,
+    });
+    expect(result).toMatchObject({ status: 'rejected', error: { code: 'not_found' } });
+  });
 });

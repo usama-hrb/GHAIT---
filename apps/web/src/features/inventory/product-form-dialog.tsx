@@ -202,6 +202,8 @@ export function ProductFormDialog({
       pricePerPieceCents: piece ? prices.pricePerPieceCents : null,
       minPricePerPieceCents: piece ? prices.minPricePerPieceCents : null,
       lowStockThreshold: lowStock,
+      // Not edited here (the product's page does it), but a save carries the whole record.
+      supplierIds: product?.supplierIds ?? [],
       active: product?.active ?? true,
     };
     setSaving(true);

@@ -199,6 +199,29 @@ describe('roles: a cashier sells and never sees a cost or a profit (BUILD_PROMPT
     expect(forOwner.changes.some((change) => change.entity === 'expense')).toBe(true);
   });
 
+  it('a product’s suppliers stay with the owner: the till gets the product with none', async () => {
+    const productId = crypto.randomUUID();
+    const supplierId = crypto.randomUUID();
+    await asOwner(t.http().put(`/products/${productId}`))
+      .send({
+        name: 'مورد',
+        purchaseUnits: ['meter'],
+        sellingUnits: ['meter'],
+        pricePerMeterCents: 2000,
+        minPricePerMeterCents: 1800,
+        supplierIds: [supplierId],
+      })
+      .expect(200);
+    const productOf = async (as: typeof asCashier) =>
+      (await pullAs(as)).changes.find(
+        (change) =>
+          change.entity === 'product' && (change.record as { id: string }).id === productId,
+      )?.record;
+    expect(await productOf(asOwner)).toMatchObject({ supplierIds: [supplierId] });
+    expect(await productOf(asCashier)).toMatchObject({ name: 'مورد', supplierIds: [] });
+    expect(JSON.stringify((await pullAs(asCashier)).changes)).not.toContain(supplierId);
+  });
+
   it('a pull in small pages gets past the rows it may not see', async () => {
     let since = 0;
     const seen = new Set<SyncEntity>();
@@ -356,6 +379,14 @@ describe('roles: a cashier sells and never sees a cost or a profit (BUILD_PROMPT
         payload: { ...base, id: crypto.randomUUID() },
         baseServerSeq: null,
       },
+      // What was paid on a purchase is the owner's to correct (SP9), never the till's.
+      {
+        entity: 'purchase',
+        entityId: roll.purchaseId,
+        kind: 'upsert',
+        payload: { ...base, id: roll.purchaseId, paidCents: 0 },
+        baseServerSeq: 1,
+      },
       {
         entity: 'customer',
         entityId: customerId,
@@ -385,6 +416,7 @@ describe('roles: a cashier sells and never sees a cost or a profit (BUILD_PROMPT
     ];
     const results = await pushAs(asCashier, 'till', ...attempts);
     expect(results.map((result) => [result.status, result.error?.code])).toEqual([
+      ['rejected', 'forbidden'],
       ['rejected', 'forbidden'],
       ['rejected', 'forbidden'],
       ['rejected', 'forbidden'],

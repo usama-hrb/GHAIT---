@@ -302,6 +302,15 @@ test('the owner gives an existing partner a login, once, and the partner sees no
   // The partner is still a partner: switching the login off removed nothing.
   await page.goto('/settings/partners');
   await expect(page.getByText(partnerName).first()).toBeVisible();
+
+  // Leave no partner behind. Every spec shares one database, and a partner that holds no share
+  // would keep partners.spec from finding the empty setup form (and fail the specs after it). The
+  // login is off now, so the server lets the partner go.
+  const cleanup = await request.post(`${E2E.apiUrl}/partners/${partnerId}/void`, {
+    headers: { authorization: `Bearer ${accessToken}` },
+    data: { reason: 'test over' },
+  });
+  expect(cleanup.ok()).toBe(true);
 });
 
 test.describe('the accounts screen fits every device and both directions', () => {

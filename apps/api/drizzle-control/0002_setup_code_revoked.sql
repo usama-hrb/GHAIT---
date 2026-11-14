@@ -1,0 +1,1 @@
+ALTER TABLE "shop_setup_code" ADD COLUMN "revoked_at" timestamp with time zone;

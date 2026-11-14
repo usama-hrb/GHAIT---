@@ -1,19 +1,26 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 import { MoonIcon, SunIcon } from 'lucide-react';
 import { useTheme } from 'next-themes';
 
 import { messages } from '@/i18n';
 import { Button } from '@/shared/ui/button';
 
+/** Nothing to subscribe to: the value only differs between the server render and the browser. */
+function subscribeToNothing(): () => void {
+  return () => undefined;
+}
+
 export function ThemeToggle({ className }: { className?: string }) {
   const { resolvedTheme, setTheme } = useTheme();
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  // The theme is known only in the browser: the server render and the first paint show the same
+  // disabled button, then the real one (no state set inside an effect).
+  const mounted = useSyncExternalStore(
+    subscribeToNothing,
+    () => true,
+    () => false,
+  );
 
   if (!mounted) {
     return (
@@ -37,9 +44,11 @@ export function ThemeToggle({ className }: { className?: string }) {
       variant="ghost"
       size="icon"
       className={className}
-      onClick={() => setTheme(isDark ? 'light' : 'dark')}
-      aria-label={`Switch to ${isDark ? 'light' : 'dark'} theme`}
-      title={`Switch to ${isDark ? 'light' : 'dark'} theme`}
+      onClick={() => {
+        setTheme(isDark ? 'light' : 'dark');
+      }}
+      aria-label={isDark ? messages.theme.switchToLight : messages.theme.switchToDark}
+      title={isDark ? messages.theme.switchToLight : messages.theme.switchToDark}
     >
       {isDark ? (
         <SunIcon className="size-4 transition-transform duration-200" />

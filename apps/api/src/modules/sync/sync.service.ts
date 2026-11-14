@@ -372,6 +372,17 @@ export class SyncService implements OnModuleInit {
       }
       return this.append(op, handler);
     }
+    // An append-only record that takes corrections (`amend`, a purchase's payment): the upsert of
+    // its record, which its handler's `write` checks field by field. Never created, never voided.
+    if (
+      op.kind === 'upsert' &&
+      merge === 'append_only' &&
+      'amend' in SYNC_ENTITIES[op.entity] &&
+      handler?.find &&
+      handler.write
+    ) {
+      return this.upsert(op, handler as MutableHandler, false);
+    }
     if (merge !== 'mutable' || !handler?.find || !handler.write || !handler.markVoided) {
       return Promise.reject(
         new SyncRejection('bad_request', `${op.entity} does not accept ${op.kind} ops`),
@@ -456,7 +467,8 @@ export class SyncService implements OnModuleInit {
     return written;
   }
 
-  private async upsert(op: SyncOp, handler: MutableHandler): Promise<OpOutcome> {
+  /** `mayCreate` is false for a correction of a record an append made (`amend`). */
+  private async upsert(op: SyncOp, handler: MutableHandler, mayCreate = true): Promise<OpOutcome> {
     const parsed = SYNC_ENTITIES[op.entity].schema.safeParse(op.payload);
     if (!parsed.success) {
       throw new SyncRejection(
@@ -471,6 +483,9 @@ export class SyncService implements OnModuleInit {
     }
 
     const current = await handler.find(op.entityId);
+    if (!current && !mayCreate) {
+      throw new SyncRejection('not_found', `No ${op.entity} ${op.entityId} to correct`);
+    }
     await this.assertOpen(op.entity, handler, record, current?.record);
     if (!current) {
       const written = await handler.write(record as never);

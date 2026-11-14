@@ -43,6 +43,12 @@ export interface StockDraft {
   lengthCm: number | null;
   source: 'estimated' | 'measured';
   supplierId: string | null;
+  /**
+   * How the purchase was paid: all of it (the default), or only part, the rest staying owed to the
+   * supplier. An explicit choice, never an empty field read as "all".
+   */
+  partPayment: boolean;
+  /** What was paid, when only part of it was. */
   paidCents: number | null;
 }
 
@@ -55,6 +61,7 @@ export const emptyStockDraft = (unit: ProductUnit = 'meter'): StockDraft => ({
   lengthCm: null,
   source: 'measured',
   supplierId: null,
+  partPayment: false,
   paidCents: null,
 });
 
@@ -63,6 +70,9 @@ export const COST_FIELD = 'unitCostCents';
 
 /** The cost has not been typed yet. */
 export const isCostMissing = (draft: StockDraft) => draft.unitCostCents === null;
+
+/** "Paid part" is chosen and what was paid has not been typed yet. */
+export const isPaidMissing = (draft: StockDraft) => draft.partPayment && draft.paidCents === null;
 
 /**
  * The cost of the whole purchase, or null while it cannot be known. Every unit is bought at a
@@ -81,8 +91,8 @@ export function totalCostOf(draft: StockDraft): number | null {
   }
 }
 
-/** The purchase the draft stands for, or null while it is incomplete. */
-export function stockPurchaseOf(draft: StockDraft): StockPurchase | null {
+/** What is bought, without how it is paid: null while the quantity or the cost is incomplete. */
+function stockBodyOf(draft: StockDraft): Omit<StockPurchase, 'paidCents'> | null {
   const totalCostCents = totalCostOf(draft);
   if (draft.quantity === null || draft.quantity < 1 || totalCostCents === null) return null;
   const base = {
@@ -90,7 +100,6 @@ export function stockPurchaseOf(draft: StockDraft): StockPurchase | null {
     quantity: draft.quantity,
     totalCostCents,
     supplierId: draft.supplierId,
-    paidCents: draft.paidCents,
   };
   if (draft.unit !== 'kg' || !draft.conversionKnown) return base;
   if (draft.weightG === null || draft.lengthCm === null) return null;
@@ -100,12 +109,22 @@ export function stockPurchaseOf(draft: StockDraft): StockPurchase | null {
   };
 }
 
+/**
+ * The purchase the draft stands for, or null while it is incomplete. All of it is paid unless
+ * "paid part" was chosen, and then what was paid must be typed.
+ */
+export function stockPurchaseOf(draft: StockDraft): StockPurchase | null {
+  const body = stockBodyOf(draft);
+  if (!body || isPaidMissing(draft)) return null;
+  return { ...body, paidCents: draft.partPayment ? draft.paidCents : null };
+}
+
 /** A uuid that stands for the product while a purchase is only previewed. */
 const PREVIEW_PRODUCT = '00000000-0000-4000-8000-000000000000';
 
 /** What the purchase would bring in, as the ledger reads it (core), before anything is saved. */
 export function previewOfDraft(draft: StockDraft) {
-  const stock = stockPurchaseOf(draft);
+  const stock = stockBodyOf(draft);
   if (!stock) return null;
   const parsed = newProductPurchaseSchema.safeParse({
     date: shopToday(),
@@ -164,6 +183,47 @@ function StockPreview({ draft, showTotal }: { draft: StockDraft; showTotal: bool
         )
       )}
     </div>
+  );
+}
+
+/** What was paid when only part of the purchase was, and what that leaves owed to the supplier. */
+function PartPayment({
+  draft,
+  onChange,
+  error,
+  inputId,
+}: {
+  draft: StockDraft;
+  onChange: (patch: Partial<StockDraft>) => void;
+  error: string | undefined;
+  inputId: string;
+}) {
+  const total = totalCostOf(draft);
+  const owed = total !== null && draft.paidCents !== null ? total - draft.paidCents : null;
+  const above = owed !== null && owed < 0;
+  const problem =
+    error ?? (above ? messages.productStock.form.issues.purchase_paid_above_total : '');
+  return (
+    <Field data-invalid={problem ? true : undefined}>
+      <FieldLabel htmlFor={inputId}>{t.stock.paidAmount}</FieldLabel>
+      <MoneyInput
+        id={inputId}
+        value={draft.paidCents}
+        onValueChange={(paidCents) => {
+          onChange({ paidCents });
+        }}
+      />
+      {owed !== null && owed >= 0 && (
+        <p
+          className="flex items-baseline justify-between gap-2 rounded-md bg-muted px-3 py-2 text-sm"
+          role="status"
+        >
+          <span className="text-muted-foreground">{t.stock.owedRest}</span>
+          <Money cents={owed} tone={owed > 0 ? 'debt' : undefined} className="font-semibold" />
+        </p>
+      )}
+      {problem && <FieldError>{problem}</FieldError>}
+    </Field>
   );
 }
 
@@ -336,44 +396,63 @@ export function StockFields({
       <StockPreview draft={draft} showTotal={showTotal} />
 
       {showPayment && (
-        <div className="@container">
-          <div className="grid gap-4 @md:grid-cols-2">
-            <Field data-invalid={errors.supplierId ? true : undefined}>
-              <FieldLabel htmlFor={`${id}-supplier`}>{t.stock.supplier}</FieldLabel>
-              <Select
-                value={draft.supplierId ?? 'none'}
-                onValueChange={(value) => {
-                  onChange({ supplierId: value === 'none' ? null : value });
-                }}
-              >
-                <SelectTrigger id={`${id}-supplier`}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">{t.stock.noSupplier}</SelectItem>
-                  {suppliers?.map((supplier) => (
-                    <SelectItem key={supplier.id} value={supplier.id}>
-                      {supplier.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {errors.supplierId && <FieldError>{errors.supplierId}</FieldError>}
-            </Field>
-            <Field data-invalid={errors.paidCents ? true : undefined}>
-              <FieldLabel htmlFor={`${id}-paid`}>{t.stock.paid}</FieldLabel>
-              <MoneyInput
-                id={`${id}-paid`}
-                value={draft.paidCents}
-                onValueChange={(paidCents) => {
-                  onChange({ paidCents });
-                }}
-              />
-              <FieldDescription>{t.stock.paidHint}</FieldDescription>
-              {errors.paidCents && <FieldError>{errors.paidCents}</FieldError>}
-            </Field>
-          </div>
-        </div>
+        <>
+          <Field data-invalid={errors.supplierId ? true : undefined}>
+            <FieldLabel htmlFor={`${id}-supplier`}>{t.stock.supplier}</FieldLabel>
+            <Select
+              value={draft.supplierId ?? 'none'}
+              onValueChange={(value) => {
+                onChange({ supplierId: value === 'none' ? null : value });
+              }}
+            >
+              <SelectTrigger id={`${id}-supplier`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">{t.stock.noSupplier}</SelectItem>
+                {suppliers?.map((supplier) => (
+                  <SelectItem key={supplier.id} value={supplier.id}>
+                    {supplier.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {errors.supplierId && <FieldError>{errors.supplierId}</FieldError>}
+          </Field>
+          <Field>
+            <FieldLabel>{t.stock.payment}</FieldLabel>
+            <RadioGroup
+              value={draft.partPayment ? 'part' : 'full'}
+              aria-label={t.stock.payment}
+              className="flex flex-wrap gap-x-6 gap-y-2"
+              onValueChange={(value) => {
+                // Back to "all of it" drops the amount: what was typed is not kept in the dark.
+                onChange(
+                  value === 'part'
+                    ? { partPayment: true }
+                    : { partPayment: false, paidCents: null },
+                );
+              }}
+            >
+              <Field orientation="horizontal" className="w-auto">
+                <RadioGroupItem value="full" id={`${id}-paid-full`} />
+                <FieldLabel htmlFor={`${id}-paid-full`}>{t.stock.paidFull}</FieldLabel>
+              </Field>
+              <Field orientation="horizontal" className="w-auto">
+                <RadioGroupItem value="part" id={`${id}-paid-part`} />
+                <FieldLabel htmlFor={`${id}-paid-part`}>{t.stock.paidPart}</FieldLabel>
+              </Field>
+            </RadioGroup>
+          </Field>
+          {draft.partPayment && (
+            <PartPayment
+              draft={draft}
+              onChange={onChange}
+              error={errors.paidCents}
+              inputId={`${id}-paid`}
+            />
+          )}
+        </>
       )}
     </FieldGroup>
   );

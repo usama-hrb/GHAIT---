@@ -1,6 +1,6 @@
 'use client';
 
-import { ChevronLeftIcon, EllipsisIcon, PencilIcon, Trash2Icon } from 'lucide-react';
+import { ChevronLeftIcon, EllipsisIcon, PencilIcon, ScaleIcon, Trash2Icon } from 'lucide-react';
 import Link from 'next/link';
 import { messages } from '@/i18n';
 import type { ProductStockView } from '@/local-db';
@@ -19,22 +19,27 @@ const t = messages.productStock;
 
 /**
  * Who this is and how it stands: photo, name, code and one stock status, with the way back, the
- * edit button and the rarer actions (deleting) in a menu. Adding stock is not here: it is the
- * panel beside the page (or the bar under it on a phone).
+ * edit buttons (the product, and its stock: a count of a batch) and the rarer actions (deleting) in
+ * a menu. Adding stock is not here: it is the panel beside the page (or the bar under it on a phone).
  */
 export function ProductHeader({
   stock,
   photo,
   canEdit,
+  canEditStock,
   canRemove,
   onEdit,
+  onEditStock,
   onRemove,
 }: {
   stock: ProductStockView;
   photo: string | undefined;
   canEdit: boolean;
+  /** The owner may correct the stock, and only a product that has a batch has stock to correct. */
+  canEditStock: boolean;
   canRemove: boolean;
   onEdit: () => void;
+  onEditStock: () => void;
   onRemove: () => void;
 }) {
   return (
@@ -60,7 +65,13 @@ export function ProductHeader({
             {stock.needsReview && <ReviewBadge />}
           </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {canEditStock && (
+            <Button variant="outline" onClick={onEditStock}>
+              <ScaleIcon data-icon="inline-start" aria-hidden />
+              {t.detail.editStock}
+            </Button>
+          )}
           {canEdit && (
             <Button variant="outline" onClick={onEdit}>
               <PencilIcon data-icon="inline-start" aria-hidden />

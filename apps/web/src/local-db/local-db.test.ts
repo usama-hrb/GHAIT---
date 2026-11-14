@@ -5,7 +5,7 @@ import { ApiClient, type FetchLike } from './api';
 import { ShopDatabase } from './db';
 import { ValidationError } from './errors';
 import { createRepositories, type Repositories } from './repositories';
-import { Session } from './session';
+import { Session, WrongShopError } from './session';
 import { LocalStore } from './store';
 import { applyPulledChanges, applyPushResults, SyncEngine } from './sync';
 
@@ -204,6 +204,10 @@ function fakeServer() {
   let seq = 0;
   let refreshValid = true;
   let epoch = crypto.randomUUID();
+  /** The shop this server answers for (ADR 0029); none, like a one-shop server. */
+  let shopId: string | undefined;
+  /** Whether the shop waits for its owner and asks for a setup code (ADR 0029, Step 6). */
+  let setupCodeRequired = false;
   const pushSizes: number[] = [];
   const calls: string[] = [];
   const json = (status: number, body: unknown) =>
@@ -214,15 +218,25 @@ function fakeServer() {
     expiresIn: 900,
     user: { id: crypto.randomUUID(), username: 'owner', displayName: 'صاحب المحل', role: 'owner' },
   };
+  const answer = () => (shopId ? { ...token, shopId } : token);
   const fetchFn: FetchLike = (input, init) => {
     const url = new URL(input, 'http://shop.test');
     calls.push(`${init.method ?? 'GET'} ${url.pathname}`);
-    if (url.pathname === '/api/auth/login') return Promise.resolve(json(200, token));
+    if (url.pathname === '/api/auth/login') return Promise.resolve(json(200, answer()));
+    if (url.pathname === '/api/auth/registration') {
+      return Promise.resolve(
+        json(200, {
+          open: true,
+          ...(shopId ? { shopId } : {}),
+          ...(setupCodeRequired ? { setupCodeRequired: true } : {}),
+        }),
+      );
+    }
     if (url.pathname === '/api/devices/register') return Promise.resolve(json(200, { code: 'A' }));
     if (url.pathname === '/api/auth/refresh') {
       return Promise.resolve(
         refreshValid
-          ? json(200, token)
+          ? json(200, answer())
           : json(401, { error: { code: 'unauthorized', message: 'no' } }),
       );
     }
@@ -267,6 +281,9 @@ function fakeServer() {
     pushSizes,
     restore,
     expireRefresh: () => (refreshValid = false),
+    /** Which shop answers from now on: another address pointed at another shop, say. */
+    answerFor: (id: string | undefined) => (shopId = id),
+    askForSetupCode: (required: boolean) => (setupCodeRequired = required),
     token,
   };
 }
@@ -389,5 +406,100 @@ describe('session and sync engine', () => {
     expect(restarted.getState().status).toBe('signed_out');
     await restarted.load();
     expect(restarted.getState().user).toBeNull();
+  });
+});
+
+describe('one device, one shop (ADR 0029)', () => {
+  const SHOP_A = crypto.randomUUID();
+  const SHOP_B = crypto.randomUUID();
+  const sessionOn = (server: ReturnType<typeof fakeServer>) =>
+    new Session(store, new ApiClient(store, server.fetchFn));
+
+  it('keeps the shop of the first sign-in, and signs in again to the same one', async () => {
+    const server = fakeServer();
+    server.answerFor(SHOP_A);
+    const session = sessionOn(server);
+    await session.login({ username: 'owner', password: 'x' });
+    expect(await store.getMeta('shopId')).toBe(SHOP_A);
+    await session.logout();
+    await session.login({ username: 'owner', password: 'x' });
+    expect(session.getState().status).toBe('signed_in');
+  });
+
+  it('refuses a sign-in at another shop and keeps nothing of its answer', async () => {
+    const server = fakeServer();
+    server.answerFor(SHOP_A);
+    await sessionOn(server).login({ username: 'owner', password: 'x' });
+
+    server.answerFor(SHOP_B);
+    const other = sessionOn(server);
+    await other.load();
+    await other.logout();
+    await expect(other.login({ username: 'owner', password: 'x' })).rejects.toBeInstanceOf(
+      WrongShopError,
+    );
+    expect(other.getState().status).toBe('signed_out');
+    expect(await store.getMeta('shopId')).toBe(SHOP_A);
+  });
+
+  it('checks nothing when the server names no shop (a one-shop server)', async () => {
+    const server = fakeServer();
+    server.answerFor(SHOP_A);
+    const session = sessionOn(server);
+    await session.login({ username: 'owner', password: 'x' });
+    server.answerFor(undefined);
+    await session.logout();
+    await session.login({ username: 'owner', password: 'x' });
+    expect(session.getState().status).toBe('signed_in');
+    expect(await store.getMeta('shopId')).toBe(SHOP_A);
+  });
+
+  it('stops syncing when another shop answers, keeps the work, and goes on when the right one is back', async () => {
+    const server = fakeServer();
+    server.answerFor(SHOP_A);
+    const session = sessionOn(server);
+    const engine = new SyncEngine(store, session, { isOnline: () => true, retryMinMs: 60_000 });
+    await session.login({ username: 'owner', password: 'x' });
+    await repos.products.save(ROSA);
+
+    server.answerFor(SHOP_B);
+    (session as unknown as { token: null }).token = null;
+    await engine.syncNow();
+    expect(engine.getStatus().state).toBe('wrong_shop');
+    expect(await db.outbox.count()).toBe(1);
+    expect(server.calls).not.toContain('POST /api/sync/push');
+    // The device is not signed out: its own data stays usable.
+    expect(session.getState().status).toBe('signed_in');
+
+    server.answerFor(SHOP_A);
+    await engine.syncNow();
+    expect(engine.getStatus().state).toBe('idle');
+    expect(await db.outbox.count()).toBe(0);
+  });
+
+  it('tells whether the sign-up of this shop asks for a setup code', async () => {
+    const server = fakeServer();
+    server.answerFor(SHOP_A);
+    const session = sessionOn(server);
+    expect(await session.registrationStatus()).toEqual({ open: true, setupCodeRequired: false });
+    expect(await session.registrationOpen()).toBe(true);
+
+    server.askForSetupCode(true);
+    expect(await session.registrationStatus()).toEqual({ open: true, setupCodeRequired: true });
+    expect(await session.registrationOpen()).toBe(true);
+  });
+
+  it('asks before the sign-up reaches a shop this device does not belong to', async () => {
+    const server = fakeServer();
+    server.answerFor(SHOP_A);
+    await sessionOn(server).login({ username: 'owner', password: 'x' });
+
+    server.answerFor(SHOP_B);
+    const session = sessionOn(server);
+    await expect(session.registrationOpen()).rejects.toBeInstanceOf(WrongShopError);
+    await expect(session.register({} as Parameters<Session['register']>[0])).rejects.toBeInstanceOf(
+      WrongShopError,
+    );
+    expect(server.calls).not.toContain('POST /api/auth/register');
   });
 });

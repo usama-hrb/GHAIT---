@@ -1,4 +1,6 @@
+import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
+import { CM_PER_METER } from '../length/index.js';
 import { fromDirham } from '../money/index.js';
 import { splitSaleCapitalProfit } from '../payments/index.js';
 import {
@@ -6,6 +8,7 @@ import {
   computeSaleLine,
   isBelowMinimum,
   type SaleLineInput,
+  unitPriceForLineTotal,
 } from './index.js';
 
 // Rosa at 16 dh/m: a 50 m roll (SPEC T1) costs 80000; 100 m costs 160000.
@@ -281,5 +284,78 @@ describe('isBelowMinimum (ADR 0012)', () => {
     expect(() =>
       isBelowMinimum({ quantity: 1, price: { perUnitCents: 1.5 }, minPriceCents: 0 }),
     ).toThrow();
+  });
+});
+
+describe('unitPriceForLineTotal (a line priced by the total the customer was quoted)', () => {
+  const priced = (unit: 'meter' | 'piece', quantity: number, perUnitCents: number) =>
+    computeBatchSaleLine({
+      unit,
+      quantity,
+      price: { perUnitCents },
+      refPriceCents: 0,
+      minPriceCents: 0,
+      costCents: 0,
+    }).lineTotalCents;
+
+  it('works out the price per metre: 3 m for 145.20 dh is 48.40 dh a metre', () => {
+    const price = unitPriceForLineTotal({
+      unit: 'meter',
+      quantity: 300,
+      totalCents: fromDirham(145.2),
+    });
+    expect(price).toBe(fromDirham(48.4));
+    expect(priced('meter', 300, price)).toBe(fromDirham(145.2));
+  });
+
+  it('works out the price per piece', () => {
+    const price = unitPriceForLineTotal({ unit: 'piece', quantity: 4, totalCents: 10_000 });
+    expect(price).toBe(2500);
+    expect(priced('piece', 4, price)).toBe(10_000);
+  });
+
+  it('rounds half up to the cent, and the line then comes a cent off, never more than said', () => {
+    // 3 m for 145.00 dh: 48.3333 dh a metre is 4833 cents, so the line is 144.99 dh.
+    const price = unitPriceForLineTotal({ unit: 'meter', quantity: 300, totalCents: 14_500 });
+    expect(price).toBe(4833);
+    expect(priced('meter', 300, price)).toBe(14_499);
+    // Exactly half a cent goes up: 1 cent for 2 pieces is 0.5 cents each.
+    expect(unitPriceForLineTotal({ unit: 'piece', quantity: 2, totalCents: 1 })).toBe(1);
+  });
+
+  it('is zero for a total of zero and refuses a zero quantity or a fraction of a cent', () => {
+    expect(unitPriceForLineTotal({ unit: 'meter', quantity: 250, totalCents: 0 })).toBe(0);
+    expect(() => unitPriceForLineTotal({ unit: 'meter', quantity: 0, totalCents: 100 })).toThrow();
+    expect(() => unitPriceForLineTotal({ unit: 'piece', quantity: 2, totalCents: 10.5 })).toThrow();
+  });
+
+  it('property: the priced line is within round(cm ÷ 200) cents of the total, exact under a metre or when it divides', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 20_000 }),
+        fc.integer({ min: 0, max: 5_000_000 }),
+        (cm, totalCents) => {
+          const price = unitPriceForLineTotal({ unit: 'meter', quantity: cm, totalCents });
+          const off = Math.abs(priced('meter', cm, price) - totalCents);
+          expect(off).toBeLessThanOrEqual(Math.floor(cm / 200 + 0.5));
+          if (cm < 100 || (totalCents * CM_PER_METER) % cm === 0) expect(off).toBe(0);
+        },
+      ),
+    );
+  });
+
+  it('property: for pieces the priced line is within half the count of the total', () => {
+    fc.assert(
+      fc.property(
+        fc.integer({ min: 1, max: 5_000 }),
+        fc.integer({ min: 0, max: 5_000_000 }),
+        (pieces, totalCents) => {
+          const price = unitPriceForLineTotal({ unit: 'piece', quantity: pieces, totalCents });
+          const off = Math.abs(priced('piece', pieces, price) - totalCents);
+          expect(off).toBeLessThanOrEqual(Math.floor(pieces / 2));
+          if (totalCents % pieces === 0) expect(off).toBe(0);
+        },
+      ),
+    );
   });
 });

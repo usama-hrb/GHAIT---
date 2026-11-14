@@ -43,6 +43,7 @@ export type {
 export type { IntegrityRepository, RecentEvent } from './integrity';
 export {
   DeviceNotRegisteredError,
+  type PurchasePaymentPreview,
   type PurchasesRepository,
   type PurchaseSummary,
 } from './purchases';
@@ -77,6 +78,7 @@ export {
   type InventorySummary,
   type ProductBatchView,
   type ProductDetailView,
+  type ProductSupplierView,
   type ProductInventoryOverview,
   type ProductInventoryRepository,
   type MovementReference,
@@ -108,6 +110,7 @@ export type {
   SettingsRepository,
   SuppliersRepository,
 } from './tables';
+export { WrongShopError } from './session';
 export type { SessionState } from './session';
 export type { UserAccountsRepository } from './user-accounts';
 export type {

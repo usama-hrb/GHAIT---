@@ -35,7 +35,7 @@ The rules live in [packages/config-eslint/design-system.js](../packages/config-e
 
 `globals.css` contains `brand-tokens.css` from `brand-assets.zip` verbatim, between `>>> brand-tokens.css` and `<<< end brand-tokens.css`. After that block come app additions that introduce no colour: the `font-heading` utility and the default `border-color`.
 
-- Change a token only with the owner's approval. [apps/web/src/app/tokens.contrast.test.ts](../apps/web/src/app/tokens.contrast.test.ts) checks every semantic pair in both themes: text ≥ 4.5:1, input borders and focus ring ≥ 3:1. Never lower a threshold; fix the token, with approval.
+- Change a token only with the owner's approval. The owner approved five changes on 2026-11-13 so that every pair passes (listed in the comment at the top of the brand block of `globals.css`): light `--muted-foreground` `#6f6864`, light `--warning` `#976217` (and so `--debt`), light `--input` `#8e8a84`, dark `--input` `#756e6e`, and a dark `--estimated` of `var(--gold-500)`. The brand file itself was not changed; these are the app's values. [apps/web/src/app/tokens.contrast.test.ts](../apps/web/src/app/tokens.contrast.test.ts) checks every semantic pair in both themes: text ≥ 4.5:1, input borders and focus ring ≥ 3:1. Never lower a threshold; fix the token, with approval.
 - Dark mode is the `dark` class on `<html>` (next-themes, default `system`). `dark:` variants work; prefer tokens, which switch by themselves.
 - Radius: `--radius` is 8px; use `rounded-md` for fields, `rounded-lg` for cards and `rounded-xl` for dialogs.
 - Figures: `data-num` (or `.num`) gives tabular, lining digits. The format components set it for you.

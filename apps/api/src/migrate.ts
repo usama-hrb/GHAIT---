@@ -1,6 +1,9 @@
 // `node dist/migrate.js` (make migrate): applies pending migrations, then exits.
-import { runMigrations } from './database/index.js';
+//   One-shop server:  make migrate
+//   MULTI_SHOP=true:  make migrate SHOP=<slug>|all   (see migrate-command.ts)
+import { parseArgs } from 'node:util';
 import { loadConfig } from './load-config.js';
+import { migrateCommand } from './migrate-command.js';
 
-await runMigrations(loadConfig().databaseUrl);
-console.log('Migrations applied.');
+const { values } = parseArgs({ options: { shop: { type: 'string' } } });
+process.exitCode = await migrateCommand(loadConfig(), values.shop);

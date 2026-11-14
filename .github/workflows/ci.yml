@@ -43,6 +43,11 @@ jobs:
       # The API's integration tests start Postgres with Testcontainers (Docker is on the runner).
       - run: pnpm turbo run lint typecheck test build
 
+      # The same API e2e specs on a multi-shop server with the live shop adopted (ADR 0029, Step 4).
+      - name: API end-to-end as an adopted shop
+        working-directory: apps/api
+        run: pnpm test:e2e:adopted
+
       # Offline → online → second device, in a real browser (BUILD_PROMPTS 3.1).
       - name: End-to-end (Playwright)
         working-directory: apps/web
@@ -50,12 +55,21 @@ jobs:
           pnpm exec playwright install --with-deps chromium
           pnpm test:e2e
 
+      # The same browser run on a multi-shop server: the shop adopted, a second shop that signs up,
+      # sells offline and syncs while the first stays as it was (ADR 0029, Step 9).
+      - name: End-to-end (Playwright) as an adopted shop
+        working-directory: apps/web
+        run: pnpm test:e2e:adopted
+
       - name: Migrations match the schema
         working-directory: apps/api
         run: |
           pnpm exec drizzle-kit check
           pnpm exec drizzle-kit generate --name ci-drift-check
           git status --porcelain drizzle | grep . && { echo "Schema changed without a migration: run make migrate-new" >&2; exit 1; } || true
+          pnpm exec drizzle-kit check --config drizzle-control.config.ts
+          pnpm exec drizzle-kit generate --name ci-drift-check --config drizzle-control.config.ts
+          git status --porcelain drizzle-control | grep . && { echo "Control schema changed without a migration: run make migrate-new CONTROL=1" >&2; exit 1; } || true
 
       - name: Dependency directions
         run: pnpm depcruise apps packages

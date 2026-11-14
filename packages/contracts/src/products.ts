@@ -1,6 +1,6 @@
 import { PRODUCT_STOCK_UNITS, type ProductStockUnit } from '@fabric/core';
 import { z } from 'zod';
-import { amountCentsSchema, optionalTextSchema } from './common.js';
+import { amountCentsSchema, idSchema, optionalTextSchema } from './common.js';
 import { recordBaseSchema } from './catalog.js';
 
 export const PRODUCT_UNITS = PRODUCT_STOCK_UNITS;
@@ -22,6 +22,7 @@ export type ProductConversion = z.output<typeof productConversionSchema>;
 /** Issue messages for the product rules zod has no built-in code for; the web shows i18n text. */
 export const PRODUCT_ISSUES = {
   duplicateUnit: 'duplicate_product_unit',
+  duplicateSupplier: 'duplicate_product_supplier',
   priceRequired: 'product_price_required',
   minRequired: 'product_min_price_required',
   minAbovePrice: 'product_min_price_above_price',
@@ -50,6 +51,12 @@ const productFields = z.object({
    * the meter, pieces for one sold only by the piece. null: never low.
    */
   lowStockThreshold: z.int().min(0).max(10_000_000).nullable().default(null),
+  /**
+   * The suppliers the shop buys this product from, in the order they were added. A list of the
+   * owner's own choosing: no purchase needs it and none is changed by it. A cashier's device
+   * receives it empty (buying is not the till's business, `redactForRole`).
+   */
+  supplierIds: z.array(idSchema).max(30).default([]),
   active: z.boolean().default(true),
 });
 
@@ -88,9 +95,16 @@ function sellingPrices(
 }
 
 function uniqueUnits(
-  product: Pick<z.infer<typeof productFields>, 'purchaseUnits' | 'sellingUnits'>,
+  product: Pick<z.infer<typeof productFields>, 'purchaseUnits' | 'sellingUnits' | 'supplierIds'>,
   context: z.RefinementCtx,
 ): void {
+  if (new Set(product.supplierIds).size !== product.supplierIds.length) {
+    context.addIssue({
+      code: 'custom',
+      path: ['supplierIds'],
+      message: PRODUCT_ISSUES.duplicateSupplier,
+    });
+  }
   for (const key of ['purchaseUnits', 'sellingUnits'] as const) {
     if (new Set(product[key]).size !== product[key].length) {
       context.addIssue({

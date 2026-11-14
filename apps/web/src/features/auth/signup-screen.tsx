@@ -1,6 +1,6 @@
 'use client';
 
-import { SHOP_NAME_MAX } from '@fabric/contracts';
+import { normalizeSetupCode, SETUP_CODE_TYPED_MAX, SHOP_NAME_MAX } from '@fabric/contracts';
 import { CheckIcon, LockIcon, WifiOffIcon } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -51,6 +51,7 @@ const STRENGTH_LEVEL: Record<PasswordStrength, number> = { weak: 1, fair: 2, goo
  * and logo, the units and currency, a review), then one request that creates the account and the
  * shop's settings together. Open only while the server has no owner: afterwards the page says it
  * is closed. Everything is held in memory until the last step, so leaving the page saves nothing.
+ * On a server with many shops the first step also asks for the setup code of the shop (ADR 0029).
  */
 export function SignupScreen() {
   const registration = useRegistrationOpen();
@@ -88,13 +89,24 @@ export function SignupScreen() {
       />
     );
   } else {
-    body = <SignupWizard onClosed={registration.retry} />;
+    body = (
+      <SignupWizard
+        setupCodeRequired={registration.setupCodeRequired}
+        onClosed={registration.retry}
+      />
+    );
   }
 
   return <AuthLayout wide>{body}</AuthLayout>;
 }
 
-function SignupWizard({ onClosed }: { onClosed: () => void }) {
+function SignupWizard({
+  setupCodeRequired,
+  onClosed,
+}: {
+  setupCodeRequired: boolean;
+  onClosed: () => void;
+}) {
   const s = messages.signup;
   const id = useId();
   const router = useRouter();
@@ -104,6 +116,8 @@ function SignupWizard({ onClosed }: { onClosed: () => void }) {
   const [touched, setTouched] = useState<Partial<Record<AccountField | 'shopName', boolean>>>({});
   const [tried, setTried] = useState<Partial<Record<SignupStep, boolean>>>({});
   const [takenEmail, setTakenEmail] = useState<string | null>(null);
+  /** The code the server did not take, as the server reads it; typing another one clears it. */
+  const [refusedCode, setRefusedCode] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
   const [logoError, setLogoError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -130,15 +144,22 @@ function SignupWizard({ onClosed }: { onClosed: () => void }) {
     setTouched((current) => ({ ...current, [field]: true }));
   };
 
-  const account = accountProblems(draft);
+  const account = accountProblems(draft, setupCodeRequired);
   const emailIsTaken = takenEmail !== null && takenEmail === draft.email.trim().toLowerCase();
+  const codeIsRefused =
+    setupCodeRequired &&
+    refusedCode !== null &&
+    refusedCode === normalizeSetupCode(draft.setupCode);
   const a = s.account;
   const accountText = (field: AccountField): string | null => {
     if (!touched[field] && !tried.account) return null;
     if (field === 'email' && emailIsTaken) return a.email.taken;
+    if (field === 'setupCode' && codeIsRefused) return a.setupCode.refused;
     const problem = account[field];
     if (problem === undefined) return null;
     switch (field) {
+      case 'setupCode':
+        return problem === 'required' ? a.setupCode.required : a.setupCode.invalid;
       case 'fullName':
         return a.fullName.required;
       case 'email':
@@ -158,7 +179,8 @@ function SignupWizard({ onClosed }: { onClosed: () => void }) {
 
   const index = SIGNUP_STEPS.indexOf(step);
   const valid = (target: SignupStep) =>
-    stepIsValid(target, draft) && !(target === 'account' && emailIsTaken);
+    stepIsValid(target, draft, setupCodeRequired) &&
+    !(target === 'account' && (emailIsTaken || codeIsRefused));
 
   const focusFirstInvalid = () => {
     requestAnimationFrame(() => {
@@ -207,8 +229,8 @@ function SignupWizard({ onClosed }: { onClosed: () => void }) {
 
   const create = () => {
     if (sendingRef.current) return;
-    const invalid = firstInvalidStep(draft);
-    if (invalid !== null || emailIsTaken) {
+    const invalid = firstInvalidStep(draft, setupCodeRequired);
+    if (invalid !== null || emailIsTaken || codeIsRefused) {
       setTried({ account: true, shop: true, selling: true });
       setStep(invalid ?? 'account');
       return;
@@ -217,7 +239,7 @@ function SignupWizard({ onClosed }: { onClosed: () => void }) {
     setBusy(true);
     setFailure(null);
     session
-      .register(registrationRequestOf(draft))
+      .register(registrationRequestOf(draft, setupCodeRequired))
       .then(() => {
         router.replace('/home');
       })
@@ -232,6 +254,21 @@ function SignupWizard({ onClosed }: { onClosed: () => void }) {
           setTakenEmail(draft.email.trim().toLowerCase());
           setStep('account');
           focusFirstInvalid();
+        } else if (reason === 'registration_closed' && setupCodeRequired) {
+          // The server answers a wrong, old or used code as it answers a closed sign-up, so ask
+          // again, without leaving the form: closed for good ends the page, a refused code does not.
+          setRefusedCode(normalizeSetupCode(draft.setupCode));
+          setTried((current) => ({ ...current, account: true }));
+          setStep('account');
+          focusFirstInvalid();
+          session
+            .registrationOpen()
+            .then((open) => {
+              if (!open) onClosed();
+            })
+            .catch(() => {
+              // Offline now: the code field already says what is known.
+            });
         } else {
           setFailure(s.errors[reason]);
           // Another browser finished first: the page now says sign-up is closed.
@@ -279,6 +316,36 @@ function SignupWizard({ onClosed }: { onClosed: () => void }) {
               title={a.title}
               text={a.description}
             />
+            {setupCodeRequired && (
+              <Field data-invalid={accountText('setupCode') !== null}>
+                <FieldLabel htmlFor={`${id}-code`}>{a.setupCode.label}</FieldLabel>
+                <Input
+                  id={`${id}-code`}
+                  autoComplete="off"
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  dir="ltr"
+                  className="text-start font-mono tracking-wider uppercase"
+                  maxLength={SETUP_CODE_TYPED_MAX}
+                  placeholder={a.setupCode.placeholder}
+                  value={draft.setupCode}
+                  aria-invalid={accountText('setupCode') !== null}
+                  aria-describedby={`${id}-code-note`}
+                  onChange={(event) => {
+                    update({ setupCode: event.target.value });
+                  }}
+                  onBlur={() => {
+                    touch('setupCode');
+                  }}
+                />
+                {accountText('setupCode') !== null ? (
+                  <FieldError id={`${id}-code-note`}>{accountText('setupCode')}</FieldError>
+                ) : (
+                  <FieldDescription id={`${id}-code-note`}>{a.setupCode.hint}</FieldDescription>
+                )}
+              </Field>
+            )}
             <Field data-invalid={accountText('fullName') !== null}>
               <FieldLabel htmlFor={`${id}-name`}>{a.fullName.label}</FieldLabel>
               <Input

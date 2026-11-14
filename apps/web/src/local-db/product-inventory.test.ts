@@ -499,6 +499,104 @@ describe('where a product’s movements came from', () => {
   });
 });
 
+describe('what is still owed on the purchases of a product (SP9)', () => {
+  it('follows what was paid at purchase, a correction of it and the payments made since', async () => {
+    const product = await rosa('Owed');
+    const supplierId = await repos.suppliers.save({ name: 'Atlas' });
+    const purchaseId = await repos.purchases.create({
+      date: day,
+      productId: product,
+      unit: 'meter',
+      quantity: 5000,
+      totalCostCents: 500_000,
+      supplierId,
+    });
+    const owed = async () => (await repos.productInventory.detail(product))?.dueOfPurchase;
+    expect(await owed()).toEqual({});
+
+    // Paid in full by mistake: 1,000 dh of 5,000 dh was really paid.
+    await repos.purchases.setPayment(purchaseId, { paidCents: 100_000, supplierId });
+    expect(await owed()).toEqual({ [purchaseId]: 400_000 });
+
+    await repos.supplierAccounts.pay({ supplierId, amountCents: 150_000, date: day });
+    expect(await owed()).toEqual({ [purchaseId]: 250_000 });
+
+    await repos.supplierAccounts.pay({ supplierId, amountCents: 250_000, date: day });
+    expect(await owed()).toEqual({});
+  });
+
+  it('is empty for a purchase with no supplier', async () => {
+    const product = await rosa('Nobody');
+    await seedBatch(repos, product, 3000, { date: day });
+    expect((await repos.productInventory.detail(product))?.dueOfPurchase).toEqual({});
+  });
+});
+
+describe('the suppliers a product is bought from', () => {
+  const supplier = (name: string) => repos.suppliers.save({ name, phone: '0600000000' });
+
+  it('names them in the order they were added, on the product and on the detail', async () => {
+    const product = await rosa('Rosa - Suppliers');
+    const [atlas, fes] = [await supplier('Atlas'), await supplier('Fes')];
+    expect((await repos.productInventory.detail(product))?.suppliers).toEqual([]);
+
+    await repos.productInventory.setSuppliers(product, [atlas, fes]);
+    const detail = await repos.productInventory.detail(product);
+    expect(detail?.record.supplierIds).toEqual([atlas, fes]);
+    expect(detail?.suppliers).toEqual([
+      { id: atlas, name: 'Atlas', phone: '0600000000' },
+      { id: fes, name: 'Fes', phone: '0600000000' },
+    ]);
+
+    await repos.productInventory.setSuppliers(product, [fes]);
+    expect((await repos.productInventory.detail(product))?.suppliers.map((s) => s.name)).toEqual([
+      'Fes',
+    ]);
+    // A change of the list is a save of the product, pushed like any other, and nothing else.
+    const outbox = (await db.outbox.toArray()).filter((entry) => entry.entity === 'product');
+    expect(outbox.at(-1)).toMatchObject({ kind: 'upsert', entityId: product });
+  });
+
+  it('does not list a supplier that was cancelled, and keeps the product’s other fields', async () => {
+    const product = await rosa('Rosa - Cancelled', { lowStockThreshold: 300 });
+    const [atlas, fes] = [await supplier('Atlas'), await supplier('Fes')];
+    await repos.productInventory.setSuppliers(product, [atlas, fes]);
+    await repos.suppliers.void(atlas, 'closed');
+    const detail = await repos.productInventory.detail(product);
+    expect(detail?.suppliers.map((s) => s.name)).toEqual(['Fes']);
+    expect(detail?.record).toMatchObject({
+      name: 'Rosa - Cancelled',
+      lowStockThreshold: 300,
+      pricePerMeterCents: 2000,
+      minPricePerMeterCents: 1800,
+      active: true,
+    });
+  });
+
+  it('is not lost when a purchase in a new unit saves the product again', async () => {
+    const product = await rosa('Rosa - Kept', { purchaseUnits: ['meter'] });
+    const atlas = await supplier('Atlas');
+    await repos.productInventory.setSuppliers(product, [atlas]);
+    await repos.productInventory.restock(product, {
+      unit: 'piece',
+      quantity: 4,
+      totalCostCents: 4000,
+    });
+    const saved = await db.products.get(product);
+    expect(saved?.purchaseUnits).toEqual(['meter', 'piece']);
+    expect(saved?.supplierIds).toEqual([atlas]);
+  });
+
+  it('refuses the same supplier twice, and a product that is not here', async () => {
+    const product = await rosa('Rosa - Twice');
+    const atlas = await supplier('Atlas');
+    await expect(repos.productInventory.setSuppliers(product, [atlas, atlas])).rejects.toThrow(
+      ValidationError,
+    );
+    await expect(repos.productInventory.setSuppliers(crypto.randomUUID(), [])).rejects.toThrow();
+  });
+});
+
 describe('removing a product from the inventory (PB20)', () => {
   const pending = async (entity: string, kind: string) =>
     (await db.outbox.toArray()).filter((entry) => entry.entity === entity && entry.kind === kind);

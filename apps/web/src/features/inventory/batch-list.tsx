@@ -76,10 +76,13 @@ function BatchActions({
   batch,
   onAction,
   onRemnant,
+  onEditPayment,
 }: {
   batch: ProductBatchView;
   onAction: (action: BatchAction, batchId: string) => void;
   onRemnant: (batchId: string, remnant: boolean) => void;
+  /** Where the purchase's payment can be corrected (the owner, who sees costs); none otherwise. */
+  onEditPayment: ((purchaseId: string) => void) | null;
 }) {
   const needsLength = batch.status === 'estimated' || batch.status === 'pending';
   return (
@@ -138,6 +141,15 @@ function BatchActions({
           >
             {batch.remnant ? t.actions.unmarkRemnant : t.actions.markRemnant}
           </DropdownMenuItem>
+          {onEditPayment && (
+            <DropdownMenuItem
+              onSelect={() => {
+                onEditPayment(batch.purchaseId);
+              }}
+            >
+              {t.actions.editPayment}
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
@@ -152,18 +164,24 @@ function BatchActions({
 export function BatchList({
   stock,
   supplierOfPurchase,
+  dueOfPurchase,
   seesCosts,
   canAct,
   onAction,
   onRemnant,
+  onEditPayment,
 }: {
   stock: ProductStockView;
   supplierOfPurchase: Readonly<Record<string, string>>;
+  /** What is still owed on each purchase that has something due (the supplier account's). */
+  dueOfPurchase: Readonly<Record<string, number>>;
   seesCosts: boolean;
   /** The owner changes stock; a partner reads it. */
   canAct: boolean;
   onAction: (action: BatchAction, batchId: string) => void;
   onRemnant: (batchId: string, remnant: boolean) => void;
+  /** Corrects what was paid on a purchase; null for whoever may not. */
+  onEditPayment: ((purchaseId: string) => void) | null;
 }) {
   const columns = seesCosts ? WITH_COSTS : WITHOUT_COSTS;
   return (
@@ -200,6 +218,7 @@ export function BatchList({
           <ul className="divide-y">
             {stock.batches.map((batch) => {
               const supplier = supplierOfPurchase[batch.purchaseId];
+              const due = seesCosts ? dueOfPurchase[batch.purchaseId] : undefined;
               return (
                 <li
                   key={batch.batchId}
@@ -216,6 +235,11 @@ export function BatchList({
                       <BatchStatusBadge status={batch.status} />
                       {batch.remnant && <Badge variant="warning">{t.detail.remnant}</Badge>}
                       {batch.oversold && <ReviewBadge />}
+                      {due !== undefined && (
+                        <Badge variant="warning">
+                          {t.detail.owedBadge} · <Money cents={due} />
+                        </Badge>
+                      )}
                     </span>
                     <span className="text-xs text-muted-foreground">
                       <DateText value={batch.purchaseDate} />
@@ -264,7 +288,12 @@ export function BatchList({
                     </>
                   )}
                   {canAct ? (
-                    <BatchActions batch={batch} onAction={onAction} onRemnant={onRemnant} />
+                    <BatchActions
+                      batch={batch}
+                      onAction={onAction}
+                      onRemnant={onRemnant}
+                      onEditPayment={seesCosts ? onEditPayment : null}
+                    />
                   ) : (
                     <span className="hidden @2xl:block" />
                   )}

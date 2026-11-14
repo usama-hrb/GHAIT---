@@ -66,11 +66,16 @@ export const SYNC_ENTITIES = {
   /** A colour's picture, resized on the device and carried in the record (ADR 0009); never edited. */
   photo: { merge: 'mutable', schema: photoSchema },
   supplier: { merge: 'mutable', schema: supplierSchema },
-  /** A purchase op carries its batch and receipt (productPurchaseAggregateSchema), applied atomically. */
+  /**
+   * A purchase op carries its batch and receipt (productPurchaseAggregateSchema), applied
+   * atomically. It is made once; afterwards only what was paid when it was made can be corrected,
+   * as an upsert op of the record (`amend`; the server refuses anything else: checkPurchaseAmend).
+   */
   purchase: {
     merge: 'append_only',
     schema: purchaseSchema,
     pushSchema: productPurchaseAggregateSchema,
+    amend: true,
   },
   /** The stock (ADR 0012): what a purchase brought in. Only its remnant mark changes (checkBatchUpdate). */
   product_batch: { merge: 'mutable', schema: productBatchSchema },
@@ -139,7 +144,16 @@ export const SYNC_ENTITIES = {
   },
 } as const satisfies Record<
   string,
-  { merge: 'mutable' | 'append_only' | 'pull_only'; schema: z.ZodType; pushSchema?: z.ZodType }
+  {
+    merge: 'mutable' | 'append_only' | 'pull_only';
+    schema: z.ZodType;
+    pushSchema?: z.ZodType;
+    /**
+     * An append-only entity that takes upsert ops too, for a record made by an append: the
+     * handler's `write` refuses everything but the change its rules allow.
+     */
+    amend?: true;
+  }
 >;
 
 export type SyncEntity = keyof typeof SYNC_ENTITIES;
